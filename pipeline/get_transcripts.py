@@ -21,7 +21,7 @@ from bs4 import BeautifulSoup
 from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
 
 import db
-from config import ASSEMBLYAI_API_KEY, YOUTUBE_COOKIES_FILE
+from config import ASSEMBLYAI_API_KEY, YOUTUBE_COOKIES_FILE, YOUTUBE_BROWSER
 
 # ---------------------------------------------------------------------------
 # Error classification helpers
@@ -131,8 +131,13 @@ def _parse_vtt(vtt: str) -> tuple[str, list]:
 
 def _get_transcript_ytdlp(video_id: str) -> tuple[str, list] | None:
     """
-    Uses yt-dlp to resolve a subtitle URL (authenticated via cookies), then
-    downloads and parses the VTT.
+    Uses yt-dlp to download subtitles to a temp dir (fully authenticated via
+    browser cookies), then parses the VTT.  Letting yt-dlp do the actual
+    download means it carries the right headers/cookies for the timedtext API.
+
+    Cookie auth priority:
+      1. YOUTUBE_BROWSER — reads fresh cookies directly from the browser (recommended)
+      2. YOUTUBE_COOKIES_FILE — reads from a Netscape cookies.txt file
 
     Returns (plain_text, segments) on success.
     Returns None for retryable/network errors.
@@ -144,63 +149,49 @@ def _get_transcript_ytdlp(video_id: str) -> tuple[str, list] | None:
         print("    yt-dlp not installed — falling back to youtube-transcript-api")
         return _get_transcript_ytt(video_id)
 
+    import tempfile, glob
+
     url = f"https://www.youtube.com/watch?v={video_id}"
     cookie_path = _resolve_cookie_path()
 
-    ydl_opts: dict = {
-        "quiet": True,
-        "no_warnings": True,
-        "skip_download": True,
-    }
-    if cookie_path:
-        ydl_opts["cookiefile"] = cookie_path
+    with tempfile.TemporaryDirectory() as tmpdir:
+        ydl_opts: dict = {
+            "writesubtitles":    True,
+            "writeautomaticsub": True,
+            "subtitleslangs":    ["en", "en-US", "en-GB"],
+            "subtitlesformat":   "vtt",
+            "skip_download":     True,
+            "outtmpl":           os.path.join(tmpdir, "%(id)s"),
+            "quiet":             True,
+            "no_warnings":       True,
+        }
+        if YOUTUBE_BROWSER:
+            ydl_opts["cookiesfrombrowser"] = (YOUTUBE_BROWSER, None, None, None)
+        elif cookie_path:
+            ydl_opts["cookiefile"] = cookie_path
 
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-    except Exception as e:
-        msg = str(e)
-        if is_permanent_error(msg):
-            raise PermanentNoTranscript(msg)
-        print(f"    yt-dlp info error: {msg[:200]}")
-        return None
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+        except Exception as e:
+            msg = str(e)
+            if is_permanent_error(msg):
+                raise PermanentNoTranscript(msg)
+            print(f"    yt-dlp download error: {msg[:200]}")
+            return None
 
-    # Find a subtitle URL (prefer manual > auto, VTT > other)
-    subs      = info.get("subtitles", {}) or {}
-    auto_subs = info.get("automatic_captions", {}) or {}
-    sub_url   = None
+        # Find the downloaded VTT file (yt-dlp names it <video_id>.<lang>.vtt)
+        vtt_files = glob.glob(os.path.join(tmpdir, "*.vtt"))
+        if not vtt_files:
+            raise PermanentNoTranscript("No subtitles available for this video")
 
-    for lang_key in ["en", "en-US", "en-GB", "en-orig"]:
-        for source in [subs, auto_subs]:
-            if lang_key not in source:
-                continue
-            formats = source[lang_key]
-            for fmt in formats:
-                if fmt.get("ext") == "vtt":
-                    sub_url = fmt.get("url")
-                    break
-            if not sub_url and formats:
-                sub_url = formats[0].get("url")
-            if sub_url:
-                break
-        if sub_url:
-            break
+        with open(vtt_files[0], encoding="utf-8") as f:
+            vtt_content = f.read()
 
-    if not sub_url:
-        raise PermanentNoTranscript("No subtitles available for this video")
-
-    try:
-        resp = requests.get(sub_url, timeout=20)
-        resp.raise_for_status()
-        plain, segments = _parse_vtt(resp.text)
-        if not plain.strip():
-            raise PermanentNoTranscript("Subtitle file was empty")
-        return plain, segments
-    except PermanentNoTranscript:
-        raise
-    except Exception as e:
-        print(f"    yt-dlp subtitle download error: {e}")
-        return None
+    plain, segments = _parse_vtt(vtt_content)
+    if not plain.strip():
+        raise PermanentNoTranscript("Subtitle file was empty")
+    return plain, segments
 
 
 # ---------------------------------------------------------------------------
@@ -240,11 +231,11 @@ def _get_transcript_ytt(video_id: str) -> tuple[str, list] | None:
 def get_youtube_transcript(video_id: str) -> tuple[str, list] | None:
     """
     Routes to the best available fetcher:
-    - YOUTUBE_COOKIES_FILE set & file exists → yt-dlp (cookie-aware, better bypass)
-    - Otherwise → youtube-transcript-api (fast, no auth needed)
+    - YOUTUBE_BROWSER set → yt-dlp with live browser cookies (best)
+    - YOUTUBE_COOKIES_FILE set & file exists → yt-dlp with cookie file
+    - Otherwise → youtube-transcript-api (fast, no auth)
     """
-    cookie_path = _resolve_cookie_path()
-    if cookie_path:
+    if YOUTUBE_BROWSER or _resolve_cookie_path():
         return _get_transcript_ytdlp(video_id)
     return _get_transcript_ytt(video_id)
 
@@ -302,7 +293,12 @@ def fetch_transcript(video: dict) -> tuple:
     if not vid_id:
         return None, "failed", []
 
-    fetcher = "yt-dlp+cookies" if _resolve_cookie_path() else "youtube-transcript-api"
+    if YOUTUBE_BROWSER:
+        fetcher = f"yt-dlp+{YOUTUBE_BROWSER}"
+    elif _resolve_cookie_path():
+        fetcher = "yt-dlp+cookiefile"
+    else:
+        fetcher = "youtube-transcript-api"
     print(f"    Fetching transcript for {vid_id} via {fetcher}…")
 
     # Delay to avoid triggering YouTube rate limits

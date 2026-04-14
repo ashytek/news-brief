@@ -12,8 +12,12 @@ ANTHROPIC_API_KEY     = os.environ["ANTHROPIC_API_KEY"]
 GOOGLE_API_KEY        = os.environ["GOOGLE_API_KEY"]          # Google AI Studio key — replaces OpenAI
 YOUTUBE_API_KEY       = os.environ["YOUTUBE_API_KEY"]
 ASSEMBLYAI_API_KEY    = os.environ.get("ASSEMBLYAI_API_KEY", "")
-# Optional: path to a Netscape-format cookies.txt exported from your browser.
-# Helps bypass YouTube IP rate-limiting. See pipeline/README.md for how to export.
+# Optional: browser name to extract YouTube cookies from at runtime (recommended).
+# Supported values: chrome, firefox, safari, edge, brave, opera, chromium
+# This reads fresh cookies directly from the browser — no file management needed.
+YOUTUBE_BROWSER       = os.environ.get("YOUTUBE_BROWSER", "")
+
+# Optional: path to a Netscape-format cookies.txt (fallback if YOUTUBE_BROWSER not set).
 YOUTUBE_COOKIES_FILE  = os.environ.get("YOUTUBE_COOKIES_FILE", "")
 SUPABASE_URL          = os.environ["SUPABASE_URL"]
 SUPABASE_SERVICE_KEY  = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
