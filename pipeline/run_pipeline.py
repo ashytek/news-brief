@@ -24,6 +24,12 @@ import cluster
 INTERVAL_MINUTES = 90
 
 
+def match_topics(text: str, keywords: list[str]) -> list[str]:
+    """Case-insensitive check: which keywords appear in the text?"""
+    text_lower = text.lower()
+    return [kw for kw in keywords if kw.lower() in text_lower]
+
+
 def process_transcripts_and_summarise(items, stats, source_map):
     """
     Shared logic: fetch transcripts, summarise, embed, cluster.
@@ -72,6 +78,9 @@ def process_transcripts_and_summarise(items, stats, source_map):
     print(f"\n  Summarising {len(processed)} items with Claude…")
     story_ids = []
 
+    # Load topic keywords once for this batch
+    topic_keywords = db.get_topic_keywords()
+
     for item in processed:
         source = source_map.get(item["source_id"], {})
         category = source.get("category", "tech_ai")
@@ -99,7 +108,23 @@ def process_transcripts_and_summarise(items, stats, source_map):
         story_id = db.insert_story(story_record)
         stats["stories_created"] += 1
         story_ids.append((story_id, summary_data["headline"], summary_data["summary"], category))
-        print(f"    ✓ Story saved")
+
+        # Tag with matching topic keywords
+        if topic_keywords:
+            searchable = " ".join([
+                summary_data["headline"],
+                summary_data["summary"],
+                " ".join(b["text"] for b in summary_data.get("bullets", [])),
+                item["title"],
+            ])
+            matched = match_topics(searchable, topic_keywords)
+            if matched:
+                db.tag_story_topics(story_id, matched)
+                print(f"    ✓ Story saved · topics: {', '.join(matched)}")
+            else:
+                print(f"    ✓ Story saved")
+        else:
+            print(f"    ✓ Story saved")
 
     # Embed + cluster new stories
     print(f"\n  Embedding and clustering {len(story_ids)} stories…")

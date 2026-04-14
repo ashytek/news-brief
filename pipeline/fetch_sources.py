@@ -14,7 +14,7 @@ from bs4 import BeautifulSoup
 from googleapiclient.discovery import build
 
 import db
-from config import YOUTUBE_API_KEY, LOOKBACK_HOURS
+from config import YOUTUBE_API_KEY
 
 _youtube = None
 
@@ -177,13 +177,14 @@ def fetch_all_sources() -> tuple[list[dict], dict]:
     Fetch new items from all active sources.
     Returns (new_video_records, stats)
     """
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=LOOKBACK_HOURS)
     sources = db.get_active_sources()
     new_items = []
     stats = {"sources_checked": 0, "videos_found": 0}
 
     for source in sources:
-        print(f"→ Checking {source['name']} ({source['category']})")
+        source_lookback = source.get("lookback_hours") or 24
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=source_lookback)
+        print(f"→ Checking {source['name']} ({source['category']}, lookback={source_lookback}h)")
         stats["sources_checked"] += 1
 
         try:

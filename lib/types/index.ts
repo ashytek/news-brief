@@ -9,6 +9,7 @@ export interface Source {
   rss_url: string | null
   website_url: string | null
   is_active: boolean
+  lookback_hours: number
   last_checked_at: string | null
   last_success_at: string | null
   consecutive_failures: number
@@ -29,6 +30,7 @@ export interface Story {
   summary: string
   bullets: Bullet[]
   cluster_id: string | null
+  matched_topics: string[] | null
   created_at: string
   source?: Source
   video?: Video

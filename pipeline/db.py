@@ -153,3 +153,18 @@ def finish_pipeline_run(run_id: str, status: str, stats: dict):
         "finished_at": "now()",
         **stats
     }).eq("id", run_id).execute()
+
+
+def get_topic_keywords() -> list[str]:
+    """Return all active topic keyword strings from the topic_keywords table."""
+    db = get_db()
+    res = db.table("topic_keywords").select("keyword").eq("is_active", True).execute()
+    return [row["keyword"] for row in res.data]
+
+
+def tag_story_topics(story_id: str, matched_topics: list[str]):
+    """Write the matched_topics array to a story row."""
+    db = get_db()
+    db.table("stories").update({
+        "matched_topics": matched_topics
+    }).eq("id", story_id).execute()

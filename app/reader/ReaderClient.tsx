@@ -5,7 +5,8 @@ import { createClient } from '@/lib/supabase/client'
 import type { Category, Story, Cluster, Source } from '@/lib/types'
 import { SoloCard } from '@/components/SoloCard'
 import { ClusteredCard } from '@/components/ClusteredCard'
-import { CategoryNav } from '@/components/CategoryNav'
+import { CategoryNav, type ActiveTab } from '@/components/CategoryNav'
+import { TopicsPanel } from '@/components/TopicsPanel'
 
 const CATEGORIES: { key: Category; label: string; color: string }[] = [
   { key: 'prophetic',    label: 'Prophetic',      color: 'violet' },
@@ -17,7 +18,7 @@ const CATEGORIES: { key: Category; label: string; color: string }[] = [
 export default function ReaderClient({ userId }: { userId: string }) {
   const supabase = createClient()
 
-  const [activeCategory, setActiveCategory] = useState<Category>('prophetic')
+  const [activeTab, setActiveTab] = useState<ActiveTab>('prophetic')
   const [showUnreadOnly, setShowUnreadOnly] = useState(true)
   const [clusters, setClusters] = useState<Cluster[]>([])
   const [soloStories, setSoloStories] = useState<Story[]>([])
@@ -25,6 +26,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
   const [loading, setLoading] = useState(true)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [sources, setSources] = useState<Record<string, Source>>({})
+  const [topicCount, setTopicCount] = useState(0)
   const dwellTimers = useRef<Map<string, number>>(new Map())
 
   // Load sources into a lookup map
@@ -36,6 +38,13 @@ export default function ReaderClient({ userId }: { userId: string }) {
         setSources(map)
       }
     })
+
+    // Load topic count badge
+    supabase
+      .from('stories')
+      .select('id', { count: 'exact', head: true })
+      .not('matched_topics', 'is', null)
+      .then(({ count }) => { if (count) setTopicCount(count) })
   }, [])
 
   // Load read item IDs for this user
@@ -54,37 +63,40 @@ export default function ReaderClient({ userId }: { userId: string }) {
     }
   }, [userId])
 
-  // Load content for active category
+  // Load content for active category (not used when Topics tab is active)
   const loadContent = useCallback(async () => {
+    if (activeTab === 'topics') {
+      setLoading(false)
+      return
+    }
     setLoading(true)
 
-    // Clusters with their stories
-    const { data: clusterData } = await supabase
-      .from('clusters')
-      .select(`*, stories(*, videos(*))`)
-      .eq('category', activeCategory)
-      .order('last_updated_at', { ascending: false })
-      .limit(30)
+    const [clusterRes, storyRes] = await Promise.all([
+      supabase
+        .from('clusters')
+        .select(`*, stories(*, videos(*))`)
+        .eq('category', activeTab)
+        .order('last_updated_at', { ascending: false })
+        .limit(30),
+      supabase
+        .from('stories')
+        .select(`*, videos(*), sources(*)`)
+        .eq('category', activeTab)
+        .is('cluster_id', null)
+        .order('created_at', { ascending: false })
+        .limit(30),
+    ])
 
-    // Solo stories (not in any cluster)
-    const { data: storyData } = await supabase
-      .from('stories')
-      .select(`*, videos(*), sources(*)`)
-      .eq('category', activeCategory)
-      .is('cluster_id', null)
-      .order('created_at', { ascending: false })
-      .limit(30)
-
-    if (clusterData) setClusters(clusterData as Cluster[])
-    if (storyData) setSoloStories(storyData as Story[])
+    if (clusterRes.data) setClusters(clusterRes.data as Cluster[])
+    if (storyRes.data) setSoloStories(storyRes.data as Story[])
     setLastUpdated(new Date())
     setLoading(false)
-  }, [activeCategory])
+  }, [activeTab])
 
   useEffect(() => {
     loadReadIds()
     loadContent()
-  }, [activeCategory, loadReadIds, loadContent])
+  }, [activeTab, loadReadIds, loadContent])
 
   const markRead = useCallback(async (storyId?: string, clusterId?: string) => {
     if (storyId && readIds.has(storyId)) return
@@ -111,7 +123,6 @@ export default function ReaderClient({ userId }: { userId: string }) {
       cluster_id: clusterId ?? null,
       signal,
     })
-    // Also update source weight slightly
     if (storyId) {
       const story = soloStories.find(s => s.id === storyId)
       if (story) {
@@ -146,7 +157,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
     window.location.href = '/auth'
   }
 
-  // Filter by unread
+  // Filter by unread (only applies to category tabs)
   const visibleClusters = showUnreadOnly
     ? clusters.filter(c => !readIds.has(c.id))
     : clusters
@@ -172,7 +183,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
             </div>
             <div>
               <h1 className="text-sm font-bold text-white leading-none">News Brief</h1>
-              {lastUpdated && (
+              {lastUpdated && activeTab !== 'topics' && (
                 <p className="text-xs text-gray-500 mt-0.5">
                   Updated {lastUpdated.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
                 </p>
@@ -181,16 +192,28 @@ export default function ReaderClient({ userId }: { userId: string }) {
           </div>
 
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => setShowUnreadOnly(v => !v)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                showUnreadOnly
-                  ? 'bg-violet-600 text-white'
-                  : 'bg-gray-800 text-gray-400 hover:text-white'
-              }`}
+            {activeTab !== 'topics' && (
+              <button
+                onClick={() => setShowUnreadOnly(v => !v)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                  showUnreadOnly
+                    ? 'bg-violet-600 text-white'
+                    : 'bg-gray-800 text-gray-400 hover:text-white'
+                }`}
+              >
+                {showUnreadOnly ? `Unread ${unreadCount > 0 ? `(${unreadCount})` : ''}` : 'All'}
+              </button>
+            )}
+
+            <a
+              href="/archive"
+              className="w-8 h-8 rounded-lg bg-gray-800 hover:bg-gray-700 flex items-center justify-center transition-colors"
+              title="Archive"
             >
-              {showUnreadOnly ? `Unread ${unreadCount > 0 ? `(${unreadCount})` : ''}` : 'All'}
-            </button>
+              <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+            </a>
 
             <a
               href="/sources"
@@ -214,73 +237,89 @@ export default function ReaderClient({ userId }: { userId: string }) {
           </div>
         </div>
 
-        {/* Category tabs */}
+        {/* Category + Topics tabs */}
         <CategoryNav
           categories={CATEGORIES}
-          active={activeCategory}
-          onChange={setActiveCategory}
+          active={activeTab}
+          onChange={setActiveTab}
           readIds={readIds}
           clusters={clusters}
           soloStories={soloStories}
+          topicCount={topicCount}
         />
       </header>
 
       {/* Feed */}
       <main className="max-w-2xl mx-auto px-4 py-4 space-y-3">
-        {loading && (
-          <div className="flex justify-center py-16">
-            <div className="w-6 h-6 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
-          </div>
+        {/* Topics tab content */}
+        {activeTab === 'topics' && (
+          <TopicsPanel
+            userId={userId}
+            readIds={readIds}
+            onMarkRead={markRead}
+            onEngagement={sendEngagement}
+          />
         )}
 
-        {!loading && isEmpty && (
-          <div className="text-center py-20">
-            <div className="text-4xl mb-3">
-              {showUnreadOnly ? '✓' : '📭'}
-            </div>
-            <p className="text-gray-400 font-medium">
-              {showUnreadOnly ? 'All caught up!' : 'No stories yet'}
-            </p>
-            <p className="text-gray-600 text-sm mt-1">
-              {showUnreadOnly
-                ? 'Nothing unread in this category'
-                : 'The pipeline will populate stories every ~90 minutes'}
-            </p>
-            {showUnreadOnly && (
-              <button
-                onClick={() => setShowUnreadOnly(false)}
-                className="mt-4 text-sm text-violet-400 hover:text-violet-300 transition-colors"
-              >
-                Show all stories →
-              </button>
+        {/* Category feed */}
+        {activeTab !== 'topics' && (
+          <>
+            {loading && (
+              <div className="flex justify-center py-16">
+                <div className="w-6 h-6 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
+              </div>
             )}
-          </div>
+
+            {!loading && isEmpty && (
+              <div className="text-center py-20">
+                <div className="text-4xl mb-3">
+                  {showUnreadOnly ? '✓' : '📭'}
+                </div>
+                <p className="text-gray-400 font-medium">
+                  {showUnreadOnly ? 'All caught up!' : 'No stories yet'}
+                </p>
+                <p className="text-gray-600 text-sm mt-1">
+                  {showUnreadOnly
+                    ? 'Nothing unread in this category'
+                    : 'The pipeline will populate stories every ~90 minutes'}
+                </p>
+                {showUnreadOnly && (
+                  <button
+                    onClick={() => setShowUnreadOnly(false)}
+                    className="mt-4 text-sm text-violet-400 hover:text-violet-300 transition-colors"
+                  >
+                    Show all stories →
+                  </button>
+                )}
+              </div>
+            )}
+
+            {!loading && visibleClusters.map(cluster => (
+              <ClusteredCard
+                key={cluster.id}
+                cluster={cluster}
+                isRead={readIds.has(cluster.id)}
+                onRead={() => markRead(undefined, cluster.id)}
+                onEngagement={(signal) => sendEngagement(signal, undefined, cluster.id)}
+                onDwellStart={() => startDwell(cluster.id)}
+                onDwellEnd={() => endDwell(cluster.id, undefined, cluster.id)}
+              />
+            ))}
+
+            {!loading && visibleSolos.map(story => (
+              <SoloCard
+                key={story.id}
+                story={story}
+                source={sources[story.source_id]}
+                isRead={readIds.has(story.id)}
+                onRead={() => markRead(story.id)}
+                onEngagement={(signal) => sendEngagement(signal, story.id)}
+                onDwellStart={() => startDwell(story.id)}
+                onDwellEnd={() => endDwell(story.id, story.id)}
+              />
+            ))}
+          </>
         )}
-
-        {!loading && visibleClusters.map(cluster => (
-          <ClusteredCard
-            key={cluster.id}
-            cluster={cluster}
-            isRead={readIds.has(cluster.id)}
-            onRead={() => markRead(undefined, cluster.id)}
-            onEngagement={(signal) => sendEngagement(signal, undefined, cluster.id)}
-            onDwellStart={() => startDwell(cluster.id)}
-            onDwellEnd={() => endDwell(cluster.id, undefined, cluster.id)}
-          />
-        ))}
-
-        {!loading && visibleSolos.map(story => (
-          <SoloCard
-            key={story.id}
-            story={story}
-            source={sources[story.source_id]}
-            isRead={readIds.has(story.id)}
-            onRead={() => markRead(story.id)}
-            onEngagement={(signal) => sendEngagement(signal, story.id)}
-            onDwellStart={() => startDwell(story.id)}
-            onDwellEnd={() => endDwell(story.id, story.id)}
-          />
-        ))}
       </main>
     </div>
   )
