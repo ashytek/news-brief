@@ -301,8 +301,9 @@ def fetch_transcript(video: dict) -> tuple:
         fetcher = "youtube-transcript-api"
     print(f"    Fetching transcript for {vid_id} via {fetcher}…")
 
-    # Delay to avoid triggering YouTube rate limits
-    time.sleep(random.uniform(1.0, 3.0))
+    # Delay to avoid triggering YouTube rate limits (yt-dlp is slower per request,
+    # so we keep this modest — the main throttle is the browser cookie auth overhead)
+    time.sleep(random.uniform(2.0, 5.0))
 
     try:
         result = get_youtube_transcript(vid_id)
