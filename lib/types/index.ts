@@ -44,6 +44,7 @@ export interface Video {
   url: string
   published_at: string
   duration_seconds: number | null
+  thumbnail_url: string | null
 }
 
 export interface PerspectiveItem {

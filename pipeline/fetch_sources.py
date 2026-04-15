@@ -69,7 +69,7 @@ def fetch_youtube_channel(source: dict, cutoff: datetime) -> list[dict]:
             order="date",
             type="video",
             publishedAfter=cutoff.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            maxResults=10
+            maxResults=20  # 20 covers channels like Vantage that release 10-13 segments/day
         ).execute()
     except Exception as e:
         print(f"  ✗ YouTube API error for {source['name']}: {e}")
@@ -82,6 +82,14 @@ def fetch_youtube_channel(source: dict, cutoff: datetime) -> list[dict]:
         published = datetime.fromisoformat(
             snippet["publishedAt"].replace("Z", "+00:00")
         )
+        # Best available thumbnail: high (480×360) → medium → fallback URL
+        thumbnails = snippet.get("thumbnails", {})
+        thumbnail_url = (
+            thumbnails.get("high", {}).get("url") or
+            thumbnails.get("medium", {}).get("url") or
+            thumbnails.get("default", {}).get("url") or
+            f"https://img.youtube.com/vi/{vid_id}/hqdefault.jpg"
+        )
         items.append({
             "source_id": source["id"],
             "external_id": vid_id,
@@ -89,6 +97,7 @@ def fetch_youtube_channel(source: dict, cutoff: datetime) -> list[dict]:
             "url": f"https://www.youtube.com/watch?v={vid_id}",
             "published_at": published.isoformat(),
             "transcript_status": "pending",
+            "thumbnail_url": thumbnail_url,
         })
     return items
 

@@ -28,8 +28,8 @@ LOOKBACK_HOURS = 4
 # Cosine similarity threshold to merge stories into a cluster
 CLUSTER_THRESHOLD = 0.78
 
-# Max bullet points per story
-MAX_BULLETS = 6
+# Max bullet points per story (8 gives good depth for segment-style channels like Vantage)
+MAX_BULLETS = 8
 
 # Claude models
 HAIKU_MODEL  = "claude-haiku-4-5-20251001"

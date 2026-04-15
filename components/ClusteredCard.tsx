@@ -73,28 +73,49 @@ export function ClusteredCard({ cluster, isRead, onRead, onEngagement, onDwellSt
         </div>
       )}
 
-      {/* Per-story bullets */}
+      {/* Per-story bullets with thumbnails */}
       {stories.length > 0 && (
-        <div className="space-y-2 mb-3">
+        <div className="space-y-3 mb-3">
           {stories.map(story => {
-            const videoUrl = (story as any).videos?.url ?? null
+            const video     = (story as any).videos
+            const videoUrl  = video?.url ?? null
+            const thumbnail = video?.thumbnail_url ?? null
+            const sourceName = (story as any).source?.name ?? null
             return (
-              <div key={story.id}>
-                {story.bullets?.slice(0, 3).map((b, i) => (
-                  <div key={i} className="flex items-start gap-2 text-sm">
-                    <span className="text-gray-600 mt-0.5 flex-shrink-0">•</span>
-                    <span className="text-gray-300 leading-snug">
-                      {b.text}
-                      {b.timestamp_seconds !== null && videoUrl && (
-                        <> {' '}
-                          <TsLink videoUrl={videoUrl} timestampSeconds={b.timestamp_seconds}>
-                            [{formatTime(b.timestamp_seconds)}]
-                          </TsLink>
-                        </>
-                      )}
-                    </span>
+              <div key={story.id} className="flex gap-2.5">
+                {/* Thumbnail */}
+                {thumbnail && (
+                  <div className="flex-shrink-0 w-20 h-[45px] rounded-lg overflow-hidden bg-gray-800">
+                    {videoUrl ? (
+                      <a href={videoUrl} target="_blank" rel="noopener noreferrer">
+                        <img src={thumbnail} alt="" className="w-full h-full object-cover hover:opacity-80 transition-opacity" loading="lazy" />
+                      </a>
+                    ) : (
+                      <img src={thumbnail} alt="" className="w-full h-full object-cover" loading="lazy" />
+                    )}
                   </div>
-                ))}
+                )}
+                {/* Bullets */}
+                <div className="flex-1 min-w-0">
+                  {sourceName && (
+                    <p className="text-xs font-medium text-gray-500 mb-1">{sourceName}</p>
+                  )}
+                  {story.bullets?.slice(0, 3).map((b, i) => (
+                    <div key={i} className="flex items-start gap-1.5 text-sm mb-1">
+                      <span className="text-gray-600 mt-0.5 flex-shrink-0">•</span>
+                      <span className="text-gray-300 leading-snug">
+                        {b.text}
+                        {b.timestamp_seconds !== null && videoUrl && (
+                          <>{' '}
+                            <TsLink videoUrl={videoUrl} timestampSeconds={b.timestamp_seconds}>
+                              [{formatTime(b.timestamp_seconds)}]
+                            </TsLink>
+                          </>
+                        )}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )
           })}

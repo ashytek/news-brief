@@ -12,16 +12,18 @@ from config import ANTHROPIC_API_KEY, HAIKU_MODEL, SONNET_MODEL, MAX_BULLETS
 
 client = Anthropic(api_key=ANTHROPIC_API_KEY)
 
-BULLET_SYSTEM = """You are a news summariser for a busy emergency medicine doctor.
+BULLET_SYSTEM = """You are a news summariser for a busy emergency medicine doctor who wants to stay informed on global affairs, geopolitics, technology, and faith-related news.
 Extract the most newsworthy points from the transcript below.
 Output ONLY valid JSON, no prose, no markdown fences.
 
 Rules:
-- Extract 3-6 bullet points of the most important claims or facts
+- Extract 5-8 bullet points covering all major claims, facts, and developments in the video
+- Each bullet should be a complete, self-contained fact — not vague, not a summary of a summary
 - For each bullet, find the transcript start_time (in seconds) of the sentence it comes from
-- Be specific — include names, numbers, locations
-- Headline: max 12 words, punchy, factual
-- Summary: 2 sentences max, plain English
+- Be specific — always include names, numbers, countries, percentages, dates, dollar amounts where present
+- If the video has multiple segments or topics, ensure each topic gets at least one bullet
+- Headline: max 12 words, punchy, factual — state the most important fact
+- Summary: 2 sentences, plain English, covering the who/what/why
 - If transcript is an article (no timestamps), use null for timestamp_seconds
 """
 
