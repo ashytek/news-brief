@@ -1,6 +1,6 @@
 """
 Claude-powered summarisation.
-Uses Haiku for bullet extraction (cheap) and Sonnet for cluster synthesis (smart).
+Uses Haiku for general bullet extraction and Sonnet for prophetic content + cluster synthesis.
 """
 from __future__ import annotations
 
@@ -12,19 +12,55 @@ from config import ANTHROPIC_API_KEY, HAIKU_MODEL, SONNET_MODEL, MAX_BULLETS
 
 client = Anthropic(api_key=ANTHROPIC_API_KEY)
 
+# ---------------------------------------------------------------------------
+# General news prompt (Israel, India & Global, Tech & AI)
+# ---------------------------------------------------------------------------
+
 BULLET_SYSTEM = """You are a news summariser for a busy emergency medicine doctor who wants to stay informed on global affairs, geopolitics, technology, and faith-related news.
-Extract the most newsworthy points from the transcript below.
+Extract the most newsworthy points from the full transcript below.
 Output ONLY valid JSON, no prose, no markdown fences.
 
 Rules:
-- Extract 5-8 bullet points covering all major claims, facts, and developments in the video
-- Each bullet should be a complete, self-contained fact — not vague, not a summary of a summary
+- Extract 5-8 bullet points covering ALL major claims, facts, and developments — scan the ENTIRE transcript, not just the beginning
+- Each bullet must be a complete, self-contained fact — specific and concrete, never vague
 - For each bullet, find the transcript start_time (in seconds) of the sentence it comes from
-- Be specific — always include names, numbers, countries, percentages, dates, dollar amounts where present
-- If the video has multiple segments or topics, ensure each topic gets at least one bullet
-- Headline: max 12 words, punchy, factual — state the most important fact
+- Always include names, numbers, countries, percentages, dates, dollar amounts where present
+- If the video covers multiple topics or segments, ensure every major topic gets at least one bullet
+- Headline: max 12 words, punchy, factual — state the single most important fact
 - Summary: 2 sentences, plain English, covering the who/what/why
 - If transcript is an article (no timestamps), use null for timestamp_seconds
+"""
+
+# ---------------------------------------------------------------------------
+# Prophetic content prompt — Troy Black, prophetic declarations, visions
+# ---------------------------------------------------------------------------
+
+PROPHETIC_BULLET_SYSTEM = """You are extracting prophetic content from a ministry video for a discerning Christian leader.
+Your ONLY task is to extract prophetic declarations, visions, words, and warnings from across the ENTIRE video.
+Output ONLY valid JSON, no prose, no markdown fences.
+
+INCLUDE — extract these specifically:
+- Direct prophetic declarations ("The Lord says...", "I hear the Spirit saying...", "God showed me...", "Thus says the Lord...")
+- Visions and what was seen — include specific imagery, symbols, colours, numbers seen
+- Prophetic words over specific nations, cities, leaders, regions, or groups of people
+- Prophetic warnings and urgent spiritual alerts
+- Declared seasons, timelines, or windows ("this year", "in 40 days", etc.)
+- Names of people, nations, regions, or events spoken over prophetically
+
+EXCLUDE completely — do not summarise these:
+- General gospel preaching, Bible teaching, or scripture exposition
+- Worship, prayer, or altar call descriptions
+- Fundraising, ministry announcements, or promotional content
+- General pastoral encouragement without a specific prophetic declaration
+- Testimonies unless they contain a direct prophetic word or vision
+
+Be precise and literal. If a nation is named, name it. If a number or date is declared, quote it exactly. Use the prophet's own language where possible.
+
+Rules:
+- Extract 5-8 bullet points, one per distinct prophetic declaration or vision element — scan the ENTIRE video
+- For each bullet, find the transcript start_time (in seconds) of the prophetic statement
+- Headline: state the primary prophetic declaration or main theme in max 12 words
+- Summary: 2 sentences capturing the core prophetic message and who/what it is over
 """
 
 BULLET_SCHEMA = """Output this exact JSON shape:
@@ -47,11 +83,30 @@ Given multiple source stories on the same event, produce:
 """
 
 
-def truncate_transcript(transcript: str, segments: list[dict], max_chars: int = 12000) -> str:
-    """Trim transcript to fit context, keeping first max_chars characters."""
-    if len(transcript) <= max_chars:
-        return transcript
-    return transcript[:max_chars] + "\n[transcript truncated]"
+def build_transcript_context(title: str, transcript: str, segments: list[dict]) -> str:
+    """
+    Build the full transcript context for Claude.
+    Uses ALL segments (no arbitrary cutoff) up to 80,000 chars.
+    This ensures long videos (30–90 min prophetic content) are fully covered.
+    """
+    MAX_CHARS = 80_000
+
+    if segments:
+        context = f"Title: {title}\n\nTranscript with timestamps:\n"
+        for seg in segments:  # ALL segments — no truncation at 300
+            line = f"[{int(seg['start'])}s] {seg['text']}\n"
+            if len(context) + len(line) > MAX_CHARS:
+                context += "\n[remaining transcript omitted — summarise what you have above]\n"
+                break
+            context += line
+    else:
+        # Article text — no timestamps
+        text = transcript[:MAX_CHARS]
+        if len(transcript) > MAX_CHARS:
+            text += "\n[article truncated]"
+        context = f"Title: {title}\n\nArticle text:\n{text}"
+
+    return context
 
 
 def summarise_video(
@@ -63,28 +118,22 @@ def summarise_video(
     """
     Returns {"headline", "summary", "bullets": [{"text", "timestamp_seconds"}]}
     or None on failure.
+
+    Prophetic category uses a specialised prompt (Sonnet) focused on declarations
+    and visions. All other categories use the general news prompt (Haiku).
     """
-    # Build segment time index for quick lookup: text → start_time
-    seg_index = {}
-    for seg in segments:
-        key = seg["text"].strip()[:40]
-        seg_index[key] = int(seg.get("start", 0))
+    context = build_transcript_context(title, transcript, segments)
 
-    # Include segment timestamps inline for Claude to reference
-    if segments:
-        context = f"Title: {title}\n\nTranscript with timestamps:\n"
-        for seg in segments[:300]:  # First 300 segments
-            context += f"[{int(seg['start'])}s] {seg['text']}\n"
-    else:
-        context = f"Title: {title}\n\nArticle text:\n{transcript}"
-
-    context = truncate_transcript(context, segments)
+    is_prophetic = (category == "prophetic")
+    system_prompt = (PROPHETIC_BULLET_SYSTEM if is_prophetic else BULLET_SYSTEM) + "\n\n" + BULLET_SCHEMA
+    # Use Sonnet for prophetic (nuanced extraction) — Haiku for everything else (cost-efficient)
+    model = SONNET_MODEL if is_prophetic else HAIKU_MODEL
 
     try:
         response = client.messages.create(
-            model=HAIKU_MODEL,
-            max_tokens=1024,
-            system=BULLET_SYSTEM + "\n\n" + BULLET_SCHEMA,
+            model=model,
+            max_tokens=2048,  # Increased — longer videos need more output
+            system=system_prompt,
             messages=[{"role": "user", "content": context}]
         )
         raw = response.content[0].text.strip()
@@ -94,7 +143,6 @@ def summarise_video(
         raw = re.sub(r"\n?```$", "", raw)
 
         result = json.loads(raw)
-        # Enforce max bullets
         result["bullets"] = result["bullets"][:MAX_BULLETS]
         return result
 

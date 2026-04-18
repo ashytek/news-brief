@@ -170,6 +170,40 @@ export default function ReaderClient({ userId }: { userId: string }) {
 
   const isEmpty = visibleClusters.length === 0 && visibleSolos.length === 0
 
+  // Build unified feed: Vantage pinned to top, then clusters + other solos merged by date DESC
+  type FeedItem =
+    | { type: 'cluster'; data: Cluster; date: Date }
+    | { type: 'story';   data: Story;   date: Date }
+
+  const isVantage = (story: Story) => {
+    const src = sources[story.source_id]
+    const name = (src?.name ?? '').toLowerCase()
+    return name.includes('vantage') || name.includes('firstpost')
+  }
+
+  const vantagePinned = visibleSolos
+    .filter(isVantage)
+    .sort((a, b) => {
+      const da = new Date((a as any).videos?.published_at ?? a.created_at)
+      const db = new Date((b as any).videos?.published_at ?? b.created_at)
+      return db.getTime() - da.getTime()
+    })
+
+  const mergedFeed: FeedItem[] = [
+    ...visibleClusters.map(c => ({
+      type: 'cluster' as const,
+      data: c,
+      date: new Date(c.last_updated_at),
+    })),
+    ...visibleSolos
+      .filter(s => !isVantage(s))
+      .map(s => ({
+        type: 'story' as const,
+        data: s,
+        date: new Date((s as any).videos?.published_at ?? s.created_at),
+      })),
+  ].sort((a, b) => b.date.getTime() - a.date.getTime())
+
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100">
       {/* Top bar */}
@@ -294,30 +328,59 @@ export default function ReaderClient({ userId }: { userId: string }) {
               </div>
             )}
 
-            {!loading && visibleClusters.map(cluster => (
-              <ClusteredCard
-                key={cluster.id}
-                cluster={cluster}
-                isRead={readIds.has(cluster.id)}
-                onRead={() => markRead(undefined, cluster.id)}
-                onEngagement={(signal) => sendEngagement(signal, undefined, cluster.id)}
-                onDwellStart={() => startDwell(cluster.id)}
-                onDwellEnd={() => endDwell(cluster.id, undefined, cluster.id)}
-              />
-            ))}
+            {/* Vantage segments pinned to top */}
+            {!loading && vantagePinned.length > 0 && (
+              <>
+                <div className="flex items-center gap-2 pt-1 pb-0.5">
+                  <span className="text-xs font-semibold text-amber-400 uppercase tracking-wider">Vantage · Latest</span>
+                  <div className="flex-1 h-px bg-amber-500/20" />
+                </div>
+                {vantagePinned.map(story => (
+                  <SoloCard
+                    key={story.id}
+                    story={story}
+                    source={sources[story.source_id]}
+                    isRead={readIds.has(story.id)}
+                    onRead={() => markRead(story.id)}
+                    onEngagement={(signal) => sendEngagement(signal, story.id)}
+                    onDwellStart={() => startDwell(story.id)}
+                    onDwellEnd={() => endDwell(story.id, story.id)}
+                  />
+                ))}
+                {mergedFeed.length > 0 && (
+                  <div className="flex items-center gap-2 pt-1 pb-0.5">
+                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Other stories</span>
+                    <div className="flex-1 h-px bg-gray-800" />
+                  </div>
+                )}
+              </>
+            )}
 
-            {!loading && visibleSolos.map(story => (
-              <SoloCard
-                key={story.id}
-                story={story}
-                source={sources[story.source_id]}
-                isRead={readIds.has(story.id)}
-                onRead={() => markRead(story.id)}
-                onEngagement={(signal) => sendEngagement(signal, story.id)}
-                onDwellStart={() => startDwell(story.id)}
-                onDwellEnd={() => endDwell(story.id, story.id)}
-              />
-            ))}
+            {/* Unified merged feed — clusters + non-Vantage solos sorted latest→oldest */}
+            {!loading && mergedFeed.map(item =>
+              item.type === 'cluster' ? (
+                <ClusteredCard
+                  key={item.data.id}
+                  cluster={item.data}
+                  isRead={readIds.has(item.data.id)}
+                  onRead={() => markRead(undefined, item.data.id)}
+                  onEngagement={(signal) => sendEngagement(signal, undefined, item.data.id)}
+                  onDwellStart={() => startDwell(item.data.id)}
+                  onDwellEnd={() => endDwell(item.data.id, undefined, item.data.id)}
+                />
+              ) : (
+                <SoloCard
+                  key={item.data.id}
+                  story={item.data}
+                  source={sources[item.data.source_id]}
+                  isRead={readIds.has(item.data.id)}
+                  onRead={() => markRead(item.data.id)}
+                  onEngagement={(signal) => sendEngagement(signal, item.data.id)}
+                  onDwellStart={() => startDwell(item.data.id)}
+                  onDwellEnd={() => endDwell(item.data.id, item.data.id)}
+                />
+              )
+            )}
           </>
         )}
       </main>
