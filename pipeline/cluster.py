@@ -123,13 +123,20 @@ def synthesise_ready_clusters():
     """
     supabase_db: Client = db.get_db()
 
+    # Fetch all multi-source clusters; synthesise if never done OR stale (new stories arrived)
     result = supabase_db.table("clusters") \
-        .select("id, category, story_count") \
+        .select("id, category, story_count, synthesised_at, last_updated_at") \
         .gte("story_count", 2) \
-        .is_("synthesised_at", "null") \
         .execute()
 
-    clusters = result.data
+    all_clusters = result.data
+
+    # Keep clusters that are: (a) never synthesised, or (b) updated after last synthesis
+    clusters = [
+        c for c in all_clusters
+        if not c.get("synthesised_at")
+        or (c.get("last_updated_at") and c["last_updated_at"] > c["synthesised_at"])
+    ]
     print(f"  {len(clusters)} cluster(s) need synthesis")
 
     for cluster in clusters:

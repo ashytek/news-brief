@@ -52,6 +52,7 @@ def process_transcripts_and_summarise(items, stats, source_map):
             "transcript_text": transcript_text,
             "transcript_status": status,
             "fetched_at": "now()",
+            "thumbnail_url": item.get("thumbnail_url"),  # persist thumbnail from fetch phase
         }
         video_id = item.get("video_id") or db.upsert_video(video_record)
 
