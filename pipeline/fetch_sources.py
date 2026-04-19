@@ -45,7 +45,11 @@ def resolve_channel_id(handle_or_id: str) -> Optional[str]:
 
 
 def fetch_youtube_channel(source: dict, cutoff: datetime) -> list[dict]:
-    """Fetch recent videos from a YouTube channel."""
+    """
+    Fetch recent videos from a YouTube channel via the FREE RSS feed.
+    Uses zero YouTube Data API quota — no search.list call needed.
+    Falls back to the API only if RSS fails.
+    """
     channel_id_raw = source["youtube_channel_id"]
     if not channel_id_raw:
         return []
@@ -55,12 +59,58 @@ def fetch_youtube_channel(source: dict, cutoff: datetime) -> list[dict]:
         print(f"  ⚠ Could not resolve channel ID for {source['name']}")
         return []
 
-    # Update the DB with the real channel ID if it was a handle placeholder
+    # Persist resolved ID back to DB if it was a handle placeholder
     if channel_id_raw.startswith("HANDLE:"):
         db.get_db().table("sources").update({
             "youtube_channel_id": channel_id
         }).eq("id", source["id"]).execute()
 
+    # ── PRIMARY: YouTube RSS feed (free, no quota) ──────────────────────────
+    rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
+    try:
+        feed = feedparser.parse(rss_url)
+        if feed.entries:
+            items = []
+            for entry in feed.entries:
+                # Published date
+                pub_struct = entry.get("published_parsed") or entry.get("updated_parsed")
+                if pub_struct:
+                    published = datetime(*pub_struct[:6], tzinfo=timezone.utc)
+                    if published < cutoff:
+                        continue
+                else:
+                    published = datetime.now(timezone.utc)
+
+                # Video ID — in the RSS feed the <id> tag contains the watch URL
+                vid_id = entry.get("yt_videoid") or ""
+                if not vid_id:
+                    link = entry.get("link", "")
+                    m = re.search(r"v=([A-Za-z0-9_-]{11})", link)
+                    vid_id = m.group(1) if m else ""
+                if not vid_id:
+                    continue
+
+                # Thumbnail via media:group → media:thumbnail (feedparser key: media_thumbnail)
+                thumbnails = entry.get("media_thumbnail", [])
+                thumbnail_url = (
+                    thumbnails[0].get("url") if thumbnails
+                    else f"https://img.youtube.com/vi/{vid_id}/hqdefault.jpg"
+                )
+
+                items.append({
+                    "source_id": source["id"],
+                    "external_id": vid_id,
+                    "title": entry.get("title", "Untitled"),
+                    "url": f"https://www.youtube.com/watch?v={vid_id}",
+                    "published_at": published.isoformat(),
+                    "transcript_status": "pending",
+                    "thumbnail_url": thumbnail_url,
+                })
+            return items
+    except Exception as e:
+        print(f"  ⚠ RSS fetch failed for {source['name']}, falling back to API: {e}")
+
+    # ── FALLBACK: YouTube Data API (costs 100 units — only if RSS fails) ────
     yt = get_youtube()
     try:
         res = yt.search().list(
@@ -69,7 +119,7 @@ def fetch_youtube_channel(source: dict, cutoff: datetime) -> list[dict]:
             order="date",
             type="video",
             publishedAfter=cutoff.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            maxResults=20  # 20 covers channels like Vantage that release 10-13 segments/day
+            maxResults=20
         ).execute()
     except Exception as e:
         print(f"  ✗ YouTube API error for {source['name']}: {e}")
@@ -82,7 +132,6 @@ def fetch_youtube_channel(source: dict, cutoff: datetime) -> list[dict]:
         published = datetime.fromisoformat(
             snippet["publishedAt"].replace("Z", "+00:00")
         )
-        # Best available thumbnail: high (480×360) → medium → fallback URL
         thumbnails = snippet.get("thumbnails", {})
         thumbnail_url = (
             thumbnails.get("high", {}).get("url") or
