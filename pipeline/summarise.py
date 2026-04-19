@@ -1,24 +1,25 @@
 """
-Claude-powered summarisation.
-Uses Haiku for general bullet extraction and Sonnet for prophetic content + cluster synthesis.
+Gemini-powered summarisation. Zero cost at current volumes (free tier).
+
+- gemini-2.0-flash  →  general news bullets + cluster synthesis
+- gemini-2.5-pro    →  prophetic extraction (1M-token context, thinking mode)
+
+Claude fallback removed — Gemini's exponential retry in llm.py handles
+transient failures. Add anthropic back to requirements.txt and uncomment
+_claude_fallback() below if you ever need it again.
 """
 from __future__ import annotations
 
-import json
-import re
-from anthropic import Anthropic
-
-from config import ANTHROPIC_API_KEY, HAIKU_MODEL, SONNET_MODEL, MAX_BULLETS
-
-client = Anthropic(api_key=ANTHROPIC_API_KEY)
+import llm
+from config import MAX_BULLETS
 
 # ---------------------------------------------------------------------------
-# General news prompt (Israel, India & Global, Tech & AI)
+# Prompts
 # ---------------------------------------------------------------------------
 
 BULLET_SYSTEM = """You are a news summariser for a busy emergency medicine doctor who wants to stay informed on global affairs, geopolitics, technology, and faith-related news.
+
 Extract the most newsworthy points from the full transcript below.
-Output ONLY valid JSON, no prose, no markdown fences.
 
 Rules:
 - Extract 5-8 bullet points covering ALL major claims, facts, and developments — scan the ENTIRE transcript, not just the beginning
@@ -28,16 +29,10 @@ Rules:
 - If the video covers multiple topics or segments, ensure every major topic gets at least one bullet
 - Headline: max 12 words, punchy, factual — state the single most important fact
 - Summary: 2 sentences, plain English, covering the who/what/why
-- If transcript is an article (no timestamps), use null for timestamp_seconds
-"""
-
-# ---------------------------------------------------------------------------
-# Prophetic content prompt — Troy Black, prophetic declarations, visions
-# ---------------------------------------------------------------------------
+- If transcript is an article (no timestamps), use null for timestamp_seconds"""
 
 PROPHETIC_BULLET_SYSTEM = """You are extracting prophetic content from a ministry video for a discerning Christian leader.
 Your ONLY task is to extract prophetic declarations, visions, words, and warnings from across the ENTIRE video.
-Output ONLY valid JSON, no prose, no markdown fences.
 
 INCLUDE — extract these specifically:
 - Direct prophetic declarations ("The Lord says...", "I hear the Spirit saying...", "God showed me...", "Thus says the Lord...")
@@ -53,54 +48,84 @@ EXCLUDE completely — do not summarise these:
 - Fundraising, ministry announcements, or promotional content
 - General pastoral encouragement without a specific prophetic declaration
 - Testimonies unless they contain a direct prophetic word or vision
+- If a declaration appears multiple times, include it ONCE only (first occurrence)
 
-Be precise and literal. If a nation is named, name it. If a number or date is declared, quote it exactly. Use the prophet's own language where possible.
-
-Rules:
-- Extract 5-8 bullet points, one per distinct prophetic declaration or vision element — scan the ENTIRE video
-- For each bullet, find the transcript start_time (in seconds) of the prophetic statement
-- Headline: state the primary prophetic declaration or main theme in max 12 words
-- Summary: 2 sentences capturing the core prophetic message and who/what it is over
-"""
-
-BULLET_SCHEMA = """Output this exact JSON shape:
-{
-  "headline": "string",
-  "summary": "string",
-  "bullets": [
-    {"text": "string", "timestamp_seconds": integer_or_null},
-    ...
-  ]
-}"""
+Be precise and literal. If a nation is named, name it. If a number or date is declared, quote it exactly.
+Use the prophet's own language where possible."""
 
 SYNTHESIS_SYSTEM = """You synthesise multiple news perspectives into a structured brief for a busy doctor.
-Output ONLY valid JSON. No markdown, no prose outside JSON.
-
 Given multiple source stories on the same event, produce:
 - core_fact: one sentence — the undisputed factual core of the event
 - consensus: 2-3 sentences — what all or most sources agree on
-- perspectives: array of per-source angles (max 4), each with the unique framing that source adds
-"""
+- perspectives: array of per-source angles (max 4), each with the unique framing that source adds"""
 
+# ---------------------------------------------------------------------------
+# Native JSON schemas — Gemini enforces these natively; no markdown stripping needed
+# ---------------------------------------------------------------------------
+
+BULLET_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "headline": {"type": "string"},
+        "summary":  {"type": "string"},
+        "bullets": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "text":              {"type": "string"},
+                    "timestamp_seconds": {"type": "integer", "nullable": True},
+                },
+                "required": ["text"],
+            },
+        },
+    },
+    "required": ["headline", "summary", "bullets"],
+}
+
+SYNTHESIS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "core_fact":   {"type": "string"},
+        "consensus":   {"type": "string"},
+        "perspectives": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "source":          {"type": "string"},
+                    "angle":           {"type": "string"},
+                    "timestamp_link":  {"type": "string", "nullable": True},
+                },
+                "required": ["source", "angle"],
+            },
+        },
+    },
+    "required": ["core_fact", "consensus", "perspectives"],
+}
+
+
+# ---------------------------------------------------------------------------
+# Transcript builder
+# ---------------------------------------------------------------------------
 
 def build_transcript_context(title: str, transcript: str, segments: list[dict]) -> str:
     """
-    Build the full transcript context for Claude.
-    Uses ALL segments (no arbitrary cutoff) up to 80,000 chars.
-    This ensures long videos (30–90 min prophetic content) are fully covered.
+    Build the full transcript context.
+    Uses ALL segments (no cutoff) up to 80,000 chars.
+    Gemini 2.5 Pro supports 1M tokens so we can raise this limit if needed.
     """
     MAX_CHARS = 80_000
 
     if segments:
         context = f"Title: {title}\n\nTranscript with timestamps:\n"
-        for seg in segments:  # ALL segments — no truncation at 300
+        for seg in segments:
             line = f"[{int(seg['start'])}s] {seg['text']}\n"
             if len(context) + len(line) > MAX_CHARS:
                 context += "\n[remaining transcript omitted — summarise what you have above]\n"
                 break
             context += line
     else:
-        # Article text — no timestamps
         text = transcript[:MAX_CHARS]
         if len(transcript) > MAX_CHARS:
             text += "\n[article truncated]"
@@ -109,55 +134,59 @@ def build_transcript_context(title: str, transcript: str, segments: list[dict]) 
     return context
 
 
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
 def summarise_video(
     title: str,
     transcript: str,
     segments: list[dict],
-    category: str
+    category: str,
 ) -> dict | None:
     """
     Returns {"headline", "summary", "bullets": [{"text", "timestamp_seconds"}]}
     or None on failure.
 
-    Prophetic category uses a specialised prompt (Sonnet) focused on declarations
-    and visions. All other categories use the general news prompt (Haiku).
+    Prophetic → Gemini 2.5 Pro with thinking (nuanced extraction, full context)
+    General   → Gemini 2.0 Flash (cost-efficient, fast)
     """
     context = build_transcript_context(title, transcript, segments)
-
     is_prophetic = (category == "prophetic")
-    system_prompt = (PROPHETIC_BULLET_SYSTEM if is_prophetic else BULLET_SYSTEM) + "\n\n" + BULLET_SCHEMA
-    # Use Sonnet for prophetic (nuanced extraction) — Haiku for everything else (cost-efficient)
-    model = SONNET_MODEL if is_prophetic else HAIKU_MODEL
 
-    try:
-        response = client.messages.create(
-            model=model,
-            max_tokens=2048,  # Increased — longer videos need more output
-            system=system_prompt,
-            messages=[{"role": "user", "content": context}]
+    if is_prophetic:
+        result = llm.pro_json(
+            contents=context,
+            system_instruction=PROPHETIC_BULLET_SYSTEM,
+            response_schema=BULLET_SCHEMA,
+            temperature=0.2,
+            max_output_tokens=3072,
+            thinking_budget=4096,   # enables reasoning; raise to 8192 for complex videos
         )
-        raw = response.content[0].text.strip()
+    else:
+        result = llm.flash_json(
+            contents=context,
+            system_instruction=BULLET_SYSTEM,
+            response_schema=BULLET_SCHEMA,
+            temperature=0.2,
+            max_output_tokens=2048,
+        )
 
-        # Strip markdown fences if present
-        raw = re.sub(r"^```(?:json)?\n?", "", raw)
-        raw = re.sub(r"\n?```$", "", raw)
-
-        result = json.loads(raw)
-        result["bullets"] = result["bullets"][:MAX_BULLETS]
-        return result
-
-    except Exception as e:
-        print(f"    ✗ Summarisation error: {e}")
+    if not result:
+        print(f"    ✗ Summarisation failed (Gemini returned None)")
         return None
+
+    result["bullets"] = result.get("bullets", [])[:MAX_BULLETS]
+    return result
 
 
 def synthesise_cluster(
     category: str,
-    stories: list[dict]  # List of {source_name, headline, summary, bullets, video_url}
+    stories: list[dict],
 ) -> dict | None:
     """
-    Uses Sonnet to synthesise a cluster from multiple stories.
-    Returns {"core_fact", "consensus", "perspectives": [...]}
+    Synthesises a multi-source cluster → {"core_fact", "consensus", "perspectives"}
+    Uses Gemini Flash (free, fast).
     """
     if len(stories) < 2:
         return None
@@ -174,27 +203,12 @@ def synthesise_cluster(
         if s.get("video_url"):
             stories_text += f"Video: {s['video_url']}\n"
 
-    schema = """{
-  "core_fact": "string",
-  "consensus": "string",
-  "perspectives": [
-    {"source": "source name", "angle": "unique framing from this source", "timestamp_link": "full youtube url with ?t=Xs or null"},
-    ...
-  ]
-}"""
+    result = llm.flash_json(
+        contents=f"Category: {category}\n\nStories:\n{stories_text}",
+        system_instruction=SYNTHESIS_SYSTEM,
+        response_schema=SYNTHESIS_SCHEMA,
+        temperature=0.2,
+        max_output_tokens=1536,
+    )
 
-    try:
-        response = client.messages.create(
-            model=SONNET_MODEL,
-            max_tokens=1024,
-            system=SYNTHESIS_SYSTEM + "\n\nOutput JSON:\n" + schema,
-            messages=[{"role": "user", "content": f"Category: {category}\n\nStories:\n{stories_text}"}]
-        )
-        raw = response.content[0].text.strip()
-        raw = re.sub(r"^```(?:json)?\n?", "", raw)
-        raw = re.sub(r"\n?```$", "", raw)
-        return json.loads(raw)
-
-    except Exception as e:
-        print(f"    ✗ Synthesis error: {e}")
-        return None
+    return result

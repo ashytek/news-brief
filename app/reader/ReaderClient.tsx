@@ -77,14 +77,14 @@ export default function ReaderClient({ userId }: { userId: string }) {
         .select(`*, stories(*, videos(*))`)
         .eq('category', activeTab)
         .order('last_updated_at', { ascending: false })
-        .limit(30),
+        .limit(100),
       supabase
         .from('stories')
         .select(`*, videos(*), sources(*)`)
         .eq('category', activeTab)
         .is('cluster_id', null)
         .order('created_at', { ascending: false })
-        .limit(30),
+        .limit(100),
     ])
 
     if (clusterRes.data) setClusters(clusterRes.data as Cluster[])

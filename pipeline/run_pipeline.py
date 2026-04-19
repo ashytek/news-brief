@@ -9,17 +9,37 @@ Usage:
     python run_pipeline.py --retry   # retries failed transcripts only, then exits
 """
 
+import os
 import sys
 import time
 import schedule
 import traceback
 from datetime import datetime
 
+import requests as _requests
+
 import db
 import fetch_sources
 import get_transcripts
 import summarise
 import cluster
+import llm
+import archive_transcripts
+
+
+def _ping_healthcheck(success: bool = True):
+    """Ping Healthchecks.io if HEALTHCHECK_URL is set in .env.
+    success=True → normal ping (run succeeded)
+    success=False → /fail ping (run errored)
+    """
+    url = os.environ.get("HEALTHCHECK_URL", "").strip()
+    if not url:
+        return
+    try:
+        endpoint = url if success else f"{url.rstrip('/')}/fail"
+        _requests.get(endpoint, timeout=5)
+    except Exception:
+        pass  # never let monitoring break the pipeline
 
 INTERVAL_MINUTES = 90
 
@@ -275,21 +295,7 @@ def run_once():
     }
 
     try:
-        # ── Step 0: Retry any previously failed transcripts ───────────────
-        failed = db.get_failed_videos(limit=20)
-        if failed:
-            print(f"\n[0/4] Retrying {len(failed)} previously failed transcripts…")
-            source_map = {s["id"]: s for s in db.get_active_sources()}
-            items = [{
-                "video_id": v["id"],
-                "source_id": v["source_id"],
-                "external_id": v["external_id"],
-                "title": v["title"],
-                "url": v["url"],
-                "published_at": v["published_at"],
-                "transcript_status": v["transcript_status"],
-            } for v in failed]
-            stats = process_transcripts_and_summarise(items, stats, source_map)
+        source_map = {s["id"]: s for s in db.get_active_sources()}
 
         # ── Step 1: Fetch new items from all sources ──────────────────────
         print("\n[1/4] Fetching sources…")
@@ -301,22 +307,74 @@ def run_once():
         if new_items:
             # ── Steps 2-4: Transcripts → Summarise → Embed → Cluster ─────
             print("\n[2/4] Extracting transcripts…")
-            source_map = {s["id"]: s for s in db.get_active_sources()}
             stats = process_transcripts_and_summarise(new_items, stats, source_map)
-        elif not failed:
+
+        # ── Step 5: Retry previously failed transcripts (AFTER new items) ─
+        # Moved to end so fresh videos are never starved by the retry burst.
+        # Uses a longer jitter (10-20s) to avoid re-triggering IP rate limits.
+        failed = db.get_failed_videos(limit=10)
+        if failed:
+            print(f"\n[5/5] Retrying {len(failed)} previously failed transcripts…")
+            retry_items = [{
+                "video_id": v["id"],
+                "source_id": v["source_id"],
+                "external_id": v["external_id"],
+                "title": v["title"],
+                "url": v["url"],
+                "published_at": v["published_at"],
+                "transcript_status": v["transcript_status"],
+            } for v in failed]
+            # Patch the transcript fetcher to use a longer delay for retries
+            import get_transcripts as _gt
+            _orig_sleep = _gt.random.uniform
+            _gt.random.uniform = lambda a, b: _orig_sleep(10.0, 20.0)  # type: ignore
+            try:
+                stats = process_transcripts_and_summarise(retry_items, stats, source_map)
+            finally:
+                _gt.random.uniform = _orig_sleep  # restore
+
+        if not new_items and not failed:
             print("  Nothing new. Run complete.")
 
         status_str = "success" if stats["stories_created"] > 0 else "partial"
         db.finish_pipeline_run(run_id, status_str, stats)
 
+        # ── Token usage summary ───────────────────────────────────────────
+        usage = llm.get_usage()
+        flash_tok = usage["flash_input_tokens"] + usage["flash_output_tokens"]
+        pro_tok   = usage["pro_input_tokens"] + usage["pro_output_tokens"]
         print(f"\n{'='*60}")
         print(f"✅ Done! {stats['stories_created']} stories created, {stats['clusters_touched']} clustered")
+        print(f"   LLM: {usage['calls']} calls · Flash {flash_tok:,} tokens · Pro {pro_tok:,} tokens · {usage['failures']} failures")
         print(f"{'='*60}\n")
+
+        # Persist token usage to pipeline_runs (columns may not exist yet — ignore errors)
+        try:
+            db.get_db().table("pipeline_runs").update({
+                "gemini_calls":         usage["calls"],
+                "gemini_failures":      usage["failures"],
+                "gemini_flash_tokens":  flash_tok,
+                "gemini_pro_tokens":    pro_tok,
+            }).eq("id", run_id).execute()
+        except Exception:
+            pass  # columns added separately via Supabase SQL migration
+
+        # ── Daily transcript archival (runs once per day at 03:xx) ───────
+        if datetime.now().hour == 3:
+            try:
+                print("Running daily transcript archival…")
+                archive_transcripts.archive_old_transcripts()
+            except Exception as e:
+                print(f"  ⚠ Archival error (non-fatal): {e}")
+
+        # ── Healthcheck ping (set HEALTHCHECK_URL in .env to enable) ─────
+        _ping_healthcheck(success=True)
 
     except Exception as e:
         print(f"\n❌ Pipeline error: {e}")
         traceback.print_exc()
         db.finish_pipeline_run(run_id, "failed", {**stats, "error_log": [str(e)]})
+        _ping_healthcheck(success=False)
 
 
 def main():
