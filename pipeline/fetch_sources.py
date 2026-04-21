@@ -65,90 +65,60 @@ def fetch_youtube_channel(source: dict, cutoff: datetime) -> list[dict]:
             "youtube_channel_id": channel_id
         }).eq("id", source["id"]).execute()
 
-    # ── PRIMARY: YouTube RSS feed (free, no quota) ──────────────────────────
+    # ── PRIMARY: YouTube RSS feed (free, zero API quota) ───────────────────
+    # feedparser never raises for HTTP errors — it returns bozo=True with empty
+    # entries. We ALWAYS return from this block so we never fall through to the
+    # quota-burning API fallback on a normal "no new videos" result.
     rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
     try:
         feed = feedparser.parse(rss_url)
-        if feed.entries:
-            items = []
-            for entry in feed.entries:
-                # Published date
-                pub_struct = entry.get("published_parsed") or entry.get("updated_parsed")
-                if pub_struct:
-                    published = datetime(*pub_struct[:6], tzinfo=timezone.utc)
-                    if published < cutoff:
-                        continue
-                else:
-                    published = datetime.now(timezone.utc)
-
-                # Video ID — in the RSS feed the <id> tag contains the watch URL
-                vid_id = entry.get("yt_videoid") or ""
-                if not vid_id:
-                    link = entry.get("link", "")
-                    m = re.search(r"v=([A-Za-z0-9_-]{11})", link)
-                    vid_id = m.group(1) if m else ""
-                if not vid_id:
+        # Detect bozo (HTTP error / malformed feed) — log and bail out cleanly
+        if getattr(feed, 'bozo', False) and not feed.entries:
+            exc = getattr(feed, 'bozo_exception', 'unknown error')
+            print(f"  ⚠ RSS feed error for {source['name']}: {exc}")
+            return []
+        items = []
+        for entry in feed.entries:  # empty iterable → empty list, no fallback
+            # Published date
+            pub_struct = entry.get("published_parsed") or entry.get("updated_parsed")
+            if pub_struct:
+                published = datetime(*pub_struct[:6], tzinfo=timezone.utc)
+                if published < cutoff:
                     continue
+            else:
+                published = datetime.now(timezone.utc)
 
-                # Thumbnail via media:group → media:thumbnail (feedparser key: media_thumbnail)
-                thumbnails = entry.get("media_thumbnail", [])
-                thumbnail_url = (
-                    thumbnails[0].get("url") if thumbnails
-                    else f"https://img.youtube.com/vi/{vid_id}/hqdefault.jpg"
-                )
+            # Video ID — in the RSS feed the <id> tag contains the watch URL
+            vid_id = entry.get("yt_videoid") or ""
+            if not vid_id:
+                link = entry.get("link", "")
+                m = re.search(r"v=([A-Za-z0-9_-]{11})", link)
+                vid_id = m.group(1) if m else ""
+            if not vid_id:
+                continue
 
-                items.append({
-                    "source_id": source["id"],
-                    "external_id": vid_id,
-                    "title": entry.get("title", "Untitled"),
-                    "url": f"https://www.youtube.com/watch?v={vid_id}",
-                    "published_at": published.isoformat(),
-                    "transcript_status": "pending",
-                    "thumbnail_url": thumbnail_url,
-                })
-            return items
+            # Thumbnail via media:group → media:thumbnail (feedparser key: media_thumbnail)
+            thumbnails = entry.get("media_thumbnail", [])
+            thumbnail_url = (
+                thumbnails[0].get("url") if thumbnails
+                else f"https://img.youtube.com/vi/{vid_id}/hqdefault.jpg"
+            )
+
+            items.append({
+                "source_id": source["id"],
+                "external_id": vid_id,
+                "title": entry.get("title", "Untitled"),
+                "url": f"https://www.youtube.com/watch?v={vid_id}",
+                "published_at": published.isoformat(),
+                "transcript_status": "pending",
+                "thumbnail_url": thumbnail_url,
+            })
+        return items  # Always return here — never fall through to API
     except Exception as e:
-        print(f"  ⚠ RSS fetch failed for {source['name']}, falling back to API: {e}")
+        print(f"  ⚠ RSS fetch failed for {source['name']}: {e}")
+        return []  # Exception path also returns — no API fallback needed
 
-    # ── FALLBACK: YouTube Data API (costs 100 units — only if RSS fails) ────
-    yt = get_youtube()
-    try:
-        res = yt.search().list(
-            part="snippet",
-            channelId=channel_id,
-            order="date",
-            type="video",
-            publishedAfter=cutoff.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            maxResults=20
-        ).execute()
-    except Exception as e:
-        print(f"  ✗ YouTube API error for {source['name']}: {e}")
-        return []
-
-    items = []
-    for item in res.get("items", []):
-        vid_id = item["id"]["videoId"]
-        snippet = item["snippet"]
-        published = datetime.fromisoformat(
-            snippet["publishedAt"].replace("Z", "+00:00")
-        )
-        thumbnails = snippet.get("thumbnails", {})
-        thumbnail_url = (
-            thumbnails.get("high", {}).get("url") or
-            thumbnails.get("medium", {}).get("url") or
-            thumbnails.get("default", {}).get("url") or
-            f"https://img.youtube.com/vi/{vid_id}/hqdefault.jpg"
-        )
-        items.append({
-            "source_id": source["id"],
-            "external_id": vid_id,
-            "title": snippet["title"],
-            "url": f"https://www.youtube.com/watch?v={vid_id}",
-            "published_at": published.isoformat(),
-            "transcript_status": "pending",
-            "thumbnail_url": thumbnail_url,
-        })
-    return items
+    # (API fallback removed — see comments above)
 
 
 def fetch_google_news_rss(source: dict, cutoff: datetime) -> list[dict]:
