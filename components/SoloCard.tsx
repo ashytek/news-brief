@@ -1,12 +1,13 @@
 'use client'
 
 import { useEffect } from 'react'
-import type { Story, Source } from '@/lib/types'
+import type { Source } from '@/lib/types'
+import type { StoryWithRelations } from '@/lib/types'
 import { TsLink } from './TsLink'
 import { EngagementBar } from './EngagementBar'
 
 interface Props {
-  story: Story
+  story: StoryWithRelations
   source?: Source
   isRead: boolean
   onRead: () => void
@@ -21,10 +22,16 @@ function formatTime(seconds: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`
 }
 
+const SIXTY_MINUTES = 60 * 60 * 1000
+
 export function SoloCard({ story, source, isRead, onRead, onEngagement, onDwellStart, onDwellEnd }: Props) {
-  const video    = (story as any).videos
+  const video    = story.videos
   const videoUrl = video?.url ?? null
   const thumbnail = video?.thumbnail_url ?? null
+
+  const isFresh = video?.published_at
+    ? Date.now() - new Date(video.published_at).getTime() < SIXTY_MINUTES
+    : false
 
   useEffect(() => {
     onDwellStart()
@@ -53,7 +60,7 @@ export function SoloCard({ story, source, isRead, onRead, onEngagement, onDwellS
               {/* Play button overlay */}
               <div className="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity bg-black/20">
                 <div className="w-12 h-12 rounded-full bg-black/60 flex items-center justify-center">
-                  <svg className="w-5 h-5 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-5 h-5 text-white ml-0.5" aria-hidden="true" fill="currentColor" viewBox="0 0 24 24">
                     <path d="M8 5v14l11-7z" />
                   </svg>
                 </div>
@@ -71,13 +78,20 @@ export function SoloCard({ story, source, isRead, onRead, onEngagement, onDwellS
       )}
 
       <div className="p-4">
-        {/* Source badge + date */}
+        {/* Source badge + date + fresh indicator */}
         <div className="flex items-center gap-2 mb-2.5">
+          {isFresh && (
+            <span
+              className="w-2 h-2 rounded-full bg-emerald-400 flex-shrink-0"
+              title="Published in the last hour"
+              aria-label="Fresh"
+            />
+          )}
           <span className="text-xs font-medium text-gray-400 bg-gray-800 px-2 py-0.5 rounded-full">
             {source?.name ?? 'Unknown source'}
           </span>
           {video?.published_at && (
-            <span className="text-xs text-gray-600">
+            <span className="text-xs text-gray-500">
               {new Date(video.published_at).toLocaleDateString('en-GB', {
                 day: 'numeric', month: 'short'
               })}
@@ -111,7 +125,7 @@ export function SoloCard({ story, source, isRead, onRead, onEngagement, onDwellS
           <ul className="space-y-1.5 mb-1">
             {story.bullets.map((bullet, i) => (
               <li key={i} className="flex items-start gap-2 text-sm">
-                <span className="text-gray-600 mt-0.5 flex-shrink-0">•</span>
+                <span className="text-gray-600 mt-0.5 flex-shrink-0" aria-hidden="true">•</span>
                 <span className="text-gray-300 leading-snug">
                   {bullet.text}
                   {bullet.timestamp_seconds !== null && videoUrl && (

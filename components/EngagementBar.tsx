@@ -26,7 +26,6 @@ export function EngagementBar({ isRead, onRead, onEngagement }: Props) {
   }
   const handleRead = () => {
     onRead()
-    onEngagement('dwell_short')
   }
 
   return (

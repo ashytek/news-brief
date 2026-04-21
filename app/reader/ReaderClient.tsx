@@ -1,8 +1,9 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import type { Category, Story, Cluster, Source } from '@/lib/types'
+import type { Category, Source } from '@/lib/types'
+import type { StoryWithRelations, ClusterWithRelations } from '@/lib/types'
 import { SoloCard } from '@/components/SoloCard'
 import { ClusteredCard } from '@/components/ClusteredCard'
 import { CategoryNav, type ActiveTab } from '@/components/CategoryNav'
@@ -15,13 +16,31 @@ const CATEGORIES: { key: Category; label: string; color: string }[] = [
   { key: 'tech_ai',      label: 'Tech & AI',       color: 'emerald'},
 ]
 
+// Explicit column selects — omits transcript_text/embedding blobs from payload
+const STORY_SELECT = `id, source_id, video_id, category, headline, summary, bullets, cluster_id, matched_topics, created_at, videos(id, url, published_at, thumbnail_url), sources(id, name)`
+const CLUSTER_SELECT = `id, category, core_fact, consensus, perspectives, story_count, first_seen_at, last_updated_at, synthesised_at, stories(id, source_id, headline, summary, bullets, created_at, matched_topics, videos(id, url, published_at, thumbnail_url), sources(id, name))`
+
 export default function ReaderClient({ userId }: { userId: string }) {
   const supabase = createClient()
 
-  const [activeTab, setActiveTab] = useState<ActiveTab>('prophetic')
+  // Persist last-used tab; default to 'israel'
+  const [activeTab, setActiveTab] = useState<ActiveTab>(() => {
+    if (typeof window !== 'undefined') {
+      return (localStorage.getItem('newsbrief_activeTab') as ActiveTab) || 'israel'
+    }
+    return 'israel'
+  })
+
+  const handleTabChange = useCallback((tab: ActiveTab) => {
+    setActiveTab(tab)
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('newsbrief_activeTab', tab)
+    }
+  }, [])
+
   const [showUnreadOnly, setShowUnreadOnly] = useState(true)
-  const [clusters, setClusters] = useState<Cluster[]>([])
-  const [soloStories, setSoloStories] = useState<Story[]>([])
+  const [clusters, setClusters] = useState<ClusterWithRelations[]>([])
+  const [soloStories, setSoloStories] = useState<StoryWithRelations[]>([])
   const [readIds, setReadIds] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
@@ -31,7 +50,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
 
   // Load sources into a lookup map
   useEffect(() => {
-    supabase.from('sources').select('*').then(({ data }) => {
+    supabase.from('sources').select('id, name, category, source_type, is_active').then(({ data }) => {
       if (data) {
         const map: Record<string, Source> = {}
         data.forEach(s => { map[s.id] = s })
@@ -47,7 +66,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
       .then(({ count }) => { if (count) setTopicCount(count) })
   }, [])
 
-  // Load read item IDs for this user
+  // Load read item IDs once on mount — independent of active tab
   const loadReadIds = useCallback(async () => {
     const { data } = await supabase
       .from('read_items')
@@ -63,7 +82,11 @@ export default function ReaderClient({ userId }: { userId: string }) {
     }
   }, [userId])
 
-  // Load content for active category (not used when Topics tab is active)
+  useEffect(() => {
+    loadReadIds()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps — intentionally load once
+
+  // Load content when active tab changes
   const loadContent = useCallback(async () => {
     if (activeTab === 'topics') {
       setLoading(false)
@@ -74,29 +97,28 @@ export default function ReaderClient({ userId }: { userId: string }) {
     const [clusterRes, storyRes] = await Promise.all([
       supabase
         .from('clusters')
-        .select(`*, stories(*, videos(*))`)
+        .select(CLUSTER_SELECT)
         .eq('category', activeTab)
         .order('last_updated_at', { ascending: false })
         .limit(100),
       supabase
         .from('stories')
-        .select(`*, videos(*), sources(*)`)
+        .select(STORY_SELECT)
         .eq('category', activeTab)
         .is('cluster_id', null)
         .order('created_at', { ascending: false })
         .limit(100),
     ])
 
-    if (clusterRes.data) setClusters(clusterRes.data as Cluster[])
-    if (storyRes.data) setSoloStories(storyRes.data as Story[])
+    if (clusterRes.data) setClusters(clusterRes.data as ClusterWithRelations[])
+    if (storyRes.data) setSoloStories(storyRes.data as StoryWithRelations[])
     setLastUpdated(new Date())
     setLoading(false)
   }, [activeTab])
 
   useEffect(() => {
-    loadReadIds()
     loadContent()
-  }, [activeTab, loadReadIds, loadContent])
+  }, [activeTab, loadContent])
 
   const markRead = useCallback(async (storyId?: string, clusterId?: string) => {
     if (storyId && readIds.has(storyId)) return
@@ -138,7 +160,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
     }
   }, [userId, soloStories])
 
-  // Dwell time tracking
+  // Dwell time tracking — auto-mark-read when user dwells >20s
   const startDwell = useCallback((id: string) => {
     dwellTimers.current.set(id, Date.now())
   }, [])
@@ -148,9 +170,13 @@ export default function ReaderClient({ userId }: { userId: string }) {
     if (!start) return
     const elapsed = (Date.now() - start) / 1000
     dwellTimers.current.delete(id)
-    if (elapsed > 20) sendEngagement('dwell_long', storyId, clusterId)
-    else if (elapsed < 3) sendEngagement('dwell_short', storyId, clusterId)
-  }, [sendEngagement])
+    if (elapsed > 20) {
+      sendEngagement('dwell_long', storyId, clusterId)
+      markRead(storyId, clusterId) // auto-mark-read after sufficient reading time
+    } else if (elapsed < 3) {
+      sendEngagement('dwell_short', storyId, clusterId)
+    }
+  }, [sendEngagement, markRead])
 
   const handleSignOut = async () => {
     await supabase.auth.signOut()
@@ -158,51 +184,61 @@ export default function ReaderClient({ userId }: { userId: string }) {
   }
 
   // Filter by unread (only applies to category tabs)
-  const visibleClusters = showUnreadOnly
-    ? clusters.filter(c => !readIds.has(c.id))
-    : clusters
-  const visibleSolos = showUnreadOnly
-    ? soloStories.filter(s => !readIds.has(s.id))
-    : soloStories
+  const visibleClusters = useMemo(
+    () => showUnreadOnly ? clusters.filter(c => !readIds.has(c.id)) : clusters,
+    [clusters, readIds, showUnreadOnly]
+  )
+  const visibleSolos = useMemo(
+    () => showUnreadOnly ? soloStories.filter(s => !readIds.has(s.id)) : soloStories,
+    [soloStories, readIds, showUnreadOnly]
+  )
 
-  const unreadCount = clusters.filter(c => !readIds.has(c.id)).length
-    + soloStories.filter(s => !readIds.has(s.id)).length
+  const unreadCount = useMemo(
+    () => clusters.filter(c => !readIds.has(c.id)).length + soloStories.filter(s => !readIds.has(s.id)).length,
+    [clusters, soloStories, readIds]
+  )
 
   const isEmpty = visibleClusters.length === 0 && visibleSolos.length === 0
 
-  // Build unified feed: Vantage pinned to top, then clusters + other solos merged by date DESC
+  // Build unified feed — memoised to avoid recomputing on every render
   type FeedItem =
-    | { type: 'cluster'; data: Cluster; date: Date }
-    | { type: 'story';   data: Story;   date: Date }
+    | { type: 'cluster'; data: ClusterWithRelations; date: Date }
+    | { type: 'story';   data: StoryWithRelations;   date: Date }
 
-  const isVantage = (story: Story) => {
+  const isVantage = useCallback((story: StoryWithRelations) => {
     const src = sources[story.source_id]
     const name = (src?.name ?? '').toLowerCase()
     return name.includes('vantage') || name.includes('firstpost')
-  }
+  }, [sources])
 
-  const vantagePinned = visibleSolos
-    .filter(isVantage)
-    .sort((a, b) => {
-      const da = new Date((a as any).videos?.published_at ?? a.created_at)
-      const db = new Date((b as any).videos?.published_at ?? b.created_at)
-      return db.getTime() - da.getTime()
-    })
+  const vantagePinned = useMemo(
+    () => visibleSolos
+      .filter(isVantage)
+      .sort((a, b) => {
+        const da = new Date(a.videos?.published_at ?? a.created_at)
+        const db = new Date(b.videos?.published_at ?? b.created_at)
+        return db.getTime() - da.getTime()
+      }),
+    [visibleSolos, isVantage]
+  )
 
-  const mergedFeed: FeedItem[] = [
-    ...visibleClusters.map(c => ({
-      type: 'cluster' as const,
-      data: c,
-      date: new Date(c.last_updated_at),
-    })),
-    ...visibleSolos
-      .filter(s => !isVantage(s))
-      .map(s => ({
-        type: 'story' as const,
-        data: s,
-        date: new Date((s as any).videos?.published_at ?? s.created_at),
+  const mergedFeed = useMemo(
+    (): FeedItem[] => [
+      ...visibleClusters.map(c => ({
+        type: 'cluster' as const,
+        data: c,
+        date: new Date(c.last_updated_at),
       })),
-  ].sort((a, b) => b.date.getTime() - a.date.getTime())
+      ...visibleSolos
+        .filter(s => !isVantage(s))
+        .map(s => ({
+          type: 'story' as const,
+          data: s,
+          date: new Date(s.videos?.published_at ?? s.created_at),
+        })),
+    ].sort((a, b) => b.date.getTime() - a.date.getTime()),
+    [visibleClusters, visibleSolos, isVantage]
+  )
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100">
@@ -211,7 +247,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-lg bg-violet-600 flex items-center justify-center">
-              <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-4 h-4 text-white" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 12h6m-6-4h2" />
               </svg>
             </div>
@@ -244,7 +280,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
               className="w-8 h-8 rounded-lg bg-gray-800 hover:bg-gray-700 flex items-center justify-center transition-colors"
               title="Archive"
             >
-              <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-4 h-4 text-gray-400" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
             </a>
@@ -254,7 +290,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
               className="w-8 h-8 rounded-lg bg-gray-800 hover:bg-gray-700 flex items-center justify-center transition-colors"
               title="Sources"
             >
-              <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-4 h-4 text-gray-400" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h7" />
               </svg>
             </a>
@@ -264,7 +300,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
               className="w-8 h-8 rounded-lg bg-gray-800 hover:bg-gray-700 flex items-center justify-center transition-colors"
               title="Sign out"
             >
-              <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-4 h-4 text-gray-400" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
               </svg>
             </button>
@@ -275,7 +311,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
         <CategoryNav
           categories={CATEGORIES}
           active={activeTab}
-          onChange={setActiveTab}
+          onChange={handleTabChange}
           readIds={readIds}
           clusters={clusters}
           soloStories={soloStories}

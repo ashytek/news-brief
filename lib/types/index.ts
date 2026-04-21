@@ -71,3 +71,13 @@ export interface EngagementSignal {
   cluster_id?: string
   signal: 'like' | 'dislike' | 'expand_perspectives' | 'dwell_long' | 'dwell_short'
 }
+
+// Supabase join relations come back under the table name (videos/sources), not the field name (video/source)
+export interface StoryWithRelations extends Omit<Story, 'video' | 'source'> {
+  videos?: Video | null
+  sources?: Source | null
+}
+
+export interface ClusterWithRelations extends Cluster {
+  stories?: StoryWithRelations[]
+}

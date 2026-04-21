@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import type { Story, Source } from '@/lib/types'
+import type { Source } from '@/lib/types'
+import type { StoryWithRelations } from '@/lib/types'
 import { SoloCard } from './SoloCard'
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -23,7 +24,7 @@ export function TopicsPanel({ userId, readIds, onMarkRead, onEngagement }: Props
   const supabase = createClient()
 
   const [keywords, setKeywords] = useState<{ id: string; keyword: string; is_active: boolean }[]>([])
-  const [stories, setStories] = useState<Story[]>([])
+  const [stories, setStories] = useState<StoryWithRelations[]>([])
   const [sources, setSources] = useState<Record<string, Source>>({})
   const [loading, setLoading] = useState(true)
   const [newKeyword, setNewKeyword] = useState('')
@@ -46,7 +47,7 @@ export function TopicsPanel({ userId, readIds, onMarkRead, onEngagement }: Props
     if (kwRes.data) setKeywords(kwRes.data)
 
     if (storyRes.data) {
-      const filtered = (storyRes.data as Story[]).filter(
+      const filtered = (storyRes.data as StoryWithRelations[]).filter(
         s => s.matched_topics && s.matched_topics.length > 0
       )
       setStories(filtered)
