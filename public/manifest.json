@@ -1,0 +1,12 @@
+{
+  "name": "News Brief",
+  "short_name": "News Brief",
+  "description": "Your adaptive intelligence digest",
+  "start_url": "/reader",
+  "display": "standalone",
+  "background_color": "#030712",
+  "theme_color": "#030712",
+  "icons": [
+    { "src": "/globe.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

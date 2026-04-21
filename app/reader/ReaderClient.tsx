@@ -8,6 +8,9 @@ import { SoloCard } from '@/components/SoloCard'
 import { ClusteredCard } from '@/components/ClusteredCard'
 import { CategoryNav, type ActiveTab } from '@/components/CategoryNav'
 import { TopicsPanel } from '@/components/TopicsPanel'
+import { TodayFeed } from '@/components/TodayFeed'
+import { SkeletonCard } from '@/components/SkeletonCard'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 
 const CATEGORIES: { key: Category; label: string; color: string }[] = [
   { key: 'prophetic',    label: 'Prophetic',      color: 'violet' },
@@ -23,12 +26,12 @@ const CLUSTER_SELECT = `id, category, core_fact, consensus, perspectives, story_
 export default function ReaderClient({ userId }: { userId: string }) {
   const supabase = createClient()
 
-  // Persist last-used tab; default to 'israel'
+  // Persist last-used tab; default to 'today'
   const [activeTab, setActiveTab] = useState<ActiveTab>(() => {
     if (typeof window !== 'undefined') {
-      return (localStorage.getItem('newsbrief_activeTab') as ActiveTab) || 'israel'
+      return (localStorage.getItem('newsbrief_activeTab') as ActiveTab) || 'today'
     }
-    return 'israel'
+    return 'today'
   })
 
   const handleTabChange = useCallback((tab: ActiveTab) => {
@@ -41,6 +44,8 @@ export default function ReaderClient({ userId }: { userId: string }) {
   const [showUnreadOnly, setShowUnreadOnly] = useState(true)
   const [clusters, setClusters] = useState<ClusterWithRelations[]>([])
   const [soloStories, setSoloStories] = useState<StoryWithRelations[]>([])
+  const [todayClusters, setTodayClusters] = useState<ClusterWithRelations[]>([])
+  const [todayStories, setTodayStories] = useState<StoryWithRelations[]>([])
   const [readIds, setReadIds] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
@@ -48,12 +53,19 @@ export default function ReaderClient({ userId }: { userId: string }) {
   const [topicCount, setTopicCount] = useState(0)
   const dwellTimers = useRef<Map<string, number>>(new Map())
 
+  // Record last-visit timestamp on mount
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('newsbrief_lastVisit', new Date().toISOString())
+    }
+  }, [])
+
   // Load sources into a lookup map
   useEffect(() => {
     supabase.from('sources').select('id, name, category, source_type, is_active').then(({ data }) => {
       if (data) {
         const map: Record<string, Source> = {}
-        data.forEach(s => { map[s.id] = s })
+        data.forEach(s => { map[s.id] = s as unknown as Source })
         setSources(map)
       }
     })
@@ -92,7 +104,32 @@ export default function ReaderClient({ userId }: { userId: string }) {
       setLoading(false)
       return
     }
+
     setLoading(true)
+
+    if (activeTab === 'today') {
+      const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+      const [clusterRes, storyRes] = await Promise.all([
+        supabase
+          .from('clusters')
+          .select(CLUSTER_SELECT)
+          .gte('last_updated_at', yesterday)
+          .order('last_updated_at', { ascending: false })
+          .limit(60),
+        supabase
+          .from('stories')
+          .select(STORY_SELECT)
+          .is('cluster_id', null)
+          .gte('created_at', yesterday)
+          .order('created_at', { ascending: false })
+          .limit(60),
+      ])
+      if (clusterRes.data) setTodayClusters(clusterRes.data as unknown as ClusterWithRelations[])
+      if (storyRes.data) setTodayStories(storyRes.data as unknown as StoryWithRelations[])
+      setLastUpdated(new Date())
+      setLoading(false)
+      return
+    }
 
     const [clusterRes, storyRes] = await Promise.all([
       supabase
@@ -110,8 +147,8 @@ export default function ReaderClient({ userId }: { userId: string }) {
         .limit(100),
     ])
 
-    if (clusterRes.data) setClusters(clusterRes.data as ClusterWithRelations[])
-    if (storyRes.data) setSoloStories(storyRes.data as StoryWithRelations[])
+    if (clusterRes.data) setClusters(clusterRes.data as unknown as ClusterWithRelations[])
+    if (storyRes.data) setSoloStories(storyRes.data as unknown as StoryWithRelations[])
     setLastUpdated(new Date())
     setLoading(false)
   }, [activeTab])
@@ -198,6 +235,11 @@ export default function ReaderClient({ userId }: { userId: string }) {
     [clusters, soloStories, readIds]
   )
 
+  const todayUnread = useMemo(
+    () => todayClusters.filter(c => !readIds.has(c.id)).length + todayStories.filter(s => !readIds.has(s.id)).length,
+    [todayClusters, todayStories, readIds]
+  )
+
   const isEmpty = visibleClusters.length === 0 && visibleSolos.length === 0
 
   // Build unified feed — memoised to avoid recomputing on every render
@@ -262,7 +304,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
           </div>
 
           <div className="flex items-center gap-2">
-            {activeTab !== 'topics' && (
+            {activeTab !== 'topics' && activeTab !== 'today' && (
               <button
                 onClick={() => setShowUnreadOnly(v => !v)}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
@@ -307,7 +349,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
           </div>
         </div>
 
-        {/* Category + Topics tabs */}
+        {/* Category + Today + Topics tabs */}
         <CategoryNav
           categories={CATEGORIES}
           active={activeTab}
@@ -316,11 +358,29 @@ export default function ReaderClient({ userId }: { userId: string }) {
           clusters={clusters}
           soloStories={soloStories}
           topicCount={topicCount}
+          todayUnread={todayUnread}
         />
       </header>
 
       {/* Feed */}
       <main className="max-w-2xl mx-auto px-4 py-4 space-y-3">
+        {/* Today tab */}
+        {activeTab === 'today' && (
+          <ErrorBoundary>
+            <TodayFeed
+              clusters={todayClusters}
+              stories={todayStories}
+              sources={sources}
+              readIds={readIds}
+              onMarkRead={markRead}
+              onEngagement={sendEngagement}
+              onDwellStart={startDwell}
+              onDwellEnd={endDwell}
+              loading={loading}
+            />
+          </ErrorBoundary>
+        )}
+
         {/* Topics tab content */}
         {activeTab === 'topics' && (
           <TopicsPanel
@@ -332,11 +392,11 @@ export default function ReaderClient({ userId }: { userId: string }) {
         )}
 
         {/* Category feed */}
-        {activeTab !== 'topics' && (
+        {activeTab !== 'topics' && activeTab !== 'today' && (
           <>
             {loading && (
-              <div className="flex justify-center py-16">
-                <div className="w-6 h-6 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
+              <div className="space-y-3">
+                {Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}
               </div>
             )}
 
@@ -393,30 +453,32 @@ export default function ReaderClient({ userId }: { userId: string }) {
             )}
 
             {/* Unified merged feed — clusters + non-Vantage solos sorted latest→oldest */}
-            {!loading && mergedFeed.map(item =>
-              item.type === 'cluster' ? (
-                <ClusteredCard
-                  key={item.data.id}
-                  cluster={item.data}
-                  isRead={readIds.has(item.data.id)}
-                  onRead={() => markRead(undefined, item.data.id)}
-                  onEngagement={(signal) => sendEngagement(signal, undefined, item.data.id)}
-                  onDwellStart={() => startDwell(item.data.id)}
-                  onDwellEnd={() => endDwell(item.data.id, undefined, item.data.id)}
-                />
-              ) : (
-                <SoloCard
-                  key={item.data.id}
-                  story={item.data}
-                  source={sources[item.data.source_id]}
-                  isRead={readIds.has(item.data.id)}
-                  onRead={() => markRead(item.data.id)}
-                  onEngagement={(signal) => sendEngagement(signal, item.data.id)}
-                  onDwellStart={() => startDwell(item.data.id)}
-                  onDwellEnd={() => endDwell(item.data.id, item.data.id)}
-                />
-              )
-            )}
+            <ErrorBoundary>
+              {!loading && mergedFeed.map(item =>
+                item.type === 'cluster' ? (
+                  <ClusteredCard
+                    key={item.data.id}
+                    cluster={item.data}
+                    isRead={readIds.has(item.data.id)}
+                    onRead={() => markRead(undefined, item.data.id)}
+                    onEngagement={(signal) => sendEngagement(signal, undefined, item.data.id)}
+                    onDwellStart={() => startDwell(item.data.id)}
+                    onDwellEnd={() => endDwell(item.data.id, undefined, item.data.id)}
+                  />
+                ) : (
+                  <SoloCard
+                    key={item.data.id}
+                    story={item.data}
+                    source={sources[item.data.source_id]}
+                    isRead={readIds.has(item.data.id)}
+                    onRead={() => markRead(item.data.id)}
+                    onEngagement={(signal) => sendEngagement(signal, item.data.id)}
+                    onDwellStart={() => startDwell(item.data.id)}
+                    onDwellEnd={() => endDwell(item.data.id, item.data.id)}
+                  />
+                )
+              )}
+            </ErrorBoundary>
           </>
         )}
       </main>

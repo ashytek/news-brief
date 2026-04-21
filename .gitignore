@@ -45,3 +45,7 @@ pipeline/__pycache__/
 pipeline/*.pyc
 pipeline/venv/
 pipeline/.env
+pipeline/cookies.txt
+
+# Local Netlify folder
+.netlify

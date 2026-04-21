@@ -10,7 +10,7 @@ const COLOR_MAP: Record<string, string> = {
   rose:    'text-rose-400 border-rose-500',
 }
 
-export type ActiveTab = Category | 'topics'
+export type ActiveTab = Category | 'topics' | 'today'
 
 interface Props {
   categories: { key: Category; label: string; color: string }[]
@@ -20,11 +20,29 @@ interface Props {
   clusters: Cluster[]
   soloStories: Story[]
   topicCount?: number
+  todayUnread?: number
 }
 
-export function CategoryNav({ categories, active, onChange, readIds, clusters, soloStories, topicCount }: Props) {
+export function CategoryNav({ categories, active, onChange, readIds, clusters, soloStories, topicCount, todayUnread }: Props) {
   return (
     <div className="flex overflow-x-auto scrollbar-hide border-t border-gray-800/40">
+      {/* Today tab — always first */}
+      <button
+        onClick={() => onChange('today')}
+        className={`flex-shrink-0 px-5 py-2.5 text-sm font-medium transition-all border-b-2 flex items-center gap-1.5 ${
+          active === 'today'
+            ? 'text-white border-white'
+            : 'text-gray-500 border-transparent hover:text-gray-300'
+        }`}
+      >
+        Today
+        {todayUnread != null && todayUnread > 0 && (
+          <span className="text-xs bg-gray-700 text-gray-300 px-1.5 py-0.5 rounded-full leading-none">
+            {todayUnread}
+          </span>
+        )}
+      </button>
+
       {categories.map(cat => {
         const isActive = cat.key === active
         const colorClass = COLOR_MAP[cat.color] || 'text-gray-400 border-gray-500'
