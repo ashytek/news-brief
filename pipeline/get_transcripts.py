@@ -21,7 +21,7 @@ from bs4 import BeautifulSoup
 from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
 
 import db
-from config import ASSEMBLYAI_API_KEY, YOUTUBE_COOKIES_FILE, YOUTUBE_BROWSER
+from config import ASSEMBLYAI_API_KEY, YOUTUBE_COOKIES_FILE, YOUTUBE_BROWSER, MIN_VIDEO_DURATION_SECONDS
 
 # ---------------------------------------------------------------------------
 # Error classification helpers
@@ -315,6 +315,13 @@ def fetch_transcript(video: dict) -> tuple:
 
     if result:
         text, segments = result
+        # Duration filter — skip filler shorts / under-5-min videos
+        if segments:
+            last = segments[-1]
+            total_seconds = (last.get("start") or 0) + (last.get("duration") or 0)
+            if total_seconds < MIN_VIDEO_DURATION_SECONDS:
+                print(f"    · Skipped short ({int(total_seconds)}s < {MIN_VIDEO_DURATION_SECONDS}s)")
+                return None, "skipped_short", []
         print(f"    ✓ Transcript ({len(text)} chars, {len(segments)} segments)")
         return text, "fetched", segments
 

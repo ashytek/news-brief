@@ -14,6 +14,7 @@ interface Props {
   onEngagement: (signal: string) => void
   onDwellStart: () => void
   onDwellEnd: () => void
+  onMuteTopic?: () => void
 }
 
 function formatTime(seconds: number): string {
@@ -24,7 +25,7 @@ function formatTime(seconds: number): string {
 
 const SIXTY_MINUTES = 60 * 60 * 1000
 
-export function SoloCard({ story, source, isRead, onRead, onEngagement, onDwellStart, onDwellEnd }: Props) {
+export function SoloCard({ story, source, isRead, onRead, onEngagement, onDwellStart, onDwellEnd, onMuteTopic }: Props) {
   const video    = story.videos
   const videoUrl = video?.url ?? null
   const thumbnail = video?.thumbnail_url ?? null
@@ -141,7 +142,13 @@ export function SoloCard({ story, source, isRead, onRead, onEngagement, onDwellS
           </ul>
         )}
 
-        <EngagementBar isRead={isRead} onRead={onRead} onEngagement={onEngagement} />
+        <EngagementBar
+          isRead={isRead}
+          onRead={onRead}
+          onEngagement={onEngagement}
+          onMuteTopic={onMuteTopic}
+          canMute={!!onMuteTopic && (story.matched_topics?.length ?? 0) > 0}
+        />
       </div>
     </article>
   )

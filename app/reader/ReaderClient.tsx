@@ -47,6 +47,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
   const [todayClusters, setTodayClusters] = useState<ClusterWithRelations[]>([])
   const [todayStories, setTodayStories] = useState<StoryWithRelations[]>([])
   const [readIds, setReadIds] = useState<Set<string>>(new Set())
+  const [mutedKeywords, setMutedKeywords] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [sources, setSources] = useState<Record<string, Source>>({})
@@ -97,6 +98,30 @@ export default function ReaderClient({ userId }: { userId: string }) {
   useEffect(() => {
     loadReadIds()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps — intentionally load once
+
+  // Load active muted topics (expires_at > now)
+  useEffect(() => {
+    supabase
+      .from('muted_topics')
+      .select('keyword')
+      .eq('user_id', userId)
+      .gt('expires_at', new Date().toISOString())
+      .then(({ data }) => {
+        if (data) setMutedKeywords(new Set(data.map(r => r.keyword)))
+      })
+  }, [userId])
+
+  const muteTopics = useCallback(async (keywords: string[]) => {
+    if (keywords.length === 0) return
+    const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString()
+    const rows = keywords.map(keyword => ({ user_id: userId, keyword, expires_at: expiresAt }))
+    await supabase.from('muted_topics').insert(rows)
+    setMutedKeywords(prev => {
+      const next = new Set(prev)
+      keywords.forEach(k => next.add(k))
+      return next
+    })
+  }, [userId])
 
   // Load content when active tab changes
   const loadContent = useCallback(async () => {
@@ -220,24 +245,52 @@ export default function ReaderClient({ userId }: { userId: string }) {
     window.location.href = '/auth'
   }
 
-  // Filter by unread (only applies to category tabs)
+  // A cluster counts as "read" when the user marked it read OR every story
+  // inside is read. When a new unread story lands in the cluster later, it
+  // resurfaces automatically.
+  const isClusterRead = useCallback((c: ClusterWithRelations) => {
+    if (readIds.has(c.id)) return true
+    const stories = c.stories ?? []
+    if (stories.length === 0) return false
+    return stories.every(s => readIds.has(s.id))
+  }, [readIds])
+
+  // Returns true if any of the given topic keywords are currently muted
+  const hasMutedTopic = useCallback((topics: string[] | null | undefined) => {
+    if (!topics || topics.length === 0) return false
+    return topics.some(t => mutedKeywords.has(t))
+  }, [mutedKeywords])
+
+  const isClusterMuted = useCallback((c: ClusterWithRelations) => {
+    const stories = c.stories ?? []
+    if (stories.length === 0) return false
+    // Mute the cluster only when every story has a muted topic — avoids
+    // hiding a cluster where only one source mentioned a muted keyword.
+    return stories.every(s => hasMutedTopic(s.matched_topics))
+  }, [hasMutedTopic])
+
+  // Filter by unread (only applies to category tabs) AND by mute
   const visibleClusters = useMemo(
-    () => showUnreadOnly ? clusters.filter(c => !readIds.has(c.id)) : clusters,
-    [clusters, readIds, showUnreadOnly]
+    () => clusters
+      .filter(c => !isClusterMuted(c))
+      .filter(c => showUnreadOnly ? !isClusterRead(c) : true),
+    [clusters, isClusterRead, isClusterMuted, showUnreadOnly]
   )
   const visibleSolos = useMemo(
-    () => showUnreadOnly ? soloStories.filter(s => !readIds.has(s.id)) : soloStories,
-    [soloStories, readIds, showUnreadOnly]
+    () => soloStories
+      .filter(s => !hasMutedTopic(s.matched_topics))
+      .filter(s => showUnreadOnly ? !readIds.has(s.id) : true),
+    [soloStories, readIds, hasMutedTopic, showUnreadOnly]
   )
 
   const unreadCount = useMemo(
-    () => clusters.filter(c => !readIds.has(c.id)).length + soloStories.filter(s => !readIds.has(s.id)).length,
-    [clusters, soloStories, readIds]
+    () => clusters.filter(c => !isClusterRead(c)).length + soloStories.filter(s => !readIds.has(s.id)).length,
+    [clusters, soloStories, isClusterRead, readIds]
   )
 
   const todayUnread = useMemo(
-    () => todayClusters.filter(c => !readIds.has(c.id)).length + todayStories.filter(s => !readIds.has(s.id)).length,
-    [todayClusters, todayStories, readIds]
+    () => todayClusters.filter(c => !isClusterRead(c)).length + todayStories.filter(s => !readIds.has(s.id)).length,
+    [todayClusters, todayStories, isClusterRead, readIds]
   )
 
   const isEmpty = visibleClusters.length === 0 && visibleSolos.length === 0
@@ -376,6 +429,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
               onEngagement={sendEngagement}
               onDwellStart={startDwell}
               onDwellEnd={endDwell}
+              onMuteTopic={muteTopics}
               loading={loading}
             />
           </ErrorBoundary>
@@ -441,6 +495,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
                     onEngagement={(signal) => sendEngagement(signal, story.id)}
                     onDwellStart={() => startDwell(story.id)}
                     onDwellEnd={() => endDwell(story.id, story.id)}
+                    onMuteTopic={() => muteTopics(story.matched_topics ?? [])}
                   />
                 ))}
                 {mergedFeed.length > 0 && (
@@ -459,11 +514,15 @@ export default function ReaderClient({ userId }: { userId: string }) {
                   <ClusteredCard
                     key={item.data.id}
                     cluster={item.data}
-                    isRead={readIds.has(item.data.id)}
+                    isRead={isClusterRead(item.data)}
+                    readStoryIds={readIds}
                     onRead={() => markRead(undefined, item.data.id)}
                     onEngagement={(signal) => sendEngagement(signal, undefined, item.data.id)}
                     onDwellStart={() => startDwell(item.data.id)}
                     onDwellEnd={() => endDwell(item.data.id, undefined, item.data.id)}
+                    onMuteTopic={() => muteTopics(
+                      Array.from(new Set((item.data.stories ?? []).flatMap(s => s.matched_topics ?? [])))
+                    )}
                   />
                 ) : (
                   <SoloCard
@@ -475,6 +534,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
                     onEngagement={(signal) => sendEngagement(signal, item.data.id)}
                     onDwellStart={() => startDwell(item.data.id)}
                     onDwellEnd={() => endDwell(item.data.id, item.data.id)}
+                    onMuteTopic={() => muteTopics(item.data.matched_topics ?? [])}
                   />
                 )
               )}

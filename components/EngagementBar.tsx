@@ -6,11 +6,14 @@ interface Props {
   isRead: boolean
   onRead: () => void
   onEngagement: (signal: string) => void
+  onMuteTopic?: () => void
+  canMute?: boolean
 }
 
-export function EngagementBar({ isRead, onRead, onEngagement }: Props) {
+export function EngagementBar({ isRead, onRead, onEngagement, onMuteTopic, canMute }: Props) {
   const [liked, setLiked] = useState(false)
   const [disliked, setDisliked] = useState(false)
+  const [muted, setMuted] = useState(false)
 
   const handleLike = () => {
     if (liked) return
@@ -26,6 +29,12 @@ export function EngagementBar({ isRead, onRead, onEngagement }: Props) {
   }
   const handleRead = () => {
     onRead()
+  }
+  const handleMute = () => {
+    if (muted || !onMuteTopic) return
+    setMuted(true)
+    onMuteTopic()
+    onEngagement('mute_topic')
   }
 
   return (
@@ -53,6 +62,22 @@ export function EngagementBar({ isRead, onRead, onEngagement }: Props) {
         </svg>
         Less
       </button>
+
+      {canMute && (
+        <button
+          onClick={handleMute}
+          disabled={muted}
+          title="Mute this topic for 2 weeks"
+          className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+            muted ? 'bg-gray-800/60 text-gray-600' : 'bg-gray-800 text-gray-500 hover:text-gray-300'
+          }`}
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+          </svg>
+          {muted ? 'Muted' : 'Mute topic'}
+        </button>
+      )}
 
       <div className="flex-1" />
 

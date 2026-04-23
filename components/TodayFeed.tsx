@@ -24,6 +24,13 @@ type RankedItem =
   | { type: 'cluster'; data: ClusterWithRelations; score: number }
   | { type: 'story';   data: StoryWithRelations;   score: number }
 
+function isClusterFullyRead(c: ClusterWithRelations, readIds: Set<string>): boolean {
+  if (readIds.has(c.id)) return true
+  const stories = c.stories ?? []
+  if (stories.length === 0) return false
+  return stories.every(s => readIds.has(s.id))
+}
+
 function rankItems(
   clusters: ClusterWithRelations[],
   solos: StoryWithRelations[],
@@ -53,8 +60,12 @@ function rankItems(
 
   return ranked
     .sort((a, b) => {
-      const aRead = readIds.has(a.data.id)
-      const bRead = readIds.has(b.data.id)
+      const aRead = a.type === 'cluster'
+        ? isClusterFullyRead(a.data, readIds)
+        : readIds.has(a.data.id)
+      const bRead = b.type === 'cluster'
+        ? isClusterFullyRead(b.data, readIds)
+        : readIds.has(b.data.id)
       if (aRead !== bRead) return aRead ? 1 : -1
       return b.score - a.score
     })
@@ -70,6 +81,7 @@ interface Props {
   onEngagement: (signal: string, storyId?: string, clusterId?: string) => void
   onDwellStart: (id: string) => void
   onDwellEnd: (id: string, storyId?: string, clusterId?: string) => void
+  onMuteTopic?: (keywords: string[]) => void
   loading: boolean
 }
 
@@ -82,6 +94,7 @@ export function TodayFeed({
   onEngagement,
   onDwellStart,
   onDwellEnd,
+  onMuteTopic,
   loading,
 }: Props) {
   const ranked = useMemo(
@@ -89,7 +102,11 @@ export function TodayFeed({
     [clusters, stories, readIds],
   )
 
-  const unreadCount = ranked.filter(item => !readIds.has(item.data.id)).length
+  const unreadCount = ranked.filter(item =>
+    item.type === 'cluster'
+      ? !isClusterFullyRead(item.data, readIds)
+      : !readIds.has(item.data.id)
+  ).length
 
   if (loading) {
     return (
@@ -136,11 +153,18 @@ export function TodayFeed({
               </div>
               <ClusteredCard
                 cluster={cluster}
-                isRead={readIds.has(cluster.id)}
+                isRead={
+                  readIds.has(cluster.id) ||
+                  (!!cluster.stories?.length && cluster.stories.every(s => readIds.has(s.id)))
+                }
+                readStoryIds={readIds}
                 onRead={() => onMarkRead(undefined, cluster.id)}
                 onEngagement={(signal) => onEngagement(signal, undefined, cluster.id)}
                 onDwellStart={() => onDwellStart(cluster.id)}
                 onDwellEnd={() => onDwellEnd(cluster.id, undefined, cluster.id)}
+                onMuteTopic={onMuteTopic ? () => onMuteTopic(
+                  Array.from(new Set((cluster.stories ?? []).flatMap(s => s.matched_topics ?? [])))
+                ) : undefined}
               />
             </div>
           )
@@ -163,6 +187,7 @@ export function TodayFeed({
               onEngagement={(signal) => onEngagement(signal, story.id)}
               onDwellStart={() => onDwellStart(story.id)}
               onDwellEnd={() => onDwellEnd(story.id, story.id)}
+              onMuteTopic={onMuteTopic ? () => onMuteTopic(story.matched_topics ?? []) : undefined}
             />
           </div>
         )

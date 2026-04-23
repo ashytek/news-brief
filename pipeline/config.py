@@ -28,7 +28,10 @@ SUPABASE_SERVICE_KEY  = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 LOOKBACK_HOURS = 4
 
 # Cosine similarity threshold to merge stories into a cluster
-CLUSTER_THRESHOLD = 0.78
+CLUSTER_THRESHOLD = 0.72
+
+# Videos shorter than this are treated as filler/shorts and skipped entirely
+MIN_VIDEO_DURATION_SECONDS = 300
 
 # Max bullet points per story (8 gives good depth for segment-style channels like Vantage)
 MAX_BULLETS = 8

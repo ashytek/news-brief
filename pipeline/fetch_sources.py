@@ -90,11 +90,17 @@ def fetch_youtube_channel(source: dict, cutoff: datetime) -> list[dict]:
 
             # Video ID — in the RSS feed the <id> tag contains the watch URL
             vid_id = entry.get("yt_videoid") or ""
+            link = entry.get("link", "")
             if not vid_id:
-                link = entry.get("link", "")
                 m = re.search(r"v=([A-Za-z0-9_-]{11})", link)
                 vid_id = m.group(1) if m else ""
             if not vid_id:
+                continue
+
+            # Skip Shorts (fallback — most Shorts still return a watch URL but
+            # some RSS feeds emit /shorts/ links). Duration check in
+            # get_transcripts.py catches the rest.
+            if "/shorts/" in link:
                 continue
 
             # Thumbnail via media:group → media:thumbnail (feedparser key: media_thumbnail)

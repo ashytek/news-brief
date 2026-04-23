@@ -8,10 +8,12 @@ import { EngagementBar } from './EngagementBar'
 interface Props {
   cluster: ClusterWithRelations
   isRead: boolean
+  readStoryIds?: Set<string>
   onRead: () => void
   onEngagement: (signal: string) => void
   onDwellStart: () => void
   onDwellEnd: () => void
+  onMuteTopic?: () => void
 }
 
 function formatTime(seconds: number): string {
@@ -20,7 +22,10 @@ function formatTime(seconds: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`
 }
 
-export function ClusteredCard({ cluster, isRead, onRead, onEngagement, onDwellStart, onDwellEnd }: Props) {
+export function ClusteredCard({ cluster, isRead, readStoryIds, onRead, onEngagement, onDwellStart, onDwellEnd, onMuteTopic }: Props) {
+  const clusterTopics = Array.from(
+    new Set((cluster.stories ?? []).flatMap(s => s.matched_topics ?? []))
+  )
   const [showPerspectives, setShowPerspectives] = useState(false)
 
   useEffect(() => {
@@ -81,8 +86,9 @@ export function ClusteredCard({ cluster, isRead, onRead, onEngagement, onDwellSt
             const videoUrl  = video?.url ?? null
             const thumbnail = video?.thumbnail_url ?? null
             const sourceName = story.sources?.name ?? null
+            const storyRead = readStoryIds?.has(story.id) ?? false
             return (
-              <div key={story.id} className="flex gap-2.5">
+              <div key={story.id} className={`flex gap-2.5 transition-opacity ${storyRead ? 'opacity-40' : ''}`}>
                 {/* Thumbnail */}
                 {thumbnail && (
                   <div className="flex-shrink-0 w-20 h-[45px] rounded-lg overflow-hidden bg-gray-800">
@@ -164,7 +170,13 @@ export function ClusteredCard({ cluster, isRead, onRead, onEngagement, onDwellSt
         </div>
       )}
 
-      <EngagementBar isRead={isRead} onRead={onRead} onEngagement={onEngagement} />
+      <EngagementBar
+        isRead={isRead}
+        onRead={onRead}
+        onEngagement={onEngagement}
+        onMuteTopic={onMuteTopic}
+        canMute={!!onMuteTopic && clusterTopics.length > 0}
+      />
     </article>
   )
 }
