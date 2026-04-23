@@ -104,10 +104,15 @@ def fetch_youtube_channel(source: dict, cutoff: datetime) -> list[dict]:
                 else f"https://img.youtube.com/vi/{vid_id}/hqdefault.jpg"
             )
 
+            title = entry.get("title", "Untitled")
+            title_filter = source.get("title_filter")
+            if title_filter and title_filter.lower() not in title.lower():
+                continue
+
             items.append({
                 "source_id": source["id"],
                 "external_id": vid_id,
-                "title": entry.get("title", "Untitled"),
+                "title": title,
                 "url": f"https://www.youtube.com/watch?v={vid_id}",
                 "published_at": published.isoformat(),
                 "transcript_status": "pending",

@@ -208,7 +208,7 @@ def synthesise_cluster(
         system_instruction=SYNTHESIS_SYSTEM,
         response_schema=SYNTHESIS_SCHEMA,
         temperature=0.2,
-        max_output_tokens=2048,
+        max_output_tokens=4096,
     )
 
     return result
