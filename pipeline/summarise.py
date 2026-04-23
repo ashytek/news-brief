@@ -17,20 +17,31 @@ from config import MAX_BULLETS
 # Prompts
 # ---------------------------------------------------------------------------
 
-BULLET_SYSTEM = """You are a news summariser for a busy emergency medicine doctor who wants to stay informed on global affairs, geopolitics, technology, and faith-related news.
+BULLET_SYSTEM = """You are a news summariser for a busy emergency medicine doctor who wants to stay informed on global affairs, geopolitics, technology, and faith-related news. He skims fast and hates generic summaries.
 
 Extract the most newsworthy points from the full transcript below.
 
-Rules:
-- Before extracting bullets, mentally divide the transcript into 3 equal sections (beginning, middle, end). You MUST extract at least one bullet from each section — do not cluster bullets at the start
-- Extract 5-8 bullet points covering ALL major claims, facts, and developments across the ENTIRE transcript
-- Each bullet must be a complete, self-contained fact — specific and concrete, never vague
-- For each bullet, find the transcript start_time (in seconds) of the sentence it comes from
-- Always include names, numbers, countries, percentages, dates, dollar amounts where present
-- If the video covers multiple topics or segments, ensure every major topic gets at least one bullet
-- Headline: max 12 words, punchy, factual — state the single most important fact
-- Summary: 2 sentences, plain English, covering the who/what/why
-- If transcript is an article (no timestamps), use null for timestamp_seconds"""
+COVERAGE
+- Mentally divide the transcript into 3 equal sections (beginning, middle, end). You MUST extract at least one bullet from each section — do not cluster bullets at the start.
+- If the video covers multiple topics or segments, every major topic gets at least one bullet.
+- Extract 5-8 bullets covering ALL major claims, facts, and developments across the ENTIRE transcript.
+
+BULLET QUALITY (each bullet MUST satisfy all four)
+1. ANCHOR — lead with a hard specific: a name, number, country, date, percentage, or dollar amount drawn directly from the transcript. Never start with "The speaker discusses…" or similar.
+2. WHY — end with a short "— why it matters" clause: the implication, consequence, or stake. Do not just state the event; give its significance in plain terms.
+3. EDGE — if the presenter makes a sharp, provocative, or controversial claim, quote their framing directly (or paraphrase tightly). Do NOT soften, hedge, or abstract it into bland summary.
+4. NO OVERLAP — before finalising, re-read all bullets. If any two overlap >50% in content or entities, merge them into a single sharper bullet.
+
+TIMESTAMPS
+- For each bullet, find the transcript start_time (in seconds) of the sentence it comes from.
+- If transcript is an article (no timestamps), use null for timestamp_seconds.
+
+HEADLINE
+- Max 12 words, punchy, factual.
+- MUST include at least one proper noun (person, place, or organisation) unless the event is truly abstract (e.g. a new AI capability with no named actor).
+
+SUMMARY
+- 2 sentences, plain English, covering who/what/why. No throat-clearing, no "this video discusses". Lead with the fact."""
 
 PROPHETIC_BULLET_SYSTEM = """You are extracting prophetic content from a ministry video for a discerning Christian leader.
 Your ONLY task is to extract prophetic declarations, visions, words, and warnings from across the ENTIRE video.
@@ -149,20 +160,29 @@ def summarise_video(
     Returns {"headline", "summary", "bullets": [{"text", "timestamp_seconds"}]}
     or None on failure.
 
-    Prophetic → Gemini 2.5 Pro with thinking (nuanced extraction, full context)
-    General   → Gemini 2.0 Flash (cost-efficient, fast)
+    Prophetic     → Gemini 2.5 Pro with thinking (nuanced extraction)
+    India/Global  → Gemini 2.5 Pro (geopolitics benefits from deeper reasoning)
+    Others        → Gemini 2.5 Flash (cost-efficient)
     """
     context = build_transcript_context(title, transcript, segments)
-    is_prophetic = (category == "prophetic")
 
-    if is_prophetic:
+    if category == "prophetic":
         result = llm.pro_json(
             contents=context,
             system_instruction=PROPHETIC_BULLET_SYSTEM,
             response_schema=BULLET_SCHEMA,
             temperature=0.2,
             max_output_tokens=3072,
-            thinking_budget=4096,   # enables reasoning; raise to 8192 for complex videos
+            thinking_budget=4096,
+        )
+    elif category == "india_global":
+        result = llm.pro_json(
+            contents=context,
+            system_instruction=BULLET_SYSTEM,
+            response_schema=BULLET_SCHEMA,
+            temperature=0.2,
+            max_output_tokens=4096,
+            thinking_budget=2048,
         )
     else:
         result = llm.flash_json(
