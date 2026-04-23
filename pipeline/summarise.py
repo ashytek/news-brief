@@ -22,7 +22,8 @@ BULLET_SYSTEM = """You are a news summariser for a busy emergency medicine docto
 Extract the most newsworthy points from the full transcript below.
 
 Rules:
-- Extract 5-8 bullet points covering ALL major claims, facts, and developments — scan the ENTIRE transcript, not just the beginning
+- Before extracting bullets, mentally divide the transcript into 3 equal sections (beginning, middle, end). You MUST extract at least one bullet from each section — do not cluster bullets at the start
+- Extract 5-8 bullet points covering ALL major claims, facts, and developments across the ENTIRE transcript
 - Each bullet must be a complete, self-contained fact — specific and concrete, never vague
 - For each bullet, find the transcript start_time (in seconds) of the sentence it comes from
 - Always include names, numbers, countries, percentages, dates, dollar amounts where present
@@ -112,10 +113,10 @@ SYNTHESIS_SCHEMA = {
 def build_transcript_context(title: str, transcript: str, segments: list[dict]) -> str:
     """
     Build the full transcript context.
-    Uses ALL segments (no cutoff) up to 80,000 chars.
-    Gemini 2.5 Pro supports 1M tokens so we can raise this limit if needed.
+    Uses ALL segments up to 200,000 chars — covers ~90 min of video at typical density.
+    Gemini 2.5 Flash supports 1M tokens so this is well within limits.
     """
-    MAX_CHARS = 80_000
+    MAX_CHARS = 200_000
 
     if segments:
         context = f"Title: {title}\n\nTranscript with timestamps:\n"
