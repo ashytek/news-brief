@@ -169,7 +169,7 @@ def summarise_video(
             system_instruction=BULLET_SYSTEM,
             response_schema=BULLET_SCHEMA,
             temperature=0.2,
-            max_output_tokens=2048,
+            max_output_tokens=4096,
         )
 
     if not result:
@@ -208,7 +208,7 @@ def synthesise_cluster(
         system_instruction=SYNTHESIS_SYSTEM,
         response_schema=SYNTHESIS_SCHEMA,
         temperature=0.2,
-        max_output_tokens=1536,
+        max_output_tokens=2048,
     )
 
     return result

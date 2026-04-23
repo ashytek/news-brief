@@ -35,8 +35,8 @@ MAX_BULLETS = 8
 
 # Gemini models — primary LLM, free tier, zero cost at current volumes
 # Check https://ai.google.dev/gemini-api/docs/models for latest stable model strings
-GEMINI_FLASH_MODEL = "gemini-2.0-flash"     # general news summarisation + cluster synthesis
-GEMINI_PRO_MODEL   = "gemini-2.5-pro"       # prophetic extraction (1M context + thinking mode)
+GEMINI_FLASH_MODEL = "gemini-2.5-flash"  # general news summarisation + cluster synthesis
+GEMINI_PRO_MODEL   = "gemini-2.5-pro"   # prophetic extraction (1M context + thinking mode)
 
 # Optional: Healthchecks.io ping URL for dead-man's switch monitoring
 # Get a free URL at https://healthchecks.io → New Check → paste URL into .env
