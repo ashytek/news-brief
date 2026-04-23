@@ -269,18 +269,24 @@ export default function ReaderClient({ userId }: { userId: string }) {
     return stories.every(s => hasMutedTopic(s.matched_topics))
   }, [hasMutedTopic])
 
-  // Filter by unread (only applies to category tabs) AND by mute
+  const isActiveSource = useCallback((sourceId: string) =>
+    sources[sourceId]?.is_active !== false,
+  [sources])
+
+  // Filter by unread (only applies to category tabs), mute, AND active source
   const visibleClusters = useMemo(
     () => clusters
+      .filter(c => (c.stories ?? []).some(s => isActiveSource(s.source_id)))
       .filter(c => !isClusterMuted(c))
       .filter(c => showUnreadOnly ? !isClusterRead(c) : true),
-    [clusters, isClusterRead, isClusterMuted, showUnreadOnly]
+    [clusters, isClusterRead, isClusterMuted, showUnreadOnly, isActiveSource]
   )
   const visibleSolos = useMemo(
     () => soloStories
+      .filter(s => isActiveSource(s.source_id))
       .filter(s => !hasMutedTopic(s.matched_topics))
       .filter(s => showUnreadOnly ? !readIds.has(s.id) : true),
-    [soloStories, readIds, hasMutedTopic, showUnreadOnly]
+    [soloStories, readIds, hasMutedTopic, showUnreadOnly, isActiveSource]
   )
 
   const unreadCount = useMemo(
@@ -288,9 +294,19 @@ export default function ReaderClient({ userId }: { userId: string }) {
     [clusters, soloStories, isClusterRead, readIds]
   )
 
+  // Today tab — filter to active sources before passing to TodayFeed
+  const activeTodayClusters = useMemo(
+    () => todayClusters.filter(c => (c.stories ?? []).some(s => isActiveSource(s.source_id))),
+    [todayClusters, isActiveSource]
+  )
+  const activeTodayStories = useMemo(
+    () => todayStories.filter(s => isActiveSource(s.source_id)),
+    [todayStories, isActiveSource]
+  )
+
   const todayUnread = useMemo(
-    () => todayClusters.filter(c => !isClusterRead(c)).length + todayStories.filter(s => !readIds.has(s.id)).length,
-    [todayClusters, todayStories, isClusterRead, readIds]
+    () => activeTodayClusters.filter(c => !isClusterRead(c)).length + activeTodayStories.filter(s => !readIds.has(s.id)).length,
+    [activeTodayClusters, activeTodayStories, isClusterRead, readIds]
   )
 
   const isEmpty = visibleClusters.length === 0 && visibleSolos.length === 0
@@ -421,8 +437,8 @@ export default function ReaderClient({ userId }: { userId: string }) {
         {activeTab === 'today' && (
           <ErrorBoundary>
             <TodayFeed
-              clusters={todayClusters}
-              stories={todayStories}
+              clusters={activeTodayClusters}
+              stories={activeTodayStories}
               sources={sources}
               readIds={readIds}
               onMarkRead={markRead}
