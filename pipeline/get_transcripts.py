@@ -18,6 +18,9 @@ import random
 import requests
 from bs4 import BeautifulSoup
 
+import subprocess
+import tempfile
+
 from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
 
 import db
@@ -225,6 +228,72 @@ def _get_transcript_ytt(video_id: str) -> tuple[str, list] | None:
 
 
 # ---------------------------------------------------------------------------
+# AssemblyAI audio fallback — used when YouTube has no captions
+# ---------------------------------------------------------------------------
+
+def _transcribe_via_assemblyai(video_url: str) -> tuple[str, list] | None:
+    """Download audio via yt-dlp, transcribe via AssemblyAI. Returns (text, segments)."""
+    if not ASSEMBLYAI_API_KEY:
+        return None
+    try:
+        import yt_dlp
+        import assemblyai as aai
+    except ImportError:
+        print("    ✗ assemblyai or yt-dlp not installed — skipping audio fallback")
+        return None
+
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            audio_path = os.path.join(tmpdir, "audio.m4a")
+            ydl_opts = {
+                "format": "bestaudio[ext=m4a]/bestaudio/best",
+                "outtmpl": audio_path,
+                "quiet": True,
+                "no_warnings": True,
+                "noplaylist": True,
+            }
+            if YOUTUBE_BROWSER:
+                ydl_opts["cookiesfrombrowser"] = (YOUTUBE_BROWSER,)
+            elif _resolve_cookie_path():
+                ydl_opts["cookiefile"] = _resolve_cookie_path()
+
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([video_url])
+
+            # yt-dlp may append an extension — find the actual file
+            files = [f for f in os.listdir(tmpdir) if f.startswith("audio")]
+            if not files:
+                print("    ✗ yt-dlp produced no audio file")
+                return None
+            actual_path = os.path.join(tmpdir, files[0])
+
+            print(f"    → Transcribing audio via AssemblyAI ({os.path.getsize(actual_path) // 1024} KB)…")
+            aai.settings.api_key = ASSEMBLYAI_API_KEY
+            config = aai.TranscriptionConfig(punctuate=True, format_text=True, language_detection=True)
+            transcript = aai.Transcriber(config=config).transcribe(actual_path)
+
+            if transcript.status == aai.TranscriptStatus.error:
+                print(f"    ✗ AssemblyAI error: {transcript.error}")
+                return None
+
+            text = transcript.text or ""
+            segments = []
+            if transcript.words:
+                for w in transcript.words:
+                    segments.append({
+                        "text": w.text,
+                        "start": w.start / 1000.0,
+                        "duration": (w.end - w.start) / 1000.0,
+                    })
+            print(f"    ✓ AssemblyAI transcript ({len(text)} chars)")
+            return text, segments
+
+    except Exception as e:
+        print(f"    ✗ Audio fallback failed: {str(e)[:120]}")
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Unified public transcript getter
 # ---------------------------------------------------------------------------
 
@@ -308,7 +377,18 @@ def fetch_transcript(video: dict) -> tuple:
     try:
         result = get_youtube_transcript(vid_id)
     except PermanentNoTranscript as e:
-        print(f"    ✗ No transcript (permanent): {str(e)[:80]}")
+        print(f"    ✗ No YouTube captions: {str(e)[:80]}")
+        # Try audio fallback before giving up
+        audio_result = _transcribe_via_assemblyai(url)
+        if audio_result:
+            text, segments = audio_result
+            if segments:
+                last = segments[-1]
+                total_seconds = (last.get("start") or 0) + (last.get("duration") or 0)
+                if total_seconds < MIN_VIDEO_DURATION_SECONDS:
+                    print(f"    · Skipped short ({int(total_seconds)}s < {MIN_VIDEO_DURATION_SECONDS}s)")
+                    return None, "skipped_short", []
+            return text, "fetched", segments
         if video_id:
             db.mark_video_permanent_failure(video_id)
         return None, "no_transcript", []
