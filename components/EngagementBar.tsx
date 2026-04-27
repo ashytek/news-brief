@@ -41,7 +41,7 @@ export function EngagementBar({ isRead, onRead, onEngagement, onMuteTopic, canMu
     <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-800/60">
       <button
         onClick={handleLike}
-        className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+        className={`flex items-center gap-1 px-2.5 py-2.5 min-h-[44px] rounded-lg text-xs font-medium transition-all ${
           liked ? 'bg-emerald-500/20 text-emerald-400' : 'bg-gray-800 text-gray-500 hover:text-gray-300'
         }`}
       >
@@ -53,7 +53,7 @@ export function EngagementBar({ isRead, onRead, onEngagement, onMuteTopic, canMu
 
       <button
         onClick={handleDislike}
-        className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+        className={`flex items-center gap-1 px-2.5 py-2.5 min-h-[44px] rounded-lg text-xs font-medium transition-all ${
           disliked ? 'bg-red-500/20 text-red-400' : 'bg-gray-800 text-gray-500 hover:text-gray-300'
         }`}
       >
@@ -68,7 +68,7 @@ export function EngagementBar({ isRead, onRead, onEngagement, onMuteTopic, canMu
           onClick={handleMute}
           disabled={muted}
           title="Mute this topic for 2 weeks"
-          className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+          className={`flex items-center gap-1 px-2.5 py-2.5 min-h-[44px] rounded-lg text-xs font-medium transition-all ${
             muted ? 'bg-gray-800/60 text-gray-600' : 'bg-gray-800 text-gray-500 hover:text-gray-300'
           }`}
         >
@@ -84,7 +84,7 @@ export function EngagementBar({ isRead, onRead, onEngagement, onMuteTopic, canMu
       {!isRead && (
         <button
           onClick={handleRead}
-          className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium bg-gray-800 text-gray-500 hover:text-gray-300 transition-all"
+          className="flex items-center gap-1 px-2.5 py-2.5 min-h-[44px] rounded-lg text-xs font-medium bg-gray-800 text-gray-500 hover:text-gray-300 transition-all"
         >
           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />

@@ -17,10 +17,7 @@ load_dotenv()
 import db
 import summarise
 import cluster
-
-def match_topics(text: str, keywords: list[str]) -> list[str]:
-    text_lower = text.lower()
-    return [kw for kw in keywords if kw.lower() in text_lower]
+from run_pipeline import match_topics  # word-boundary aware
 
 
 def recover():

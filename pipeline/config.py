@@ -27,8 +27,11 @@ SUPABASE_SERVICE_KEY  = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 # How many hours back to look for new videos
 LOOKBACK_HOURS = 4
 
-# Cosine similarity threshold to merge stories into a cluster
-CLUSTER_THRESHOLD = 0.72
+# Cosine similarity threshold to merge stories into a cluster.
+# 0.72 was over-aggressive (e.g. "India-NZ FTA" merged with unrelated
+# "Butter Chicken Tsunami" remark). 0.78 keeps tight near-duplicates
+# clustered while letting different events stay solo.
+CLUSTER_THRESHOLD = 0.78
 
 # Videos shorter than this are treated as filler/shorts and skipped entirely
 # Vantage segments run 3-8 min — set to 3 min to capture them all

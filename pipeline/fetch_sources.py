@@ -44,11 +44,79 @@ def resolve_channel_id(handle_or_id: str) -> Optional[str]:
     return handle_or_id  # Already a real ID
 
 
+def _fetch_via_uploads_playlist(channel_id: str, source: dict, cutoff: datetime) -> list[dict]:
+    """
+    Fetch up to 50 most-recent videos via the channel's uploads playlist.
+    Costs 1 quota unit per call (vs 100 for search.list). Use this for sources
+    where the RSS 15-item window misses content (e.g. Vantage segments crowded
+    out by frequent LIVE streams on the same channel).
+    """
+    yt = get_youtube()
+    # The "uploads" playlist ID is "UU" + the channel ID minus "UC"
+    uploads_id = "UU" + channel_id[2:] if channel_id.startswith("UC") else None
+    if not uploads_id:
+        return []
+
+    try:
+        res = yt.playlistItems().list(
+            part="snippet,contentDetails",
+            playlistId=uploads_id,
+            maxResults=50,
+        ).execute()
+    except Exception as e:
+        print(f"  ⚠ Uploads playlist fetch failed for {source['name']}: {e}")
+        return []
+
+    items = []
+    title_filter = source.get("title_filter")
+    for it in res.get("items", []):
+        sn = it.get("snippet", {})
+        cd = it.get("contentDetails", {})
+        vid_id = cd.get("videoId") or sn.get("resourceId", {}).get("videoId")
+        if not vid_id:
+            continue
+
+        published_str = cd.get("videoPublishedAt") or sn.get("publishedAt")
+        try:
+            published = datetime.fromisoformat(published_str.replace("Z", "+00:00"))
+        except Exception:
+            continue
+        if published < cutoff:
+            continue
+
+        title = sn.get("title", "Untitled")
+        # Skip true LIVE-stream broadcasts (these have no transcript and crowd the feed)
+        if title.startswith("LIVE") or " LIVE " in title or " LIVE:" in title:
+            continue
+        if title_filter and title_filter.lower() not in title.lower():
+            continue
+
+        thumbs = sn.get("thumbnails", {})
+        thumb_url = (
+            (thumbs.get("high") or thumbs.get("medium") or thumbs.get("default") or {}).get("url")
+            or f"https://img.youtube.com/vi/{vid_id}/hqdefault.jpg"
+        )
+
+        items.append({
+            "source_id": source["id"],
+            "external_id": vid_id,
+            "title": title,
+            "url": f"https://www.youtube.com/watch?v={vid_id}",
+            "published_at": published.isoformat(),
+            "transcript_status": "pending",
+            "thumbnail_url": thumb_url,
+        })
+    return items
+
+
 def fetch_youtube_channel(source: dict, cutoff: datetime) -> list[dict]:
     """
-    Fetch recent videos from a YouTube channel via the FREE RSS feed.
-    Uses zero YouTube Data API quota — no search.list call needed.
-    Falls back to the API only if RSS fails.
+    Fetch recent videos from a YouTube channel.
+
+    Default: free RSS feed (15 items, zero API quota).
+    When `title_filter` is set: use the channel's uploads playlist via the
+      YouTube Data API (50 items, 1 quota unit) — RSS misses filtered items
+      when the channel uploads many LIVE streams that crowd out segments.
     """
     channel_id_raw = source["youtube_channel_id"]
     if not channel_id_raw:
@@ -65,7 +133,11 @@ def fetch_youtube_channel(source: dict, cutoff: datetime) -> list[dict]:
             "youtube_channel_id": channel_id
         }).eq("id", source["id"]).execute()
 
-    # ── PRIMARY: YouTube RSS feed (free, zero API quota) ───────────────────
+    # ── For filter-heavy sources: use uploads playlist (deeper, segment-aware)
+    if source.get("title_filter"):
+        return _fetch_via_uploads_playlist(channel_id, source, cutoff)
+
+    # ── DEFAULT: YouTube RSS feed (free, zero API quota) ───────────────────
     # feedparser never raises for HTTP errors — it returns bozo=True with empty
     # entries. We ALWAYS return from this block so we never fall through to the
     # quota-burning API fallback on a normal "no new videos" result.

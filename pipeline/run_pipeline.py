@@ -10,9 +10,11 @@ Usage:
 """
 
 import os
+import re
 import sys
 import time
 import schedule
+import subprocess
 import traceback
 from datetime import datetime
 
@@ -44,10 +46,28 @@ def _ping_healthcheck(success: bool = True):
 INTERVAL_MINUTES = 90
 
 
+_WORD_BOUNDARY_CACHE: dict[str, "re.Pattern[str]"] = {}
+
+
+def _kw_pattern(kw: str) -> "re.Pattern[str]":
+    """Compile (and cache) a word-boundary regex for a topic keyword.
+
+    Multi-word keywords ("strait of hormuz") collapse internal whitespace to
+    `\\s+` so they still match across line breaks or double-spaced text.
+    """
+    if kw not in _WORD_BOUNDARY_CACHE:
+        import re as _re
+        parts = [_re.escape(p) for p in kw.split()]
+        body = r"\s+".join(parts) if parts else _re.escape(kw)
+        _WORD_BOUNDARY_CACHE[kw] = _re.compile(rf"\b{body}\b", _re.IGNORECASE)
+    return _WORD_BOUNDARY_CACHE[kw]
+
+
 def match_topics(text: str, keywords: list[str]) -> list[str]:
-    """Case-insensitive check: which keywords appear in the text?"""
-    text_lower = text.lower()
-    return [kw for kw in keywords if kw.lower() in text_lower]
+    """Word-boundary keyword match — avoids 'ai' matching 'said', etc."""
+    if not text:
+        return []
+    return [kw for kw in keywords if _kw_pattern(kw).search(text)]
 
 
 def process_transcripts_and_summarise(items, stats, source_map):
@@ -377,13 +397,45 @@ def run_once():
         _ping_healthcheck(success=False)
 
 
+def _code_version_banner():
+    """Emit a startup line that ties the running process to a code revision.
+
+    Makes stale long-running processes obvious in the log: if the SHA in the
+    banner doesn't match `git rev-parse HEAD` after a pull, the process was
+    started before the latest changes were applied.
+    """
+    started = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    sha = "unknown"
+    dirty = ""
+    try:
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        sha = subprocess.check_output(
+            ["git", "-C", repo_root, "rev-parse", "--short", "HEAD"],
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+        ).decode().strip()
+        # Detect uncommitted changes — service-the-truth on what's actually running
+        status = subprocess.check_output(
+            ["git", "-C", repo_root, "status", "--porcelain"],
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+        ).decode().strip()
+        dirty = " (dirty)" if status else ""
+    except Exception:
+        pass
+    print(f"📰 News Brief Pipeline")
+    print(f"   started_at: {started}")
+    print(f"   pid:        {os.getpid()}")
+    print(f"   code_sha:   {sha}{dirty}")
+
+
 def main():
     retry_mode    = "--retry" in sys.argv
     recluster_mode = "--recluster" in sys.argv
     once = "--once" in sys.argv or retry_mode or recluster_mode
 
-    print("📰 News Brief Pipeline")
-    print(f"   Supabase: connected")
+    _code_version_banner()
+    print(f"   Supabase:   connected")
 
     if recluster_mode:
         print(f"   Mode: re-cluster all embedded stories")

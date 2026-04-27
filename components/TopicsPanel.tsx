@@ -5,13 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import type { Source } from '@/lib/types'
 import type { StoryWithRelations } from '@/lib/types'
 import { SoloCard } from './SoloCard'
-
-const CATEGORY_LABELS: Record<string, string> = {
-  prophetic:    'Prophetic',
-  israel:       'Israel',
-  india_global: 'India & Global',
-  tech_ai:      'Tech & AI',
-}
+import { CATEGORY_LABELS, STORY_SELECT } from '@/lib/constants'
 
 interface Props {
   userId: string
@@ -37,7 +31,7 @@ export function TopicsPanel({ userId, readIds, onMarkRead, onEngagement }: Props
       supabase.from('topic_keywords').select('*').order('keyword'),
       supabase
         .from('stories')
-        .select('*, videos(*), sources(*)')
+        .select(STORY_SELECT)
         .not('matched_topics', 'is', null)
         .order('created_at', { ascending: false })
         .limit(60),
@@ -47,7 +41,7 @@ export function TopicsPanel({ userId, readIds, onMarkRead, onEngagement }: Props
     if (kwRes.data) setKeywords(kwRes.data)
 
     if (storyRes.data) {
-      const filtered = (storyRes.data as StoryWithRelations[]).filter(
+      const filtered = (storyRes.data as unknown as StoryWithRelations[]).filter(
         s => s.matched_topics && s.matched_topics.length > 0
       )
       setStories(filtered)

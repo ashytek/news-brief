@@ -1,35 +1,15 @@
 'use client'
 
 import { useMemo } from 'react'
-import type { ClusterWithRelations, StoryWithRelations, Source, Category } from '@/lib/types'
+import type { ClusterWithRelations, StoryWithRelations, Source } from '@/lib/types'
 import { SoloCard } from './SoloCard'
 import { ClusteredCard } from './ClusteredCard'
 import { SkeletonCard } from './SkeletonCard'
-
-const CATEGORY_LABELS: Record<Category, string> = {
-  prophetic:    'Prophetic',
-  israel:       'Israel',
-  india_global: 'India & Global',
-  tech_ai:      'Tech & AI',
-}
-
-const CATEGORY_COLORS: Record<Category, string> = {
-  prophetic:    'bg-violet-500/20 text-violet-300',
-  israel:       'bg-blue-500/20 text-blue-300',
-  india_global: 'bg-amber-500/20 text-amber-300',
-  tech_ai:      'bg-emerald-500/20 text-emerald-300',
-}
+import { CATEGORY_LABELS, CATEGORY_PILL_COLORS, isClusterFullyRead } from '@/lib/constants'
 
 type RankedItem =
   | { type: 'cluster'; data: ClusterWithRelations; score: number }
   | { type: 'story';   data: StoryWithRelations;   score: number }
-
-function isClusterFullyRead(c: ClusterWithRelations, readIds: Set<string>): boolean {
-  if (readIds.has(c.id)) return true
-  const stories = c.stories ?? []
-  if (stories.length === 0) return false
-  return stories.every(s => readIds.has(s.id))
-}
 
 function rankItems(
   clusters: ClusterWithRelations[],
@@ -147,7 +127,7 @@ export function TodayFeed({
             <div key={cluster.id} className="relative">
               {/* Category chip overlay */}
               <div className="absolute top-3 right-3 z-10">
-                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${CATEGORY_COLORS[cluster.category]}`}>
+                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${CATEGORY_PILL_COLORS[cluster.category]}`}>
                   {CATEGORY_LABELS[cluster.category]}
                 </span>
               </div>
@@ -175,7 +155,7 @@ export function TodayFeed({
           <div key={story.id} className="relative">
             {/* Category chip overlay */}
             <div className="absolute top-3 right-3 z-10">
-              <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${CATEGORY_COLORS[story.category]}`}>
+              <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${CATEGORY_PILL_COLORS[story.category]}`}>
                 {CATEGORY_LABELS[story.category]}
               </span>
             </div>

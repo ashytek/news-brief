@@ -11,6 +11,8 @@ import { TopicsPanel } from '@/components/TopicsPanel'
 import { TodayFeed } from '@/components/TodayFeed'
 import { SkeletonCard } from '@/components/SkeletonCard'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
+import { InstallPrompt } from '@/components/InstallPrompt'
+import { STORY_SELECT, CLUSTER_SELECT, isClusterFullyRead } from '@/lib/constants'
 
 const CATEGORIES: { key: Category; label: string; color: string }[] = [
   { key: 'prophetic',    label: 'Prophetic',      color: 'violet' },
@@ -18,10 +20,6 @@ const CATEGORIES: { key: Category; label: string; color: string }[] = [
   { key: 'india_global', label: 'India & Global',  color: 'amber'  },
   { key: 'tech_ai',      label: 'Tech & AI',       color: 'emerald'},
 ]
-
-// Explicit column selects — omits transcript_text/embedding blobs from payload
-const STORY_SELECT = `id, source_id, video_id, category, headline, summary, bullets, cluster_id, matched_topics, created_at, videos(id, url, published_at, thumbnail_url), sources(id, name)`
-const CLUSTER_SELECT = `id, category, core_fact, consensus, perspectives, story_count, first_seen_at, last_updated_at, synthesised_at, stories(id, source_id, headline, summary, bullets, created_at, matched_topics, videos(id, url, published_at, thumbnail_url), sources(id, name))`
 
 export default function ReaderClient({ userId }: { userId: string }) {
   const supabase = createClient()
@@ -52,6 +50,11 @@ export default function ReaderClient({ userId }: { userId: string }) {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [sources, setSources] = useState<Record<string, Source>>({})
   const [topicCount, setTopicCount] = useState(0)
+  // Categories with at least one story in the last 7 days — hide dead tabs
+  const [activeCategoryKeys, setActiveCategoryKeys] = useState<Set<string>>(
+    new Set(CATEGORIES.map(c => c.key))  // show all until we know
+  )
+  const [lastPipelineRun, setLastPipelineRun] = useState<Date | null>(null)
   const dwellTimers = useRef<Map<string, number>>(new Map())
 
   // Record last-visit timestamp on mount
@@ -77,6 +80,32 @@ export default function ReaderClient({ userId }: { userId: string }) {
       .select('id', { count: 'exact', head: true })
       .not('matched_topics', 'is', null)
       .then(({ count }) => { if (count) setTopicCount(count) })
+
+    // Detect which categories have recent content (last 7 days) — hides dead tabs
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+    Promise.all(
+      CATEGORIES.map(cat =>
+        supabase
+          .from('stories')
+          .select('id', { count: 'exact', head: true })
+          .eq('category', cat.key)
+          .gte('created_at', sevenDaysAgo)
+          .then(({ count }) => ({ key: cat.key, hasContent: (count ?? 0) > 0 }))
+      )
+    ).then(results => {
+      setActiveCategoryKeys(new Set(results.filter(r => r.hasContent).map(r => r.key)))
+    })
+
+    // Last pipeline run timestamp — shown in header as a health indicator
+    supabase
+      .from('pipeline_runs')
+      .select('finished_at')
+      .eq('status', 'success')
+      .order('finished_at', { ascending: false })
+      .limit(1)
+      .then(({ data }) => {
+        if (data?.[0]?.finished_at) setLastPipelineRun(new Date(data[0].finished_at))
+      })
   }, [])
 
   // Load read item IDs once on mount — independent of active tab
@@ -115,12 +144,30 @@ export default function ReaderClient({ userId }: { userId: string }) {
     if (keywords.length === 0) return
     const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString()
     const rows = keywords.map(keyword => ({ user_id: userId, keyword, expires_at: expiresAt }))
-    await supabase.from('muted_topics').insert(rows)
+
+    // Optimistic UI first — keep the in-memory mute set responsive
     setMutedKeywords(prev => {
       const next = new Set(prev)
       keywords.forEach(k => next.add(k))
       return next
     })
+
+    // Re-muting a keyword should refresh expires_at, not error. Try upsert; if
+    // the constraint name doesn't resolve we fall back to per-row insert that
+    // tolerates 23505 duplicate-key errors.
+    const { error } = await supabase.from('muted_topics').upsert(rows, {
+      onConflict: 'user_id,keyword',
+      ignoreDuplicates: false,
+    })
+    if (error) {
+      // Per-row insert fallback (mirrors markRead pattern)
+      for (const row of rows) {
+        const { error: rowErr } = await supabase.from('muted_topics').insert(row)
+        if (rowErr && rowErr.code !== '23505') {
+          console.error('muteTopics failed for keyword', row.keyword, rowErr)
+        }
+      }
+    }
   }, [userId])
 
   // Load content when active tab changes
@@ -183,21 +230,31 @@ export default function ReaderClient({ userId }: { userId: string }) {
   }, [activeTab, loadContent])
 
   const markRead = useCallback(async (storyId?: string, clusterId?: string) => {
+    if (!storyId && !clusterId) return
     if (storyId && readIds.has(storyId)) return
     if (clusterId && readIds.has(clusterId)) return
 
-    await supabase.from('read_items').upsert({
-      user_id: userId,
-      story_id: storyId ?? null,
-      cluster_id: clusterId ?? null,
-    }, { onConflict: storyId ? 'user_id,story_id' : 'user_id,cluster_id' })
-
+    // Optimistic update first so the UI reacts even if the network is slow
     setReadIds(prev => {
       const next = new Set(prev)
       if (storyId) next.add(storyId)
       if (clusterId) next.add(clusterId)
       return next
     })
+
+    // Plain insert — Postgres unique index (user_id,story_id) / (user_id,cluster_id)
+    // prevents real duplicates. PostgREST's `upsert(... onConflict)` was failing
+    // silently because the constraint name lookup didn't resolve, so writes
+    // were being lost. We tolerate the 23505 duplicate-key error explicitly
+    // (which only happens in rare cross-tab races).
+    const { error } = await supabase.from('read_items').insert({
+      user_id: userId,
+      story_id: storyId ?? null,
+      cluster_id: clusterId ?? null,
+    })
+    if (error && error.code !== '23505') {
+      console.error('markRead failed', { storyId, clusterId, error })
+    }
   }, [userId, readIds])
 
   const sendEngagement = useCallback(async (signal: string, storyId?: string, clusterId?: string) => {
@@ -364,11 +421,21 @@ export default function ReaderClient({ userId }: { userId: string }) {
             </div>
             <div>
               <h1 className="text-sm font-bold text-white leading-none">News Brief</h1>
-              {lastUpdated && activeTab !== 'topics' && (
+              {lastPipelineRun ? (
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Pipeline {(() => {
+                    const mins = Math.round((Date.now() - lastPipelineRun.getTime()) / 60000)
+                    if (mins < 60) return `${mins}m ago`
+                    const hrs = Math.round(mins / 60)
+                    if (hrs < 24) return `${hrs}h ago`
+                    return lastPipelineRun.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+                  })()}
+                </p>
+              ) : lastUpdated && activeTab !== 'topics' ? (
                 <p className="text-xs text-gray-500 mt-0.5">
                   Updated {lastUpdated.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
                 </p>
-              )}
+              ) : null}
             </div>
           </div>
 
@@ -418,21 +485,18 @@ export default function ReaderClient({ userId }: { userId: string }) {
           </div>
         </div>
 
-        {/* Category + Today + Topics tabs */}
+        {/* Category + Today + Topics tabs — only show categories with recent content */}
         <CategoryNav
-          categories={CATEGORIES}
+          categories={CATEGORIES.filter(c => activeCategoryKeys.has(c.key))}
           active={activeTab}
           onChange={handleTabChange}
-          readIds={readIds}
-          clusters={clusters}
-          soloStories={soloStories}
           topicCount={topicCount}
           todayUnread={todayUnread}
         />
       </header>
 
       {/* Feed */}
-      <main className="max-w-2xl mx-auto px-4 py-4 space-y-3">
+      <main className="max-w-2xl mx-auto px-4 py-4 space-y-3 pb-24 md:pb-6">
         {/* Today tab */}
         {activeTab === 'today' && (
           <ErrorBoundary>
@@ -558,6 +622,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
           </>
         )}
       </main>
+      <InstallPrompt />
     </div>
   )
 }

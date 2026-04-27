@@ -2,22 +2,13 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import type { Story, Source } from '@/lib/types'
+import type { StoryWithRelations, Source } from '@/lib/types'
 import { SoloCard } from '@/components/SoloCard'
-
-const CATEGORY_LABELS: Record<string, string> = {
-  prophetic:    'Prophetic',
-  israel:       'Israel',
-  india_global: 'India & Global',
-  tech_ai:      'Tech & AI',
-}
-
-const CATEGORY_COLORS: Record<string, string> = {
-  prophetic:    'text-violet-400',
-  israel:       'text-blue-400',
-  india_global: 'text-amber-400',
-  tech_ai:      'text-emerald-400',
-}
+import {
+  CATEGORY_LABELS,
+  CATEGORY_TEXT_COLORS,
+  STORY_SELECT,
+} from '@/lib/constants'
 
 function formatDate(d: Date): string {
   return d.toISOString().split('T')[0]
@@ -48,7 +39,7 @@ export default function ArchiveClient({ userId }: Props) {
   const yesterday = shiftDate(today, -1)
 
   const [selectedDate, setSelectedDate] = useState(yesterday)
-  const [stories, setStories] = useState<Story[]>([])
+  const [stories, setStories] = useState<StoryWithRelations[]>([])
   const [sources, setSources] = useState<Record<string, Source>>({})
   const [readIds, setReadIds] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
@@ -76,13 +67,13 @@ export default function ArchiveClient({ userId }: Props) {
     setLoading(true)
     const { data } = await supabase
       .from('stories')
-      .select('*, videos(*), sources(*)')
+      .select(STORY_SELECT)
       .gte('created_at', toDateStart(date))
       .lte('created_at', toDateEnd(date))
       .order('created_at', { ascending: false })
       .limit(100)
 
-    setStories((data as Story[]) ?? [])
+    setStories((data as unknown as StoryWithRelations[]) ?? [])
     setLoading(false)
   }, [])
 
@@ -92,12 +83,16 @@ export default function ArchiveClient({ userId }: Props) {
 
   const markRead = async (storyId?: string) => {
     if (!storyId || readIds.has(storyId)) return
-    await supabase.from('read_items').upsert({
+    // Optimistic update
+    setReadIds(prev => { const n = new Set(prev); n.add(storyId); return n })
+    const { error } = await supabase.from('read_items').insert({
       user_id: userId,
       story_id: storyId,
       cluster_id: null,
-    }, { onConflict: 'user_id,story_id' })
-    setReadIds(prev => { const n = new Set(prev); n.add(storyId); return n })
+    })
+    if (error && error.code !== '23505') {
+      console.error('archive markRead failed', { storyId, error })
+    }
   }
 
   // Quick date buttons
@@ -114,7 +109,7 @@ export default function ArchiveClient({ userId }: Props) {
     ? stories
     : stories.filter(s => s.category === filterCategory)
 
-  const grouped = Object.entries(CATEGORY_LABELS).reduce<Record<string, Story[]>>((acc, [key]) => {
+  const grouped = Object.entries(CATEGORY_LABELS).reduce<Record<string, StoryWithRelations[]>>((acc, [key]) => {
     acc[key] = stories.filter(s => s.category === key)
     return acc
   }, {})
@@ -198,11 +193,11 @@ export default function ArchiveClient({ userId }: Props) {
                     filterCategory === cat
                       ? cat === 'all'
                         ? 'bg-gray-700 text-white border-gray-600'
-                        : `bg-gray-800 border-gray-700 ${CATEGORY_COLORS[cat]}`
+                        : `bg-gray-800 border-gray-700 ${CATEGORY_TEXT_COLORS[cat as keyof typeof CATEGORY_TEXT_COLORS] ?? ''}`
                       : 'bg-transparent border-gray-800 text-gray-500 hover:text-gray-300'
                   }`}
                 >
-                  {cat === 'all' ? 'All' : CATEGORY_LABELS[cat]} ({count})
+                  {cat === 'all' ? 'All' : CATEGORY_LABELS[cat as keyof typeof CATEGORY_LABELS]} ({count})
                 </button>
               )
             })}

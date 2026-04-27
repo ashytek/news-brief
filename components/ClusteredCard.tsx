@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import type { ClusterWithRelations } from '@/lib/types'
 import { TsLink } from './TsLink'
 import { EngagementBar } from './EngagementBar'
+import { formatTime } from '@/lib/constants'
 
 interface Props {
   cluster: ClusterWithRelations
@@ -14,12 +15,6 @@ interface Props {
   onDwellStart: () => void
   onDwellEnd: () => void
   onMuteTopic?: () => void
-}
-
-function formatTime(seconds: number): string {
-  const m = Math.floor(seconds / 60)
-  const s = seconds % 60
-  return `${m}:${s.toString().padStart(2, '0')}`
 }
 
 export function ClusteredCard({ cluster, isRead, readStoryIds, onRead, onEngagement, onDwellStart, onDwellEnd, onMuteTopic }: Props) {
@@ -40,6 +35,16 @@ export function ClusteredCard({ cluster, isRead, readStoryIds, onRead, onEngagem
 
   const stories = cluster.stories ?? []
 
+  // Pick the freshest unread story's headline as the primary title.
+  // Falls back to the freshest story overall, then to core_fact.
+  const sortedByDate = [...stories].sort((a, b) =>
+    new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  )
+  const freshUnread = sortedByDate.find(s => !readStoryIds?.has(s.id))
+  const primaryStory = freshUnread ?? sortedByDate[0] ?? null
+  const primaryHeadline = primaryStory?.headline ?? null
+  const hasFreshContent = freshUnread != null && sortedByDate.length > 1
+
   return (
     <article
       className={`rounded-2xl border p-4 transition-all ${
@@ -56,6 +61,11 @@ export function ClusteredCard({ cluster, isRead, readStoryIds, onRead, onEngagem
           </svg>
           {cluster.story_count} sources
         </span>
+        {hasFreshContent && (
+          <span className="text-[10px] font-bold tracking-wide text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-1.5 py-0.5 rounded-full uppercase">
+            New
+          </span>
+        )}
         <span className="text-xs text-gray-500">
           {new Date(cluster.last_updated_at).toLocaleDateString('en-GB', {
             day: 'numeric', month: 'short'
@@ -63,11 +73,18 @@ export function ClusteredCard({ cluster, isRead, readStoryIds, onRead, onEngagem
         </span>
       </div>
 
-      {/* Core fact */}
-      {cluster.core_fact && (
+      {/* Primary headline — the freshest unread story so updates are obvious */}
+      {primaryHeadline && (
         <h2 className="text-base font-semibold text-white leading-snug mb-2">
-          {cluster.core_fact}
+          {primaryHeadline}
         </h2>
+      )}
+
+      {/* Core fact (cross-source synthesis) — secondary context */}
+      {cluster.core_fact && cluster.core_fact !== primaryHeadline && (
+        <p className="text-sm text-gray-400 leading-snug mb-2">
+          {cluster.core_fact}
+        </p>
       )}
 
       {/* Consensus */}

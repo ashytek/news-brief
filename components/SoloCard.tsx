@@ -5,6 +5,7 @@ import type { Source } from '@/lib/types'
 import type { StoryWithRelations } from '@/lib/types'
 import { TsLink } from './TsLink'
 import { EngagementBar } from './EngagementBar'
+import { formatTime } from '@/lib/constants'
 
 interface Props {
   story: StoryWithRelations
@@ -15,12 +16,6 @@ interface Props {
   onDwellStart: () => void
   onDwellEnd: () => void
   onMuteTopic?: () => void
-}
-
-function formatTime(seconds: number): string {
-  const m = Math.floor(seconds / 60)
-  const s = seconds % 60
-  return `${m}:${s.toString().padStart(2, '0')}`
 }
 
 const SIXTY_MINUTES = 60 * 60 * 1000
