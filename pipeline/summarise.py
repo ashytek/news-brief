@@ -197,6 +197,14 @@ def summarise_video(
         print(f"    ✗ Summarisation failed (Gemini returned None)")
         return None
 
+    # Reject no-content sentinels Gemini sometimes returns when a video has
+    # no usable material (scripture readings, silent videos, etc.)
+    headline = result.get("headline", "")
+    NO_CONTENT_PHRASES = ("no new", "no prophetic", "no content", "no information", "scripture reading", "no news")
+    if any(p in headline.lower() for p in NO_CONTENT_PHRASES):
+        print(f"    · Skipped — Gemini reported no usable content: {headline[:60]}")
+        return None
+
     result["bullets"] = result.get("bullets", [])[:MAX_BULLETS]
     return result
 
