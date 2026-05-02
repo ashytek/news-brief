@@ -156,6 +156,25 @@ def generate_json(
         return json.loads(raw)
     except json.JSONDecodeError as e:
         _log.error(f"Gemini returned invalid JSON: {e}\nRaw snippet: {raw[:300]}")
+        # Truncated output — retry once with doubled token budget
+        if "Unterminated string" in str(e) or "Expecting" in str(e):
+            _log.warning("JSON looks truncated — retrying with doubled token budget…")
+            raw2 = _generate(
+                model=model,
+                contents=contents,
+                system_instruction=system_instruction,
+                response_schema=response_schema,
+                temperature=temperature,
+                max_output_tokens=min(max_output_tokens * 2, 16384),
+                thinking_budget=thinking_budget,
+            )
+            if raw2 and raw2.strip():
+                raw2 = re.sub(r"^```(?:json)?\n?", "", raw2.strip())
+                raw2 = re.sub(r"\n?```$", "", raw2)
+                try:
+                    return json.loads(raw2)
+                except json.JSONDecodeError:
+                    pass
         return None
 
 

@@ -172,7 +172,7 @@ def summarise_video(
             system_instruction=PROPHETIC_BULLET_SYSTEM,
             response_schema=BULLET_SCHEMA,
             temperature=0.2,
-            max_output_tokens=3072,
+            max_output_tokens=8192,
             thinking_budget=4096,
         )
     elif category == "india_global":
