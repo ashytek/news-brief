@@ -299,14 +299,31 @@ def _transcribe_via_assemblyai(video_url: str) -> tuple[str, list] | None:
 
 def get_youtube_transcript(video_id: str) -> tuple[str, list] | None:
     """
-    Routes to the best available fetcher:
-    - YOUTUBE_BROWSER set → yt-dlp with live browser cookies (best)
-    - YOUTUBE_COOKIES_FILE set & file exists → yt-dlp with cookie file
-    - Otherwise → youtube-transcript-api (fast, no auth)
+    Always try youtube-transcript-api first — it uses the timedtext API endpoint
+    which is a separate rate-limit bucket from the VTT download path that yt-dlp
+    uses. Under heavy load the VTT path gets 429'd first; the timedtext path
+    stays green much longer.
+
+    Fall-through logic:
+      ytt succeeds → return result
+      ytt retryable error (network, 429) → return None  (mark failed, retry later)
+      ytt PermanentNoTranscript → try yt-dlp (it can get auto-generated captions
+        that ytt can't find, especially for recently uploaded videos)
     """
+    try:
+        result = _get_transcript_ytt(video_id)
+        if result:
+            return result
+        # None means a retryable network error from ytt — don't pile on with yt-dlp
+        return None
+    except PermanentNoTranscript:
+        pass  # ytt says no captions — yt-dlp might still find auto-subs
+
+    # yt-dlp fallback (only when ytt found no captions)
     if YOUTUBE_BROWSER or _resolve_cookie_path():
         return _get_transcript_ytdlp(video_id)
-    return _get_transcript_ytt(video_id)
+
+    raise PermanentNoTranscript(f"No transcript available for {video_id}")
 
 
 # ---------------------------------------------------------------------------

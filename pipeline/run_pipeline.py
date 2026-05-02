@@ -77,10 +77,20 @@ def process_transcripts_and_summarise(items, stats, source_map):
     Returns updated stats.
     """
     processed = []
+    consecutive_failures = 0
+    MAX_CONSECUTIVE_FAILURES = 3  # abort early if YouTube is 429-ing everything
 
     for item in items:
         print(f"  → {item['title'][:60]}…")
         transcript_text, status, segments = get_transcripts.fetch_transcript(item)
+
+        if not transcript_text:
+            consecutive_failures += 1
+            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                print(f"  ⚠ {consecutive_failures} consecutive failures — aborting batch (likely IP rate-limited)")
+                break
+        else:
+            consecutive_failures = 0  # reset on any success
 
         # Update/insert video record
         video_record = {
