@@ -404,8 +404,14 @@ export default function ReaderClient({ userId }: { userId: string }) {
           data: s,
           date: new Date(s.videos?.published_at ?? s.created_at),
         })),
-    ].sort((a, b) => b.date.getTime() - a.date.getTime()),
-    [visibleClusters, visibleSolos, isVantage]
+    ].sort((a, b) => {
+      // B3: In "Show All" mode, sink fully-read items below unread
+      const aRead = a.type === 'cluster' ? isClusterRead(a.data) : readIds.has(a.data.id)
+      const bRead = b.type === 'cluster' ? isClusterRead(b.data) : readIds.has(b.data.id)
+      if (aRead !== bRead) return aRead ? 1 : -1
+      return b.date.getTime() - a.date.getTime()
+    }),
+    [visibleClusters, visibleSolos, isVantage, isClusterRead, readIds]
   )
 
   return (
@@ -455,7 +461,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
 
             <a
               href="/search"
-              className="w-8 h-8 rounded-lg bg-gray-800 hover:bg-gray-700 flex items-center justify-center transition-colors"
+              className="w-11 h-11 md:w-8 md:h-8 rounded-lg bg-gray-800 hover:bg-gray-700 flex items-center justify-center transition-colors"
               title="Search"
             >
               <svg className="w-4 h-4 text-gray-400" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -465,7 +471,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
 
             <a
               href="/archive"
-              className="w-8 h-8 rounded-lg bg-gray-800 hover:bg-gray-700 flex items-center justify-center transition-colors"
+              className="w-11 h-11 md:w-8 md:h-8 rounded-lg bg-gray-800 hover:bg-gray-700 flex items-center justify-center transition-colors"
               title="Archive"
             >
               <svg className="w-4 h-4 text-gray-400" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -475,7 +481,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
 
             <a
               href="/sources"
-              className="w-8 h-8 rounded-lg bg-gray-800 hover:bg-gray-700 flex items-center justify-center transition-colors"
+              className="w-11 h-11 md:w-8 md:h-8 rounded-lg bg-gray-800 hover:bg-gray-700 flex items-center justify-center transition-colors"
               title="Sources"
             >
               <svg className="w-4 h-4 text-gray-400" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -485,7 +491,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
 
             <button
               onClick={handleSignOut}
-              className="w-8 h-8 rounded-lg bg-gray-800 hover:bg-gray-700 flex items-center justify-center transition-colors"
+              className="w-11 h-11 md:w-8 md:h-8 rounded-lg bg-gray-800 hover:bg-gray-700 flex items-center justify-center transition-colors"
               title="Sign out"
             >
               <svg className="w-4 h-4 text-gray-400" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
