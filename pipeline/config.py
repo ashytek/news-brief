@@ -34,8 +34,9 @@ LOOKBACK_HOURS = 4
 CLUSTER_THRESHOLD = 0.78
 
 # Videos shorter than this are treated as filler/shorts and skipped entirely
-# Vantage segments run 3-8 min — set to 3 min to capture them all
-MIN_VIDEO_DURATION_SECONDS = 180
+# Vantage segments can run 2-8 min — 2 min floor catches them all while
+# still filtering out genuine 30-60s Shorts
+MIN_VIDEO_DURATION_SECONDS = 120
 
 # Max bullet points per story (8 gives good depth for segment-style channels like Vantage)
 MAX_BULLETS = 8

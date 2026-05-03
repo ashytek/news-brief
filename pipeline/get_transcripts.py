@@ -21,7 +21,7 @@ from bs4 import BeautifulSoup
 import subprocess
 import tempfile
 
-from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
+from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled, VideoUnavailable
 
 import db
 from config import ASSEMBLYAI_API_KEY, YOUTUBE_COOKIES_FILE, YOUTUBE_BROWSER, MIN_VIDEO_DURATION_SECONDS
@@ -40,6 +40,8 @@ PERMANENT_ERROR_PHRASES = (
     "members only",
     "private video",
     "video unavailable",
+    "no longer available",   # video deleted by creator after publishing
+    "has been removed",      # YouTube removed for policy
 )
 
 # Error phrases that indicate a temporary block / rate-limit — must NOT mark permanent
@@ -216,7 +218,7 @@ def _get_transcript_ytt(video_id: str) -> tuple[str, list] | None:
         plain    = " ".join(s["text"] for s in segments)
         return plain, segments
 
-    except (TranscriptsDisabled, NoTranscriptFound) as e:
+    except (TranscriptsDisabled, NoTranscriptFound, VideoUnavailable) as e:
         raise PermanentNoTranscript(str(e))
 
     except Exception as e:

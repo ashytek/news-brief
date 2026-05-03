@@ -43,7 +43,7 @@ def _ping_healthcheck(success: bool = True):
     except Exception:
         pass  # never let monitoring break the pipeline
 
-INTERVAL_MINUTES = 90
+INTERVAL_MINUTES = 360  # 6 hours
 
 
 _WORD_BOUNDARY_CACHE: dict[str, "re.Pattern[str]"] = {}
