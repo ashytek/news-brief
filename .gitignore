@@ -44,8 +44,14 @@ next-env.d.ts
 pipeline/__pycache__/
 pipeline/*.pyc
 pipeline/venv/
+pipeline/venv-*/
 pipeline/.env
 pipeline/cookies.txt
+pipeline/*.log
+pipeline/.last_daily_jobs
+
+# Claude Code session metadata
+.claude/
 
 # Local Netlify folder
 .netlify

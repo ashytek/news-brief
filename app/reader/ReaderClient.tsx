@@ -50,6 +50,8 @@ export default function ReaderClient({ userId }: { userId: string }) {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [sources, setSources] = useState<Record<string, Source>>({})
   const [topicCount, setTopicCount] = useState(0)
+  const [sourceWeights, setSourceWeights] = useState<Record<string, number>>({})
+  const [topicWeights, setTopicWeights] = useState<Record<string, number>>({})
   // Categories with at least one story in the last 7 days — hide dead tabs
   const [activeCategoryKeys, setActiveCategoryKeys] = useState<Set<string>>(
     new Set(CATEGORIES.map(c => c.key))  // show all until we know
@@ -63,6 +65,32 @@ export default function ReaderClient({ userId }: { userId: string }) {
       localStorage.setItem('newsbrief_lastVisit', new Date().toISOString())
     }
   }, [])
+
+  // Load personal ranking weights on mount
+  useEffect(() => {
+    supabase
+      .from('source_weights')
+      .select('source_id, weight')
+      .eq('user_id', userId)
+      .then(({ data }) => {
+        if (data) {
+          const map: Record<string, number> = {}
+          data.forEach(r => { map[r.source_id] = r.weight })
+          setSourceWeights(map)
+        }
+      })
+    supabase
+      .from('topic_weights')
+      .select('kw, weight')
+      .eq('user_id', userId)
+      .then(({ data }) => {
+        if (data) {
+          const map: Record<string, number> = {}
+          data.forEach(r => { map[r.kw] = r.weight })
+          setTopicWeights(map)
+        }
+      })
+  }, [userId]) // eslint-disable-line react-hooks/exhaustive-deps — load once on mount
 
   // Load sources into a lookup map
   useEffect(() => {
@@ -274,6 +302,12 @@ export default function ReaderClient({ userId }: { userId: string }) {
             p_source_id: story.source_id,
             p_delta: delta
           }).maybeSingle()
+          // Optimistic update: reflect new weight immediately in ranking
+          setSourceWeights(prev => {
+            const current = prev[story.source_id] ?? 1.0
+            const next = Math.min(1.5, Math.max(0.5, current + delta))
+            return { ...prev, [story.source_id]: next }
+          })
         }
       }
     }
@@ -415,21 +449,26 @@ export default function ReaderClient({ userId }: { userId: string }) {
   )
 
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100">
+    <div className="min-h-screen text-slate-100">
       {/* Top bar */}
-      <header className="sticky top-0 z-50 bg-gray-950/90 backdrop-blur border-b border-gray-800/60">
+      <header className="sticky top-0 z-50 bg-slate-950/85 backdrop-blur-md border-b border-slate-800/60">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-violet-600 flex items-center justify-center">
-              <svg className="w-4 h-4 text-white" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500 to-violet-700 flex items-center justify-center shadow-[0_0_16px_rgba(139,92,246,0.35)]">
+              <svg className="w-4 h-4 text-white" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 12h6m-6-4h2" />
               </svg>
             </div>
             <div>
-              <h1 className="text-sm font-bold text-white leading-none">News Brief</h1>
+              <h1 className="text-sm font-bold text-white leading-none tracking-tight">News Brief</h1>
               {lastPipelineRun ? (
-                <p className="text-xs text-gray-500 mt-0.5">
-                  Pipeline {(() => {
+                <p className="text-xs text-slate-400 mt-1 inline-flex items-center gap-1">
+                  <span className={`w-1.5 h-1.5 rounded-full ${
+                    Date.now() - lastPipelineRun.getTime() < 8 * 3600 * 1000
+                      ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]'
+                      : 'bg-amber-400'
+                  }`} />
+                  {(() => {
                     const mins = Math.round((Date.now() - lastPipelineRun.getTime()) / 60000)
                     if (mins < 60) return `${mins}m ago`
                     const hrs = Math.round(mins / 60)
@@ -438,63 +477,63 @@ export default function ReaderClient({ userId }: { userId: string }) {
                   })()}
                 </p>
               ) : lastUpdated && activeTab !== 'topics' ? (
-                <p className="text-xs text-gray-500 mt-0.5">
+                <p className="text-xs text-slate-400 mt-1">
                   Updated {lastUpdated.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
                 </p>
               ) : null}
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             {activeTab !== 'topics' && activeTab !== 'today' && (
               <button
                 onClick={() => setShowUnreadOnly(v => !v)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
                   showUnreadOnly
-                    ? 'bg-violet-600 text-white'
-                    : 'bg-gray-800 text-gray-400 hover:text-white'
+                    ? 'bg-violet-500/25 text-violet-200 ring-1 ring-violet-500/40'
+                    : 'bg-slate-800/60 text-slate-300 ring-1 ring-slate-700/60 hover:bg-slate-800 hover:text-white'
                 }`}
               >
-                {showUnreadOnly ? `Unread ${unreadCount > 0 ? `(${unreadCount})` : ''}` : 'All'}
+                {showUnreadOnly ? `Unread${unreadCount > 0 ? ` · ${unreadCount}` : ''}` : 'All'}
               </button>
             )}
 
             <a
               href="/search"
-              className="w-11 h-11 md:w-8 md:h-8 rounded-lg bg-gray-800 hover:bg-gray-700 flex items-center justify-center transition-colors"
+              className="w-11 h-11 md:w-9 md:h-9 rounded-lg bg-slate-800/60 hover:bg-slate-800 ring-1 ring-slate-700/60 hover:ring-slate-600 flex items-center justify-center transition-all"
               title="Search"
             >
-              <svg className="w-4 h-4 text-gray-400" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-4 h-4 text-slate-300" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M17 11A6 6 0 115 11a6 6 0 0112 0z" />
               </svg>
             </a>
 
             <a
               href="/archive"
-              className="w-11 h-11 md:w-8 md:h-8 rounded-lg bg-gray-800 hover:bg-gray-700 flex items-center justify-center transition-colors"
+              className="w-11 h-11 md:w-9 md:h-9 rounded-lg bg-slate-800/60 hover:bg-slate-800 ring-1 ring-slate-700/60 hover:ring-slate-600 flex items-center justify-center transition-all"
               title="Archive"
             >
-              <svg className="w-4 h-4 text-gray-400" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-4 h-4 text-slate-300" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
             </a>
 
             <a
               href="/sources"
-              className="w-11 h-11 md:w-8 md:h-8 rounded-lg bg-gray-800 hover:bg-gray-700 flex items-center justify-center transition-colors"
+              className="w-11 h-11 md:w-9 md:h-9 rounded-lg bg-slate-800/60 hover:bg-slate-800 ring-1 ring-slate-700/60 hover:ring-slate-600 flex items-center justify-center transition-all"
               title="Sources"
             >
-              <svg className="w-4 h-4 text-gray-400" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-4 h-4 text-slate-300" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h7" />
               </svg>
             </a>
 
             <button
               onClick={handleSignOut}
-              className="w-11 h-11 md:w-8 md:h-8 rounded-lg bg-gray-800 hover:bg-gray-700 flex items-center justify-center transition-colors"
+              className="w-11 h-11 md:w-9 md:h-9 rounded-lg bg-slate-800/60 hover:bg-slate-800 ring-1 ring-slate-700/60 hover:ring-slate-600 flex items-center justify-center transition-all"
               title="Sign out"
             >
-              <svg className="w-4 h-4 text-gray-400" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-4 h-4 text-slate-300" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
               </svg>
             </button>
@@ -521,6 +560,8 @@ export default function ReaderClient({ userId }: { userId: string }) {
               stories={activeTodayStories}
               sources={sources}
               readIds={readIds}
+              sourceWeights={sourceWeights}
+              topicWeights={topicWeights}
               onMarkRead={markRead}
               onEngagement={sendEngagement}
               onDwellStart={startDwell}
@@ -551,24 +592,35 @@ export default function ReaderClient({ userId }: { userId: string }) {
             )}
 
             {!loading && isEmpty && (
-              <div className="text-center py-20">
-                <div className="text-4xl mb-3">
-                  {showUnreadOnly ? '✓' : '📭'}
+              <div className="text-center py-20 px-6">
+                <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-slate-800/60 ring-1 ring-slate-700/60 mb-4">
+                  {showUnreadOnly ? (
+                    <svg className="w-8 h-8 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                  ) : (
+                    <svg className="w-8 h-8 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                    </svg>
+                  )}
                 </div>
-                <p className="text-gray-400 font-medium">
-                  {showUnreadOnly ? 'All caught up!' : 'No stories yet'}
+                <p className="text-base font-semibold text-slate-200">
+                  {showUnreadOnly ? 'All caught up' : 'Nothing here yet'}
                 </p>
-                <p className="text-gray-600 text-sm mt-1">
+                <p className="text-sm text-slate-400 mt-1.5 max-w-xs mx-auto">
                   {showUnreadOnly
-                    ? 'Nothing unread in this category'
-                    : 'The pipeline will populate stories every ~90 minutes'}
+                    ? "You've read everything in this category. New stories arrive every 6 hours."
+                    : 'The pipeline will populate this category on its next run.'}
                 </p>
                 {showUnreadOnly && (
                   <button
                     onClick={() => setShowUnreadOnly(false)}
-                    className="mt-4 text-sm text-violet-400 hover:text-violet-300 transition-colors"
+                    className="mt-5 text-sm font-semibold text-violet-300 hover:text-violet-200 transition-colors inline-flex items-center gap-1"
                   >
-                    Show all stories →
+                    Show all stories
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                    </svg>
                   </button>
                 )}
               </div>
@@ -577,9 +629,14 @@ export default function ReaderClient({ userId }: { userId: string }) {
             {/* Vantage segments pinned to top */}
             {!loading && vantagePinned.length > 0 && (
               <>
-                <div className="flex items-center gap-2 pt-1 pb-0.5">
-                  <span className="text-xs font-semibold text-amber-400 uppercase tracking-wider">Vantage · Latest</span>
-                  <div className="flex-1 h-px bg-amber-500/20" />
+                <div className="flex items-center gap-3 pt-1 pb-1">
+                  <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-amber-300 bg-amber-500/15 ring-1 ring-amber-500/30 px-2.5 py-1 rounded-full uppercase tracking-wider">
+                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                    Vantage · Latest
+                  </span>
+                  <div className="flex-1 h-px bg-gradient-to-r from-amber-500/30 to-transparent" />
                 </div>
                 {vantagePinned.map(story => (
                   <SoloCard
@@ -595,9 +652,9 @@ export default function ReaderClient({ userId }: { userId: string }) {
                   />
                 ))}
                 {mergedFeed.length > 0 && (
-                  <div className="flex items-center gap-2 pt-1 pb-0.5">
-                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Other stories</span>
-                    <div className="flex-1 h-px bg-gray-800" />
+                  <div className="flex items-center gap-3 pt-3 pb-1">
+                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">More stories</span>
+                    <div className="flex-1 h-px bg-slate-800" />
                   </div>
                 )}
               </>

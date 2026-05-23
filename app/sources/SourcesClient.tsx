@@ -131,17 +131,17 @@ function AddSourceForm({ onAdded }: { onAdded: () => void }) {
 
   return (
     <section>
-      <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Add YouTube Channel</h2>
-      <form onSubmit={handleSubmit} className="bg-gray-900 border border-gray-800 rounded-2xl p-4 space-y-3">
+      <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Add YouTube Channel</h2>
+      <form onSubmit={handleSubmit} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
         {/* URL input */}
         <div>
-          <label className="block text-xs text-gray-400 mb-1">Channel URL or @handle</label>
+          <label className="block text-xs text-slate-400 mb-1">Channel URL or @handle</label>
           <input
             type="text"
             value={url}
             onChange={e => handleUrlChange(e.target.value)}
             placeholder="https://youtube.com/@FirstpostVantage"
-            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-violet-500 focus:border-violet-500"
+            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-violet-500 focus:border-violet-500"
           />
           {parsed && (
             <p className="text-xs text-emerald-400 mt-1">
@@ -156,21 +156,21 @@ function AddSourceForm({ onAdded }: { onAdded: () => void }) {
         {/* Name + category row */}
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Display name</label>
+            <label className="block text-xs text-slate-400 mb-1">Display name</label>
             <input
               type="text"
               value={name}
               onChange={e => setName(e.target.value)}
               placeholder="Channel name"
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-violet-500 focus:border-violet-500"
+              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-violet-500 focus:border-violet-500"
             />
           </div>
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Category</label>
+            <label className="block text-xs text-slate-400 mb-1">Category</label>
             <select
               value={category}
               onChange={e => setCategory(e.target.value)}
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-violet-500 focus:border-violet-500"
+              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-violet-500 focus:border-violet-500"
             >
               {Object.entries(CATEGORY_LABELS).map(([k, v]) => (
                 <option key={k} value={k}>{v}</option>
@@ -181,7 +181,7 @@ function AddSourceForm({ onAdded }: { onAdded: () => void }) {
 
         {/* Lookback */}
         <div>
-          <label className="block text-xs text-gray-400 mb-1">Lookback window</label>
+          <label className="block text-xs text-slate-400 mb-1">Lookback window</label>
           <div className="flex gap-2">
             {LOOKBACK_OPTIONS.map(opt => (
               <button
@@ -191,14 +191,14 @@ function AddSourceForm({ onAdded }: { onAdded: () => void }) {
                 className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-all ${
                   lookback === opt.value
                     ? 'bg-violet-600 text-white'
-                    : 'bg-gray-800 text-gray-400 hover:text-white'
+                    : 'bg-slate-800 text-slate-400 hover:text-white'
                 }`}
               >
                 {opt.label}
               </button>
             ))}
           </div>
-          <p className="text-xs text-gray-600 mt-1">
+          <p className="text-xs text-slate-600 mt-1">
             {lookback === 168
               ? 'Good for weekly channels (e.g. Prophetic)'
               : lookback >= 48
@@ -219,7 +219,7 @@ function AddSourceForm({ onAdded }: { onAdded: () => void }) {
         <button
           type="submit"
           disabled={saving || !url || !name.trim()}
-          className="w-full py-2 bg-violet-600 hover:bg-violet-500 disabled:bg-gray-700 disabled:text-gray-500 text-white text-sm font-semibold rounded-xl transition-all"
+          className="w-full py-2 bg-violet-600 hover:bg-violet-500 disabled:bg-slate-700 disabled:text-slate-500 text-white text-sm font-semibold rounded-xl transition-all"
         >
           {saving ? 'Adding…' : 'Add source'}
         </button>
@@ -244,21 +244,21 @@ export default function SourcesClient({ sources: initialSources, recentRuns }: P
   }))
 
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100">
+    <div className="min-h-screen bg-slate-950 text-slate-100">
       {/* Header */}
-      <header className="sticky top-0 z-50 bg-gray-950/90 backdrop-blur border-b border-gray-800/60">
+      <header className="sticky top-0 z-50 bg-slate-950/90 backdrop-blur border-b border-slate-800/60">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
           <a
             href="/reader"
-            className="w-8 h-8 rounded-lg bg-gray-800 hover:bg-gray-700 flex items-center justify-center transition-colors"
+            className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 flex items-center justify-center transition-colors"
           >
-            <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg className="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
             </svg>
           </a>
           <div>
             <h1 className="text-sm font-bold text-white">Sources</h1>
-            <p className="text-xs text-gray-500">{sources.length} monitored feeds</p>
+            <p className="text-xs text-slate-500">{sources.length} monitored feeds</p>
           </div>
         </div>
       </header>
@@ -270,15 +270,15 @@ export default function SourcesClient({ sources: initialSources, recentRuns }: P
         {/* Pipeline health */}
         {recentRuns.length > 0 && (
           <section>
-            <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Pipeline Runs</h2>
-            <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+            <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Pipeline Runs</h2>
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
               {recentRuns.map((run, i) => (
-                <div key={run.id} className={`flex items-center gap-3 px-4 py-3 ${i < recentRuns.length - 1 ? 'border-b border-gray-800/60' : ''}`}>
+                <div key={run.id} className={`flex items-center gap-3 px-4 py-3 ${i < recentRuns.length - 1 ? 'border-b border-slate-800/60' : ''}`}>
                   <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
                     run.status === 'success' ? 'bg-emerald-500' :
                     run.status === 'partial' ? 'bg-amber-500' :
                     run.status === 'failed'  ? 'bg-red-500' :
-                    'bg-gray-500 animate-pulse'
+                    'bg-slate-500 animate-pulse'
                   }`} />
                   <div className="flex-1 min-w-0">
                     <p className="text-xs text-white font-medium">
@@ -286,7 +286,7 @@ export default function SourcesClient({ sources: initialSources, recentRuns }: P
                         day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'
                       })}
                     </p>
-                    <p className="text-xs text-gray-500">
+                    <p className="text-xs text-slate-500">
                       {run.videos_found} videos · {run.stories_created} stories
                     </p>
                   </div>
@@ -294,7 +294,7 @@ export default function SourcesClient({ sources: initialSources, recentRuns }: P
                     run.status === 'success' ? 'text-emerald-400' :
                     run.status === 'partial' ? 'text-amber-400' :
                     run.status === 'failed'  ? 'text-red-400' :
-                    'text-gray-400'
+                    'text-slate-400'
                   }`}>
                     {run.status}
                   </span>
@@ -307,18 +307,18 @@ export default function SourcesClient({ sources: initialSources, recentRuns }: P
         {/* Sources by category */}
         {byCategory.map(cat => (
           <section key={cat.key}>
-            <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-              {cat.label} <span className="text-gray-700">· {cat.sources.length}</span>
+            <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+              {cat.label} <span className="text-slate-700">· {cat.sources.length}</span>
             </h2>
-            <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
               {cat.sources.length === 0 ? (
-                <div className="px-4 py-3 text-xs text-gray-600">No sources yet</div>
+                <div className="px-4 py-3 text-xs text-slate-600">No sources yet</div>
               ) : cat.sources.map((source, i) => (
-                <div key={source.id} className={`flex items-center gap-3 px-4 py-3 ${i < cat.sources.length - 1 ? 'border-b border-gray-800/60' : ''}`}>
+                <div key={source.id} className={`flex items-center gap-3 px-4 py-3 ${i < cat.sources.length - 1 ? 'border-b border-slate-800/60' : ''}`}>
                   <HealthDot failures={source.consecutive_failures} />
                   <div className="flex-1 min-w-0">
                     <p className="text-sm text-white font-medium truncate">{source.name}</p>
-                    <p className="text-xs text-gray-600 capitalize">
+                    <p className="text-xs text-slate-600 capitalize">
                       {source.source_type.replace(/_/g, ' ')}
                       {source.last_success_at && (
                         <> · Last ok {new Date(source.last_success_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</>

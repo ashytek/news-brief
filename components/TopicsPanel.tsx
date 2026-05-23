@@ -84,14 +84,14 @@ export function TopicsPanel({ userId, readIds, onMarkRead, onEngagement }: Props
   return (
     <div className="space-y-4">
       {/* Keyword management */}
-      <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-gray-800/60">
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-800/60">
           <h2 className="text-sm font-semibold text-white">Topic Watchlist</h2>
-          <p className="text-xs text-gray-500 mt-0.5">Keywords flagged across all sources</p>
+          <p className="text-xs text-slate-500 mt-0.5">Keywords flagged across all sources</p>
         </div>
 
         {/* Add keyword */}
-        <div className="px-4 py-3 border-b border-gray-800/40">
+        <div className="px-4 py-3 border-b border-slate-800/40">
           <div className="flex gap-2">
             <input
               type="text"
@@ -99,12 +99,12 @@ export function TopicsPanel({ userId, readIds, onMarkRead, onEngagement }: Props
               onChange={e => setNewKeyword(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && addKeyword()}
               placeholder="Add keyword… e.g. Gaza, GPT-5, RFK"
-              className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-rose-500 focus:border-rose-500"
+              className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-rose-500 focus:border-rose-500"
             />
             <button
               onClick={addKeyword}
               disabled={adding || !newKeyword.trim()}
-              className="px-3 py-2 bg-rose-600 hover:bg-rose-500 disabled:bg-gray-700 disabled:text-gray-500 text-white text-sm font-medium rounded-lg transition-colors"
+              className="px-3 py-2 bg-rose-600 hover:bg-rose-500 disabled:bg-slate-700 disabled:text-slate-500 text-white text-sm font-medium rounded-lg transition-colors"
             >
               {adding ? '…' : 'Add'}
             </button>
@@ -139,20 +139,20 @@ export function TopicsPanel({ userId, readIds, onMarkRead, onEngagement }: Props
         {/* Paused keywords */}
         {inactiveKeywords.length > 0 && (
           <div className="px-4 pb-3 flex flex-wrap gap-2">
-            <span className="text-xs text-gray-600 w-full">Paused:</span>
+            <span className="text-xs text-slate-600 w-full">Paused:</span>
             {inactiveKeywords.map(kw => (
-              <span key={kw.id} className="flex items-center gap-1 bg-gray-800 border border-gray-700 text-gray-500 text-xs rounded-full px-2.5 py-1">
+              <span key={kw.id} className="flex items-center gap-1 bg-slate-800 border border-slate-700 text-slate-500 text-xs rounded-full px-2.5 py-1">
                 {kw.keyword}
                 <button
                   onClick={() => toggleKeyword(kw.id, kw.is_active)}
-                  className="ml-0.5 text-gray-500 hover:text-gray-300 transition-colors"
+                  className="ml-0.5 text-slate-500 hover:text-slate-300 transition-colors"
                   title="Resume"
                 >
                   ▶
                 </button>
                 <button
                   onClick={() => deleteKeyword(kw.id)}
-                  className="text-gray-600 hover:text-gray-400 transition-colors"
+                  className="text-slate-600 hover:text-slate-400 transition-colors"
                   title="Remove"
                 >
                   ×
@@ -163,7 +163,7 @@ export function TopicsPanel({ userId, readIds, onMarkRead, onEngagement }: Props
         )}
 
         {keywords.length === 0 && (
-          <div className="px-4 pb-4 pt-1 text-xs text-gray-600">
+          <div className="px-4 pb-4 pt-1 text-xs text-slate-600">
             No keywords yet. Add one above to start tracking topics across all your sources.
           </div>
         )}
@@ -177,20 +177,20 @@ export function TopicsPanel({ userId, readIds, onMarkRead, onEngagement }: Props
       ) : stories.length === 0 ? (
         <div className="text-center py-12">
           <div className="text-3xl mb-3">🔍</div>
-          <p className="text-gray-400 font-medium text-sm">No topic matches yet</p>
-          <p className="text-gray-600 text-xs mt-1">
+          <p className="text-slate-400 font-medium text-sm">No topic matches yet</p>
+          <p className="text-slate-600 text-xs mt-1">
             Stories matching your keywords will appear here after the next pipeline run
           </p>
         </div>
       ) : (
         <div className="space-y-3">
-          <p className="text-xs text-gray-600 px-1">{stories.length} matched stories</p>
+          <p className="text-xs text-slate-600 px-1">{stories.length} matched stories</p>
           {stories.map(story => (
             <div key={story.id}>
               {/* Topic badges */}
               {story.matched_topics && story.matched_topics.length > 0 && (
                 <div className="flex flex-wrap gap-1 mb-1 px-1">
-                  <span className="text-xs text-gray-600">
+                  <span className="text-xs text-slate-600">
                     {CATEGORY_LABELS[story.category] ?? story.category} ·
                   </span>
                   {story.matched_topics.map(t => (

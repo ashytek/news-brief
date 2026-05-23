@@ -5,58 +5,17 @@ import type { ClusterWithRelations, StoryWithRelations, Source } from '@/lib/typ
 import { SoloCard } from './SoloCard'
 import { ClusteredCard } from './ClusteredCard'
 import { SkeletonCard } from './SkeletonCard'
-import { CATEGORY_LABELS, CATEGORY_PILL_COLORS, isClusterFullyRead } from '@/lib/constants'
-
-type RankedItem =
-  | { type: 'cluster'; data: ClusterWithRelations; score: number }
-  | { type: 'story';   data: StoryWithRelations;   score: number }
-
-function rankItems(
-  clusters: ClusterWithRelations[],
-  solos: StoryWithRelations[],
-  readIds: Set<string>,
-): RankedItem[] {
-  const now = Date.now()
-
-  const calcScore = (date: Date, storyCount: number) => {
-    const hoursAgo = (now - date.getTime()) / (1000 * 3600)
-    const recency = 1 / Math.max(0.25, hoursAgo)
-    const breadth = storyCount * 1.5
-    return recency + breadth
-  }
-
-  const ranked: RankedItem[] = [
-    ...clusters.map(c => ({
-      type: 'cluster' as const,
-      data: c,
-      score: calcScore(new Date(c.last_updated_at), c.story_count),
-    })),
-    ...solos.map(s => ({
-      type: 'story' as const,
-      data: s,
-      score: calcScore(new Date(s.videos?.published_at ?? s.created_at), 1),
-    })),
-  ]
-
-  return ranked
-    .sort((a, b) => {
-      const aRead = a.type === 'cluster'
-        ? isClusterFullyRead(a.data, readIds)
-        : readIds.has(a.data.id)
-      const bRead = b.type === 'cluster'
-        ? isClusterFullyRead(b.data, readIds)
-        : readIds.has(b.data.id)
-      if (aRead !== bRead) return aRead ? 1 : -1
-      return b.score - a.score
-    })
-    .slice(0, 10)
-}
+import { CATEGORY_LABELS, CATEGORY_PILL_COLORS } from '@/lib/constants'
+import { rankItems } from '@/lib/ranking'
+import type { RankedItem } from '@/lib/ranking'
 
 interface Props {
   clusters: ClusterWithRelations[]
   stories: StoryWithRelations[]
   sources: Record<string, Source>
   readIds: Set<string>
+  sourceWeights?: Record<string, number>
+  topicWeights?: Record<string, number>
   onMarkRead: (storyId?: string, clusterId?: string) => void
   onEngagement: (signal: string, storyId?: string, clusterId?: string) => void
   onDwellStart: (id: string) => void
@@ -70,6 +29,8 @@ export function TodayFeed({
   stories,
   sources,
   readIds,
+  sourceWeights = {},
+  topicWeights = {},
   onMarkRead,
   onEngagement,
   onDwellStart,
@@ -78,13 +39,13 @@ export function TodayFeed({
   loading,
 }: Props) {
   const ranked = useMemo(
-    () => rankItems(clusters, stories, readIds),
-    [clusters, stories, readIds],
+    () => rankItems(clusters, stories, readIds, sourceWeights, topicWeights),
+    [clusters, stories, readIds, sourceWeights, topicWeights],
   )
 
   const unreadCount = ranked.filter(item =>
     item.type === 'cluster'
-      ? !isClusterFullyRead(item.data, readIds)
+      ? !(readIds.has(item.data.id) || (item.data.stories?.every(s => readIds.has(s.id)) ?? false))
       : !readIds.has(item.data.id)
   ).length
 
@@ -98,10 +59,14 @@ export function TodayFeed({
 
   if (ranked.length === 0) {
     return (
-      <div className="text-center py-20">
-        <div className="text-4xl mb-3">✓</div>
-        <p className="text-gray-400 font-medium">All caught up</p>
-        <p className="text-gray-600 text-sm mt-1">Nothing new in the last 24 hours</p>
+      <div className="text-center py-20 px-6">
+        <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-emerald-500/15 ring-1 ring-emerald-500/30 mb-4 shadow-[0_0_24px_rgba(52,211,153,0.15)]">
+          <svg className="w-8 h-8 text-emerald-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+          </svg>
+        </div>
+        <p className="text-base font-semibold text-slate-200">All caught up</p>
+        <p className="text-sm text-slate-400 mt-1.5">Nothing new in the last 24 hours.</p>
       </div>
     )
   }
@@ -109,18 +74,23 @@ export function TodayFeed({
   return (
     <div className="space-y-3">
       {/* Digest header */}
-      <div className="flex items-center justify-between py-1">
+      <div className="flex items-end justify-between py-1 mb-1">
         <div>
-          <h2 className="text-sm font-semibold text-white">Today&apos;s Brief</h2>
-          <p className="text-xs text-gray-500 mt-0.5">
-            Top {ranked.length} items across all categories
-            {unreadCount > 0 && ` · ${unreadCount} unread`}
+          <h2 className="text-xl font-bold text-white tracking-tight">Today&apos;s Brief</h2>
+          <p className="text-xs text-slate-400 mt-1 inline-flex items-center gap-2">
+            <span>Top {ranked.length} across all categories</span>
+            {unreadCount > 0 && (
+              <span className="inline-flex items-center gap-1 text-violet-300">
+                <span className="w-1 h-1 rounded-full bg-violet-400" />
+                {unreadCount} unread
+              </span>
+            )}
           </p>
         </div>
       </div>
 
       {/* Ranked feed */}
-      {ranked.map(item => {
+      {ranked.map((item: RankedItem) => {
         if (item.type === 'cluster') {
           const cluster = item.data as ClusterWithRelations
           return (

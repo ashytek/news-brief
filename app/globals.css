@@ -14,13 +14,20 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #020617;
+    --foreground: #f1f5f9;
   }
 }
 
+/* App-wide background — subtle radial that adds depth without contrast loss.
+   Two soft glows (violet top-right, blue bottom-left) so the dark surface
+   doesn't feel like a flat black slab. */
 body {
-  background: var(--background);
+  background:
+    radial-gradient(ellipse 80% 60% at 100% 0%, rgba(139, 92, 246, 0.08), transparent 60%),
+    radial-gradient(ellipse 80% 60% at 0% 100%, rgba(59, 130, 246, 0.06), transparent 60%),
+    var(--background);
+  background-attachment: fixed;
   color: var(--foreground);
 }
 
@@ -36,4 +43,38 @@ body {
 /* Safe-area bottom padding for iPhone home indicator */
 .safe-area-inset-bottom {
   padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Card hover glow — colour-tinted by category accent.
+   Apply via `.card-glow-violet`, `-blue`, `-amber`, `-emerald`, `-rose`. */
+.card-glow-violet:hover  { box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.25), 0 8px 24px -8px rgba(139, 92, 246, 0.18); }
+.card-glow-blue:hover    { box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.25), 0 8px 24px -8px rgba(59, 130, 246, 0.18); }
+.card-glow-amber:hover   { box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.25), 0 8px 24px -8px rgba(245, 158, 11, 0.18); }
+.card-glow-emerald:hover { box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.25), 0 8px 24px -8px rgba(16, 185, 129, 0.18); }
+.card-glow-rose:hover    { box-shadow: 0 0 0 1px rgba(244, 63, 94, 0.25), 0 8px 24px -8px rgba(244, 63, 94, 0.18); }
+
+/* Subtle rise on card hover — uses transform so it's GPU-accelerated */
+.card-rise {
+  transition: transform 200ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 200ms cubic-bezier(0.4, 0, 0.2, 1), border-color 200ms;
+}
+.card-rise:hover {
+  transform: translateY(-1px);
+}
+
+/* Pulse animation for "fresh" indicator */
+@keyframes fresh-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.6; transform: scale(1.15); }
+}
+.animate-fresh-pulse {
+  animation: fresh-pulse 2.4s ease-in-out infinite;
+}
+
+/* Smooth fade-in for newly-loaded content */
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in-up {
+  animation: fade-in-up 320ms cubic-bezier(0.4, 0, 0.2, 1);
 }

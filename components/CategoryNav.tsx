@@ -2,15 +2,14 @@
 
 import type { Category } from '@/lib/types'
 
-const COLOR_MAP: Record<string, string> = {
-  violet:  'text-violet-400 border-violet-500',
-  blue:    'text-blue-400 border-blue-500',
-  amber:   'text-amber-400 border-amber-500',
-  emerald: 'text-emerald-400 border-emerald-500',
-  rose:    'text-rose-400 border-rose-500',
+const COLOR_MAP: Record<string, { text: string; bg: string; ring: string; border: string }> = {
+  violet:  { text: 'text-violet-200',  bg: 'bg-violet-500/20',  ring: 'ring-violet-500/40',  border: 'border-violet-500' },
+  blue:    { text: 'text-blue-200',    bg: 'bg-blue-500/20',    ring: 'ring-blue-500/40',    border: 'border-blue-500' },
+  amber:   { text: 'text-amber-200',   bg: 'bg-amber-500/20',   ring: 'ring-amber-500/40',   border: 'border-amber-500' },
+  emerald: { text: 'text-emerald-200', bg: 'bg-emerald-500/20', ring: 'ring-emerald-500/40', border: 'border-emerald-500' },
+  rose:    { text: 'text-rose-200',    bg: 'bg-rose-500/20',    ring: 'ring-rose-500/40',    border: 'border-rose-500' },
 }
 
-// Icons for bottom nav (mobile)
 const TAB_ICONS: Record<string, string> = {
   today:       'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6',
   prophetic:   'M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z',
@@ -39,28 +38,34 @@ interface Props {
   todayUnread?: number
 }
 
-function NavButton({ id, label, icon, isActive, colorClass, badge, onClick }: {
+function NavButton({ id, label, icon, isActive, color, badge, onClick }: {
   id: string
   label: string
   icon: string
   isActive: boolean
-  colorClass: string
+  color: keyof typeof COLOR_MAP | 'gray'
   badge?: number
   onClick: () => void
 }) {
+  const palette = color === 'gray'
+    ? { text: 'text-white', bg: 'bg-slate-700/40', ring: 'ring-slate-500/40', border: 'border-slate-500' }
+    : COLOR_MAP[color]
+
   return (
     <button
       onClick={onClick}
-      className={`flex flex-col items-center justify-center gap-0.5 flex-1 min-w-[60px] py-2 px-1 transition-all relative
-        ${isActive ? colorClass.replace('border-', 'text-').split(' ')[0] : 'text-gray-500 hover:text-gray-300'}
-      `}
+      className={`relative flex flex-col items-center justify-center gap-0.5 flex-1 min-w-[60px] py-2 px-1 transition-all`}
     >
-      <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
-        <path strokeLinecap="round" strokeLinejoin="round" d={icon} />
-      </svg>
-      <span className="text-[10px] font-medium leading-none">{SHORT_LABELS[id] ?? label}</span>
+      <div className={`flex flex-col items-center justify-center gap-0.5 px-3 py-1.5 rounded-xl transition-all ${
+        isActive ? `${palette.bg} ${palette.text} ring-1 ${palette.ring}` : 'text-slate-400 hover:text-slate-200'
+      }`}>
+        <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={isActive ? 2 : 1.6} aria-hidden="true">
+          <path strokeLinecap="round" strokeLinejoin="round" d={icon} />
+        </svg>
+        <span className="text-[10px] font-semibold leading-none">{SHORT_LABELS[id] ?? label}</span>
+      </div>
       {badge != null && badge > 0 && (
-        <span className="absolute top-1 right-[calc(50%-16px)] min-w-[16px] h-4 text-[9px] font-bold bg-violet-500 text-white rounded-full flex items-center justify-center px-1">
+        <span className="absolute top-1 right-[calc(50%-22px)] min-w-[16px] h-4 text-[9px] font-bold bg-rose-500 text-white rounded-full flex items-center justify-center px-1 ring-2 ring-slate-950">
           {badge > 99 ? '99+' : badge}
         </span>
       )}
@@ -70,57 +75,52 @@ function NavButton({ id, label, icon, isActive, colorClass, badge, onClick }: {
 
 export function CategoryNav({ categories, active, onChange, topicCount, todayUnread }: Props) {
   const allTabs = [
-    { id: 'today' as ActiveTab, label: 'Today', color: 'gray', badge: todayUnread },
-    ...categories.map(c => ({ id: c.key as ActiveTab, label: c.label, color: c.color, badge: undefined })),
-    { id: 'topics' as ActiveTab, label: 'Topics', color: 'rose', badge: undefined },
+    { id: 'today' as ActiveTab, label: 'Today', color: 'gray' as const, badge: todayUnread },
+    ...categories.map(c => ({ id: c.key as ActiveTab, label: c.label, color: c.color as keyof typeof COLOR_MAP, badge: undefined })),
+    { id: 'topics' as ActiveTab, label: 'Topics', color: 'rose' as const, badge: topicCount },
   ]
 
   return (
     <>
       {/* ── Mobile: fixed bottom nav ──────────────────────────────── */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-gray-950/95 backdrop-blur-sm border-t border-gray-800/60 flex safe-area-inset-bottom">
-        {allTabs.map(tab => {
-          const colorClass = tab.id === 'topics'
-            ? 'text-rose-400 border-rose-500'
-            : (tab.id === 'today' ? 'text-white border-white' : (COLOR_MAP[categories.find(c => c.key === tab.id)?.color ?? ''] ?? 'text-gray-400'))
-          return (
-            <NavButton
-              key={tab.id}
-              id={tab.id}
-              label={tab.label}
-              icon={TAB_ICONS[tab.id] ?? TAB_ICONS.today}
-              isActive={active === tab.id}
-              colorClass={colorClass}
-              badge={tab.badge}
-              onClick={() => onChange(tab.id)}
-            />
-          )
-        })}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-slate-950/90 backdrop-blur-md border-t border-slate-800/80 flex safe-area-inset-bottom shadow-[0_-4px_20px_-4px_rgba(0,0,0,0.6)]">
+        {allTabs.map(tab => (
+          <NavButton
+            key={tab.id}
+            id={tab.id}
+            label={tab.label}
+            icon={TAB_ICONS[tab.id] ?? TAB_ICONS.today}
+            isActive={active === tab.id}
+            color={tab.color}
+            badge={tab.badge}
+            onClick={() => onChange(tab.id)}
+          />
+        ))}
       </nav>
 
-      {/* ── Desktop: horizontal tabs in header ───────────────────── */}
-      <div className="hidden md:flex overflow-x-auto scrollbar-hide border-t border-gray-800/40">
+      {/* ── Desktop: horizontal tabs ─────────────────────────────── */}
+      <div className="hidden md:flex overflow-x-auto scrollbar-hide border-t border-slate-800/40">
         <button
           onClick={() => onChange('today')}
-          className={`flex-shrink-0 px-5 py-3 text-sm font-medium transition-all border-b-2 flex items-center gap-1.5 ${
-            active === 'today' ? 'text-white border-white' : 'text-gray-500 border-transparent hover:text-gray-300'
+          className={`flex-shrink-0 px-5 py-3 text-sm font-semibold transition-all border-b-2 flex items-center gap-1.5 ${
+            active === 'today' ? 'text-white border-white' : 'text-slate-400 border-transparent hover:text-slate-200'
           }`}
         >
           Today
           {todayUnread != null && todayUnread > 0 && (
-            <span className="text-xs bg-gray-700 text-gray-300 px-1.5 py-0.5 rounded-full leading-none">{todayUnread}</span>
+            <span className="text-xs bg-rose-500 text-white px-1.5 py-0.5 rounded-full leading-none font-bold">{todayUnread}</span>
           )}
         </button>
 
         {categories.map(cat => {
           const isActive = cat.key === active
-          const colorClass = COLOR_MAP[cat.color] || 'text-gray-400 border-gray-500'
+          const palette = COLOR_MAP[cat.color] || COLOR_MAP.violet
           return (
             <button
               key={cat.key}
               onClick={() => onChange(cat.key)}
-              className={`flex-shrink-0 px-5 py-3 text-sm font-medium transition-all border-b-2 ${
-                isActive ? colorClass : 'text-gray-500 border-transparent hover:text-gray-300'
+              className={`flex-shrink-0 px-5 py-3 text-sm font-semibold transition-all border-b-2 ${
+                isActive ? `${palette.text} ${palette.border}` : 'text-slate-400 border-transparent hover:text-slate-200'
               }`}
             >
               {cat.label}
@@ -130,13 +130,13 @@ export function CategoryNav({ categories, active, onChange, topicCount, todayUnr
 
         <button
           onClick={() => onChange('topics')}
-          className={`flex-shrink-0 px-5 py-3 text-sm font-medium transition-all border-b-2 flex items-center gap-1.5 ${
-            active === 'topics' ? 'text-rose-400 border-rose-500' : 'text-gray-500 border-transparent hover:text-gray-300'
+          className={`flex-shrink-0 px-5 py-3 text-sm font-semibold transition-all border-b-2 flex items-center gap-1.5 ${
+            active === 'topics' ? 'text-rose-200 border-rose-500' : 'text-slate-400 border-transparent hover:text-slate-200'
           }`}
         >
           Topics
           {topicCount != null && topicCount > 0 && (
-            <span className="text-xs bg-rose-500/20 text-rose-400 px-1.5 py-0.5 rounded-full leading-none">{topicCount}</span>
+            <span className="text-xs bg-rose-500/25 text-rose-200 ring-1 ring-rose-500/40 px-1.5 py-0.5 rounded-full leading-none">{topicCount}</span>
           )}
         </button>
       </div>
