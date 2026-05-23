@@ -40,6 +40,12 @@ MIN_VIDEO_DURATION_SECONDS = 120
 
 # Max bullet points per story (8 gives good depth for segment-style channels like Vantage)
 MAX_BULLETS = 8
+# Prophetic broadcasts can run 60–120 min and pack many distinct declarations,
+# visions, and warnings — needs a much higher cap to give comprehensive coverage.
+MAX_BULLETS_PROPHETIC = 25
+# Soft target: at minimum, force one bullet per N seconds of video so coverage
+# scales with video length and the model can't front-load only the first section.
+PROPHETIC_BULLETS_PER_SECONDS = 300  # 1 bullet per 5 min minimum
 
 # Gemini models — primary LLM, free tier, zero cost at current volumes
 # Check https://ai.google.dev/gemini-api/docs/models for latest stable model strings

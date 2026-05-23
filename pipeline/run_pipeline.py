@@ -27,6 +27,7 @@ import summarise
 import cluster
 import llm
 import archive_transcripts
+import update_weights
 
 
 def _ping_healthcheck(success: bool = True):
@@ -84,13 +85,15 @@ def process_transcripts_and_summarise(items, stats, source_map):
         print(f"  → {item['title'][:60]}…")
         transcript_text, status, segments = get_transcripts.fetch_transcript(item)
 
-        if not transcript_text:
+        if status == "failed":
+            # Only true fetch failures (IP block, network) count toward abort.
+            # skipped_short and no_transcript are intentional outcomes, not errors.
             consecutive_failures += 1
             if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
                 print(f"  ⚠ {consecutive_failures} consecutive failures — aborting batch (likely IP rate-limited)")
                 break
         else:
-            consecutive_failures = 0  # reset on any success
+            consecutive_failures = 0  # reset on any non-failure (including skips)
 
         # Update/insert video record
         video_record = {
@@ -311,6 +314,12 @@ def retry_failed():
 
 
 def run_once():
+    # Reset rate-limit streak so each scheduled run starts fresh.
+    # Without this, a bad run (streak=15 → 240s waits) poisons every
+    # subsequent run in the same process for the rest of the day.
+    get_transcripts._rate_limit_streak = 0
+    get_transcripts._last_rate_limit_at = 0.0
+
     print(f"\n{'='*60}")
     print(f"📰 Pipeline run starting at {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}")
     print(f"{'='*60}")
@@ -369,6 +378,27 @@ def run_once():
         status_str = "success" if stats["stories_created"] > 0 else "partial"
         db.finish_pipeline_run(run_id, status_str, stats)
 
+        # ── Zero-story streak alert ──────────────────────────────────────
+        # If 3+ consecutive runs produced 0 stories, ping the healthcheck
+        # as failed so we get notified rather than silently going dark.
+        # 3 runs × 6h = 18h of no content — definitely something wrong.
+        if stats["stories_created"] == 0:
+            try:
+                recent = db.get_db().table("pipeline_runs") \
+                    .select("stats") \
+                    .order("started_at", desc=True) \
+                    .limit(3) \
+                    .execute().data
+                zero_streak = sum(
+                    1 for r in recent
+                    if (r.get("stats") or {}).get("stories_created", 0) == 0
+                )
+                if zero_streak >= 3:
+                    print(f"  ⚠ {zero_streak} consecutive zero-story runs — pinging healthcheck FAIL")
+                    _ping_healthcheck(success=False)
+            except Exception as e:
+                print(f"  ⚠ Zero-streak check error (non-fatal): {e}")
+
         # ── Token usage summary ───────────────────────────────────────────
         usage = llm.get_usage()
         flash_tok = usage["flash_input_tokens"] + usage["flash_output_tokens"]
@@ -389,13 +419,48 @@ def run_once():
         except Exception:
             pass  # columns added separately via Supabase SQL migration
 
-        # ── Daily transcript archival (runs once per day at 03:xx) ───────
-        if datetime.now().hour == 3:
+        # ── Daily jobs (run once per ~24h, regardless of schedule offset) ──
+        # Old gate was `if datetime.now().hour == 6:` which never fired because
+        # the 6-hour schedule offset rarely hit exactly hour 6. Now we persist
+        # the last-daily-jobs timestamp to a file and run if >22h since last.
+        _daily_marker = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".last_daily_jobs")
+        _should_run_daily = True
+        try:
+            with open(_daily_marker, "r") as _f:
+                _last = datetime.fromisoformat(_f.read().strip())
+                _should_run_daily = (datetime.now() - _last).total_seconds() > 22 * 3600
+        except (FileNotFoundError, ValueError):
+            pass
+
+        if _should_run_daily:
+            print("\n── Running daily jobs ─────────────────────────────")
             try:
-                print("Running daily transcript archival…")
+                print("  · Archiving old transcripts…")
                 archive_transcripts.archive_old_transcripts()
             except Exception as e:
                 print(f"  ⚠ Archival error (non-fatal): {e}")
+
+            try:
+                print("  · Updating engagement weights…")
+                update_weights.run()
+            except Exception as e:
+                print(f"  ⚠ Weight update error (non-fatal): {e}")
+
+            try:
+                expired = db.expire_stale_failures()
+                if expired:
+                    print(f"  · Expired {expired} stale failed videos (>14d old → no_transcript)")
+                else:
+                    print(f"  · No stale failed videos to expire")
+            except Exception as e:
+                print(f"  ⚠ Stale failure expiry error (non-fatal): {e}")
+
+            # Persist marker so we don't repeat for ~24h
+            try:
+                with open(_daily_marker, "w") as _f:
+                    _f.write(datetime.now().isoformat())
+            except Exception as e:
+                print(f"  ⚠ Couldn't persist daily marker (non-fatal): {e}")
 
         # ── Healthcheck ping (set HEALTHCHECK_URL in .env to enable) ─────
         _ping_healthcheck(success=True)

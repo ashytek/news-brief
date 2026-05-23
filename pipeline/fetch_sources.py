@@ -46,66 +46,95 @@ def resolve_channel_id(handle_or_id: str) -> Optional[str]:
 
 def _fetch_via_uploads_playlist(channel_id: str, source: dict, cutoff: datetime) -> list[dict]:
     """
-    Fetch up to 50 most-recent videos via the channel's uploads playlist.
-    Costs 1 quota unit per call (vs 100 for search.list). Use this for sources
-    where the RSS 15-item window misses content (e.g. Vantage segments crowded
-    out by frequent LIVE streams on the same channel).
+    Fetch recent videos via the channel's uploads playlist, paginating until
+    we either hit the cutoff date or reach MAX_PAGES pages.
+
+    High-volume channels (e.g. Firstpost) upload 100+ videos per day, so
+    Vantage segments get buried past position 50 quickly. Paginating up to
+    200 videos (4 pages × 50) costs only 4 quota units vs 100 for search.list.
+
+    Stops early once the oldest item on a page is before the cutoff — no point
+    fetching further back than our lookback window.
     """
+    MAX_PAGES = 4  # 4 × 50 = 200 videos, 4 quota units total
+
     yt = get_youtube()
-    # The "uploads" playlist ID is "UU" + the channel ID minus "UC"
     uploads_id = "UU" + channel_id[2:] if channel_id.startswith("UC") else None
     if not uploads_id:
         return []
 
-    try:
-        res = yt.playlistItems().list(
-            part="snippet,contentDetails",
-            playlistId=uploads_id,
-            maxResults=50,
-        ).execute()
-    except Exception as e:
-        print(f"  ⚠ Uploads playlist fetch failed for {source['name']}: {e}")
-        return []
-
-    items = []
     title_filter = source.get("title_filter")
-    for it in res.get("items", []):
-        sn = it.get("snippet", {})
-        cd = it.get("contentDetails", {})
-        vid_id = cd.get("videoId") or sn.get("resourceId", {}).get("videoId")
-        if not vid_id:
-            continue
+    items = []
+    page_token = None
 
-        published_str = cd.get("videoPublishedAt") or sn.get("publishedAt")
+    for page in range(MAX_PAGES):
         try:
-            published = datetime.fromisoformat(published_str.replace("Z", "+00:00"))
-        except Exception:
-            continue
-        if published < cutoff:
-            continue
+            kwargs: dict = {
+                "part":       "snippet,contentDetails",
+                "playlistId": uploads_id,
+                "maxResults": 50,
+            }
+            if page_token:
+                kwargs["pageToken"] = page_token
 
-        title = sn.get("title", "Untitled")
-        # Skip true LIVE-stream broadcasts (these have no transcript and crowd the feed)
-        if title.startswith("LIVE") or " LIVE " in title or " LIVE:" in title:
-            continue
-        if title_filter and title_filter.lower() not in title.lower():
-            continue
+            res = yt.playlistItems().list(**kwargs).execute()
+        except Exception as e:
+            print(f"  ⚠ Uploads playlist fetch failed for {source['name']} (page {page+1}): {e}")
+            break
 
-        thumbs = sn.get("thumbnails", {})
-        thumb_url = (
-            (thumbs.get("high") or thumbs.get("medium") or thumbs.get("default") or {}).get("url")
-            or f"https://img.youtube.com/vi/{vid_id}/hqdefault.jpg"
-        )
+        page_items = res.get("items", [])
+        oldest_on_page = None
 
-        items.append({
-            "source_id": source["id"],
-            "external_id": vid_id,
-            "title": title,
-            "url": f"https://www.youtube.com/watch?v={vid_id}",
-            "published_at": published.isoformat(),
-            "transcript_status": "pending",
-            "thumbnail_url": thumb_url,
-        })
+        for it in page_items:
+            sn = it.get("snippet", {})
+            cd = it.get("contentDetails", {})
+            vid_id = cd.get("videoId") or sn.get("resourceId", {}).get("videoId")
+            if not vid_id:
+                continue
+
+            published_str = cd.get("videoPublishedAt") or sn.get("publishedAt")
+            try:
+                published = datetime.fromisoformat(published_str.replace("Z", "+00:00"))
+            except Exception:
+                continue
+
+            if oldest_on_page is None or published < oldest_on_page:
+                oldest_on_page = published
+
+            if published < cutoff:
+                continue
+
+            title = sn.get("title", "Untitled")
+            if title.startswith("LIVE") or " LIVE " in title or " LIVE:" in title:
+                continue
+            if title_filter and title_filter.lower() not in title.lower():
+                continue
+
+            thumbs = sn.get("thumbnails", {})
+            thumb_url = (
+                (thumbs.get("high") or thumbs.get("medium") or thumbs.get("default") or {}).get("url")
+                or f"https://img.youtube.com/vi/{vid_id}/hqdefault.jpg"
+            )
+
+            items.append({
+                "source_id": source["id"],
+                "external_id": vid_id,
+                "title": title,
+                "url": f"https://www.youtube.com/watch?v={vid_id}",
+                "published_at": published.isoformat(),
+                "transcript_status": "pending",
+                "thumbnail_url": thumb_url,
+            })
+
+        # Stop paginating once oldest item on this page is before the cutoff —
+        # everything further back is definitely outside our lookback window.
+        if oldest_on_page and oldest_on_page < cutoff:
+            break
+
+        page_token = res.get("nextPageToken")
+        if not page_token:
+            break
+
     return items
 
 
@@ -133,75 +162,13 @@ def fetch_youtube_channel(source: dict, cutoff: datetime) -> list[dict]:
             "youtube_channel_id": channel_id
         }).eq("id", source["id"]).execute()
 
-    # ── For filter-heavy sources: use uploads playlist (deeper, segment-aware)
-    if source.get("title_filter"):
-        return _fetch_via_uploads_playlist(channel_id, source, cutoff)
-
-    # ── DEFAULT: YouTube RSS feed (free, zero API quota) ───────────────────
-    # feedparser never raises for HTTP errors — it returns bozo=True with empty
-    # entries. We ALWAYS return from this block so we never fall through to the
-    # quota-burning API fallback on a normal "no new videos" result.
-    rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
-    try:
-        feed = feedparser.parse(rss_url)
-        # Detect bozo (HTTP error / malformed feed) — log and bail out cleanly
-        if getattr(feed, 'bozo', False) and not feed.entries:
-            exc = getattr(feed, 'bozo_exception', 'unknown error')
-            print(f"  ⚠ RSS feed error for {source['name']}: {exc}")
-            return []
-        items = []
-        for entry in feed.entries:  # empty iterable → empty list, no fallback
-            # Published date
-            pub_struct = entry.get("published_parsed") or entry.get("updated_parsed")
-            if pub_struct:
-                published = datetime(*pub_struct[:6], tzinfo=timezone.utc)
-                if published < cutoff:
-                    continue
-            else:
-                published = datetime.now(timezone.utc)
-
-            # Video ID — in the RSS feed the <id> tag contains the watch URL
-            vid_id = entry.get("yt_videoid") or ""
-            link = entry.get("link", "")
-            if not vid_id:
-                m = re.search(r"v=([A-Za-z0-9_-]{11})", link)
-                vid_id = m.group(1) if m else ""
-            if not vid_id:
-                continue
-
-            # Skip Shorts (fallback — most Shorts still return a watch URL but
-            # some RSS feeds emit /shorts/ links). Duration check in
-            # get_transcripts.py catches the rest.
-            if "/shorts/" in link:
-                continue
-
-            # Thumbnail via media:group → media:thumbnail (feedparser key: media_thumbnail)
-            thumbnails = entry.get("media_thumbnail", [])
-            thumbnail_url = (
-                thumbnails[0].get("url") if thumbnails
-                else f"https://img.youtube.com/vi/{vid_id}/hqdefault.jpg"
-            )
-
-            title = entry.get("title", "Untitled")
-            title_filter = source.get("title_filter")
-            if title_filter and title_filter.lower() not in title.lower():
-                continue
-
-            items.append({
-                "source_id": source["id"],
-                "external_id": vid_id,
-                "title": title,
-                "url": f"https://www.youtube.com/watch?v={vid_id}",
-                "published_at": published.isoformat(),
-                "transcript_status": "pending",
-                "thumbnail_url": thumbnail_url,
-            })
-        return items  # Always return here — never fall through to API
-    except Exception as e:
-        print(f"  ⚠ RSS fetch failed for {source['name']}: {e}")
-        return []  # Exception path also returns — no API fallback needed
-
-    # (API fallback removed — see comments above)
+    # ── Uploads playlist for ALL YouTube sources ──────────────────────────
+    # Costs 1–4 quota units per source (vs 0 for RSS) but gives 50–200 videos
+    # instead of 15, preventing segments from being buried on high-volume
+    # channels. With 7 sources × 4 runs/day = at most 112 units/day (quota
+    # limit is 10,000). Pagination only kicks in for title_filter sources
+    # (MAX_PAGES=4); others stop at page 1 unless content is within cutoff.
+    return _fetch_via_uploads_playlist(channel_id, source, cutoff)
 
 
 def fetch_google_news_rss(source: dict, cutoff: datetime) -> list[dict]:

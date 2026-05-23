@@ -27,6 +27,67 @@ import db
 from config import ASSEMBLYAI_API_KEY, YOUTUBE_COOKIES_FILE, YOUTUBE_BROWSER, MIN_VIDEO_DURATION_SECONDS
 
 # ---------------------------------------------------------------------------
+# Adaptive rate-limit handling
+# ---------------------------------------------------------------------------
+#
+# YouTube/Google aggressively rate-limit residential IPs that fetch many
+# transcripts via timedtext or yt-dlp's VTT path. Once we detect a 429 we
+# enter a back-off mode: every subsequent fetch in the same run waits much
+# longer, and after N consecutive rate-limits we abort the batch entirely.
+#
+# Tunable via env var:
+#   TRANSCRIPT_BASE_DELAY_MIN / TRANSCRIPT_BASE_DELAY_MAX  — per-request jitter
+#   TRANSCRIPT_RATE_LIMIT_COOLDOWN — seconds to wait after a 429 (default 60)
+#   HTTP_PROXY / HTTPS_PROXY      — honoured automatically by both libraries
+#
+# These are read at module load so a single run uses consistent values.
+
+_BASE_DELAY_MIN = float(os.environ.get("TRANSCRIPT_BASE_DELAY_MIN", "5"))
+_BASE_DELAY_MAX = float(os.environ.get("TRANSCRIPT_BASE_DELAY_MAX", "12"))
+_RATE_LIMIT_COOLDOWN = float(os.environ.get("TRANSCRIPT_RATE_LIMIT_COOLDOWN", "60"))
+_MAX_RETRIES_PER_VIDEO = int(os.environ.get("TRANSCRIPT_MAX_RETRIES", "3"))
+
+# Module-level state for in-run backoff. Reset implicitly each pipeline run
+# because the module is reloaded by run_pipeline.py's subprocess.
+_rate_limit_streak = 0
+_last_rate_limit_at: float = 0.0
+
+
+def _is_rate_limit_error(msg: str) -> bool:
+    """Distinguish 429-style rate limits from other retryable errors."""
+    m = msg.lower()
+    return any(p in m for p in ("429", "too many", "ipblocked", "requestblocked", "rate limit"))
+
+
+def _record_rate_limit():
+    global _rate_limit_streak, _last_rate_limit_at
+    _rate_limit_streak += 1
+    _last_rate_limit_at = time.time()
+
+
+def _record_success():
+    global _rate_limit_streak
+    _rate_limit_streak = 0
+
+
+def _adaptive_pre_request_delay():
+    """
+    Sleep before the next request. Length scales with how recently / how many
+    times we've been rate-limited:
+      streak 0 → normal jittered delay (5–12s)
+      streak 1 → cooldown × 1   (60s default)
+      streak 2 → cooldown × 2   (120s)
+      streak 3+ → cooldown × 4  (240s — last-ditch)
+    """
+    if _rate_limit_streak == 0:
+        time.sleep(random.uniform(_BASE_DELAY_MIN, _BASE_DELAY_MAX))
+        return
+    multiplier = min(4, 2 ** (_rate_limit_streak - 1))
+    wait = _RATE_LIMIT_COOLDOWN * multiplier
+    print(f"    ⏸ rate-limit cooldown — waiting {int(wait)}s (streak {_rate_limit_streak})…")
+    time.sleep(wait)
+
+# ---------------------------------------------------------------------------
 # Error classification helpers
 # ---------------------------------------------------------------------------
 
@@ -40,8 +101,17 @@ PERMANENT_ERROR_PHRASES = (
     "members only",
     "private video",
     "video unavailable",
-    "no longer available",   # video deleted by creator after publishing
-    "has been removed",      # YouTube removed for policy
+    "no longer available",                # video deleted by creator after publishing
+    "has been removed",                   # YouTube removed for policy
+    # The following used to be retryable, but observed behaviour is that they
+    # never recover — they sit in the failed pool and poison the retry batch
+    # (3 consecutive permanent-error retries → batch abort → no stories).
+    # Better to mark permanent immediately and free the retry slots for real
+    # transient failures.
+    "requested format is not available",  # yt-dlp can't find a downloadable stream
+    "no video formats found",             # yt-dlp parsed page but no formats listed
+    "premieres in",                       # scheduled future content; never airs reliably
+    "this live event has ended",          # post-stream limbo, no captions saved
 )
 
 # Error phrases that indicate a temporary block / rate-limit — must NOT mark permanent
@@ -175,6 +245,12 @@ def _get_transcript_ytdlp(video_id: str) -> tuple[str, list] | None:
         elif cookie_path:
             ydl_opts["cookiefile"] = cookie_path
 
+        # Honour HTTPS_PROXY / HTTP_PROXY for yt-dlp too (Webshare proxies need
+        # the WS-specific URL format — set HTTPS_PROXY to that if using Webshare)
+        proxy_url = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
+        if proxy_url:
+            ydl_opts["proxy"] = proxy_url
+
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
@@ -182,7 +258,11 @@ def _get_transcript_ytdlp(video_id: str) -> tuple[str, list] | None:
             msg = str(e)
             if is_permanent_error(msg):
                 raise PermanentNoTranscript(msg)
-            print(f"    yt-dlp download error: {msg[:200]}")
+            if _is_rate_limit_error(msg):
+                _record_rate_limit()
+                print(f"    ⚠ yt-dlp rate-limited: {msg[:160]}")
+            else:
+                print(f"    yt-dlp download error: {msg[:200]}")
             return None
 
         # Find the downloaded VTT file (yt-dlp names it <video_id>.<lang>.vtt)
@@ -196,14 +276,59 @@ def _get_transcript_ytdlp(video_id: str) -> tuple[str, list] | None:
     plain, segments = _parse_vtt(vtt_content)
     if not plain.strip():
         raise PermanentNoTranscript("Subtitle file was empty")
+    _record_success()
     return plain, segments
 
 
 # ---------------------------------------------------------------------------
 # youtube-transcript-api fetcher (fallback / no-cookie path)
 # ---------------------------------------------------------------------------
+#
+# Proxy precedence (highest first):
+#   1. WEBSHARE_PROXY_USERNAME + WEBSHARE_PROXY_PASSWORD  (rotating residential
+#      proxies; native youtube-transcript-api support, ideal for caption fetches)
+#   2. HTTPS_PROXY / HTTP_PROXY env vars (any generic proxy — also picked up
+#      automatically by yt-dlp + requests + urllib)
+#   3. None — direct connection
+#
+# Sign up free at https://www.webshare.io for 10 free datacenter proxies, OR
+# point HTTPS_PROXY at any rotating residential proxy you already use.
 
-_ytt = YouTubeTranscriptApi()
+def _build_ytt_client() -> YouTubeTranscriptApi:
+    ws_user = os.environ.get("WEBSHARE_PROXY_USERNAME", "").strip()
+    ws_pass = os.environ.get("WEBSHARE_PROXY_PASSWORD", "").strip()
+    if ws_user and ws_pass:
+        try:
+            from youtube_transcript_api.proxies import WebshareProxyConfig
+            print(f"    🛡 youtube-transcript-api: using Webshare rotating residential proxy")
+            return YouTubeTranscriptApi(
+                proxy_config=WebshareProxyConfig(
+                    proxy_username=ws_user,
+                    proxy_password=ws_pass,
+                )
+            )
+        except ImportError:
+            print(f"    ⚠ Webshare creds set but WebshareProxyConfig unavailable — install youtube-transcript-api>=0.6.2")
+
+    https_proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
+    if https_proxy:
+        try:
+            from youtube_transcript_api.proxies import GenericProxyConfig
+            print(f"    🛡 youtube-transcript-api: using HTTPS_PROXY")
+            return YouTubeTranscriptApi(
+                proxy_config=GenericProxyConfig(
+                    http_url=os.environ.get("HTTP_PROXY", https_proxy),
+                    https_url=https_proxy,
+                )
+            )
+        except ImportError:
+            # Older library version — env vars are still picked up via requests
+            pass
+
+    return YouTubeTranscriptApi()
+
+
+_ytt = _build_ytt_client()
 
 
 def _get_transcript_ytt(video_id: str) -> tuple[str, list] | None:
@@ -216,6 +341,7 @@ def _get_transcript_ytt(video_id: str) -> tuple[str, list] | None:
         fetched  = _ytt.fetch(video_id, languages=["en", "en-GB", "en-US"])
         segments = [{"text": s.text, "start": s.start, "duration": s.duration} for s in fetched]
         plain    = " ".join(s["text"] for s in segments)
+        _record_success()
         return plain, segments
 
     except (TranscriptsDisabled, NoTranscriptFound, VideoUnavailable) as e:
@@ -225,7 +351,11 @@ def _get_transcript_ytt(video_id: str) -> tuple[str, list] | None:
         msg = str(e)
         if is_permanent_error(msg):
             raise PermanentNoTranscript(msg)
-        print(f"    youtube-transcript-api error: {str(e)[:200]}")
+        if _is_rate_limit_error(msg):
+            _record_rate_limit()
+            print(f"    ⚠ youtube-transcript-api rate-limited: {msg[:160]}")
+        else:
+            print(f"    youtube-transcript-api error: {str(e)[:200]}")
         return None
 
 
@@ -301,27 +431,27 @@ def _transcribe_via_assemblyai(video_url: str) -> tuple[str, list] | None:
 
 def get_youtube_transcript(video_id: str) -> tuple[str, list] | None:
     """
-    Always try youtube-transcript-api first — it uses the timedtext API endpoint
-    which is a separate rate-limit bucket from the VTT download path that yt-dlp
-    uses. Under heavy load the VTT path gets 429'd first; the timedtext path
-    stays green much longer.
+    Always try youtube-transcript-api first — it uses the /api/timedtext
+    endpoint which is a completely separate rate-limit bucket from the media
+    CDN that yt-dlp downloads subtitles from. When YouTube blocks yt-dlp's
+    VTT download path (as happens under sustained IP pressure), timedtext
+    often stays accessible because it is a lightweight metadata endpoint.
 
     Fall-through logic:
-      ytt succeeds → return result
-      ytt retryable error (network, 429) → return None  (mark failed, retry later)
-      ytt PermanentNoTranscript → try yt-dlp (it can get auto-generated captions
-        that ytt can't find, especially for recently uploaded videos)
+      ytt succeeds              → return result
+      ytt rate-limited (None)   → return None (mark failed, retry later)
+      ytt PermanentNoTranscript → try yt-dlp (finds auto-subs ytt cannot)
     """
     try:
         result = _get_transcript_ytt(video_id)
         if result:
             return result
-        # None means a retryable network error from ytt — don't pile on with yt-dlp
+        # None = retryable network/429 — don't pile on with yt-dlp
         return None
     except PermanentNoTranscript:
-        pass  # ytt says no captions — yt-dlp might still find auto-subs
+        pass  # ytt confirmed no caption track — yt-dlp may find auto-generated ones
 
-    # yt-dlp fallback (only when ytt found no captions)
+    # yt-dlp fallback: only reached when ytt finds no caption track at all
     if YOUTUBE_BROWSER or _resolve_cookie_path():
         return _get_transcript_ytdlp(video_id)
 
@@ -389,9 +519,8 @@ def fetch_transcript(video: dict) -> tuple:
         fetcher = "youtube-transcript-api"
     print(f"    Fetching transcript for {vid_id} via {fetcher}…")
 
-    # Delay to avoid triggering YouTube rate limits (yt-dlp is slower per request,
-    # so we keep this modest — the main throttle is the browser cookie auth overhead)
-    time.sleep(random.uniform(2.0, 5.0))
+    # Adaptive pre-request delay — escalates after each rate-limit
+    _adaptive_pre_request_delay()
 
     try:
         result = get_youtube_transcript(vid_id)

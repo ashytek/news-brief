@@ -4,6 +4,8 @@ Uses the service-role key so it bypasses RLS — only used by the pipeline.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone, timedelta
+
 from supabase import create_client, Client
 from config import SUPABASE_URL, SUPABASE_SERVICE_KEY
 
@@ -22,15 +24,40 @@ def get_active_sources():
     return db.table("sources").select("*").eq("is_active", True).execute().data
 
 
-def get_failed_videos(limit: int = 50) -> list:
-    """Return videos whose transcript fetch failed so we can retry them."""
+def get_failed_videos(limit: int = 50, max_age_days: int = 14) -> list:
+    """Return videos whose transcript fetch failed so we can retry them.
+
+    Videos published more than max_age_days ago are excluded — they have
+    been retried many times already and are very unlikely to ever succeed
+    (e.g. unrecognised permanent error, sustained IP block that never cleared).
+    expire_stale_failures() handles marking those as no_transcript in bulk.
+    """
     db = get_db()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
     return db.table("videos") \
         .select("*, sources(category)") \
         .eq("transcript_status", "failed") \
+        .gte("published_at", cutoff) \
         .order("published_at", desc=True) \
         .limit(limit) \
         .execute().data
+
+
+def expire_stale_failures(max_age_days: int = 14) -> int:
+    """Mark failed videos older than max_age_days as no_transcript.
+
+    This prevents the retry queue from accumulating videos that have been
+    failing for weeks — whether due to an unrecognised permanent error message
+    or a sustained IP block that never cleared. Returns the count updated.
+    """
+    db = get_db()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
+    res = db.table("videos") \
+        .update({"transcript_status": "no_transcript"}) \
+        .eq("transcript_status", "failed") \
+        .lt("published_at", cutoff) \
+        .execute()
+    return len(res.data)
 
 
 def mark_video_permanent_failure(video_id: str):

@@ -11,7 +11,7 @@ _claude_fallback() below if you ever need it again.
 from __future__ import annotations
 
 import llm
-from config import MAX_BULLETS
+from config import MAX_BULLETS, MAX_BULLETS_PROPHETIC, PROPHETIC_BULLETS_PER_SECONDS
 
 # ---------------------------------------------------------------------------
 # Prompts
@@ -43,27 +43,46 @@ HEADLINE
 SUMMARY
 - 2 sentences, plain English, covering who/what/why. No throat-clearing, no "this video discusses". Lead with the fact."""
 
-PROPHETIC_BULLET_SYSTEM = """You are extracting prophetic content from a ministry video for a discerning Christian leader.
-Your ONLY task is to extract prophetic declarations, visions, words, and warnings from across the ENTIRE video.
+PROPHETIC_BULLET_SYSTEM = """You are extracting prophetic content from a ministry video for a discerning Christian leader who wants COMPREHENSIVE coverage of every prophetic element across the entire broadcast.
 
-INCLUDE — extract these specifically:
-- Direct prophetic declarations ("The Lord says...", "I hear the Spirit saying...", "God showed me...", "Thus says the Lord...")
-- Visions and what was seen — include specific imagery, symbols, colours, numbers seen
-- Prophetic words over specific nations, cities, leaders, regions, or groups of people
-- Prophetic warnings and urgent spiritual alerts
-- Declared seasons, timelines, or windows ("this year", "in 40 days", etc.)
-- Names of people, nations, regions, or events spoken over prophetically
+═══ COVERAGE — NON-NEGOTIABLE ═══
+1. The transcript may be 30 minutes, 1 hour, or 2+ hours. You MUST cover the ENTIRE video — NOT just the opening section.
+2. Mentally divide the transcript into TIME WINDOWS of 5 minutes each. From EVERY 5-minute window that contains any prophetic content, you MUST extract at least one bullet. Use the timestamps in the transcript to verify your coverage spans the full duration.
+3. Before finalising, scan your bullet timestamps. If the gap between two consecutive bullets exceeds 8 minutes AND there is prophetic content in that gap, you MUST add a bullet for it.
+4. Aim for 12-25 bullets total for a long broadcast (60+ min). Short videos (under 15 min) can have 5-10 bullets. NEVER stop at 5-8 bullets for a long video — that is failure.
+5. The LAST 20% of the video often contains the most concentrated prophetic declarations and altar moments. Pay extra attention to the final third — do not let your bullets cluster only at the start.
 
-EXCLUDE completely — do not summarise these:
-- General gospel preaching, Bible teaching, or scripture exposition
-- Worship, prayer, or altar call descriptions
-- Fundraising, ministry announcements, or promotional content
-- General pastoral encouragement without a specific prophetic declaration
-- Testimonies unless they contain a direct prophetic word or vision
-- If a declaration appears multiple times, include it ONCE only (first occurrence)
+═══ INCLUDE — extract every instance ═══
+- Direct prophetic declarations ("The Lord says...", "I hear the Spirit saying...", "God showed me...", "Thus says the Lord...", "I prophesy...", "I decree...", "I release...")
+- Visions and what was seen — include specific imagery, symbols, colours, numbers, animals, locations
+- Prophetic words over specific nations, cities, leaders, regions, governments, industries, churches, denominations, or groups
+- Prophetic warnings, urgent spiritual alerts, calls to repentance or watchfulness
+- Declared seasons, timelines, windows, dates ("this year", "in 40 days", "by November", "the next 7 years")
+- Dreams shared and their interpretations
+- Discernment about spiritual climate, principalities, demonic strategies named specifically
+- Prophetic intercession patterns — what the speaker is praying INTO based on revelation
+- Prophetic acts (declarations through symbolic action — anointing, decreeing, breaking)
+- Names of people, nations, regions, ministries, or events spoken over prophetically
+- Confirmations or echoes of prior prophecies the speaker references
 
-Be precise and literal. If a nation is named, name it. If a number or date is declared, quote it exactly.
-Use the prophet's own language where possible."""
+═══ ALSO CAPTURE (mark with [CONTEXT] prefix) ═══
+- Scripture passages used as the foundation of a prophetic word — quote the reference
+- Personal testimonies that anchor or confirm a prophetic declaration
+- Historical or political context the prophet provides to frame a word
+
+═══ EXCLUDE only ═══
+- Pure fundraising, channel promotion, conference advertising
+- Off-topic small talk, technical issues, audio checks
+- Generic worship lyrics with no prophetic interpretation attached
+
+═══ STYLE ═══
+- Be precise and literal. If a nation is named, name it. If a number or date is declared, quote it exactly.
+- Use the prophet's own language where possible. Preserve their force and edge — do not soften.
+- Each bullet should be ONE complete prophetic point with a timestamp.
+- Avoid duplication — if a declaration appears multiple times, include it ONCE at first occurrence.
+
+═══ OUTPUT VERIFICATION ═══
+Before submitting, count your bullets. Check timestamps span from early in the video to near the end. If your latest timestamp is less than 50% through the video duration, you have under-covered — go back and add more from the latter half."""
 
 SYNTHESIS_SYSTEM = """You synthesise multiple news perspectives into a structured brief for a busy doctor.
 Given multiple source stories on the same event, produce:
@@ -167,13 +186,16 @@ def summarise_video(
     context = build_transcript_context(title, transcript, segments)
 
     if category == "prophetic":
+        # Long broadcasts (60-120 min) need much higher output budget.
+        # 25 bullets × ~80 tokens each + headline + summary ≈ 2.5K, but we
+        # give plenty of headroom + thinking budget for nuanced extraction.
         result = llm.pro_json(
             contents=context,
             system_instruction=PROPHETIC_BULLET_SYSTEM,
             response_schema=BULLET_SCHEMA,
             temperature=0.2,
-            max_output_tokens=8192,
-            thinking_budget=4096,
+            max_output_tokens=16384,
+            thinking_budget=8192,
         )
     elif category == "india_global":
         result = llm.pro_json(
@@ -205,7 +227,12 @@ def summarise_video(
         print(f"    · Skipped — Gemini reported no usable content: {headline[:60]}")
         return None
 
-    result["bullets"] = result.get("bullets", [])[:MAX_BULLETS]
+    # Category-specific bullet cap.
+    # Prophetic broadcasts get a much higher cap because they pack many distinct
+    # declarations across long runtimes; the prompt also enforces a soft floor
+    # of ~1 bullet per 5 min of video so coverage scales with duration.
+    cap = MAX_BULLETS_PROPHETIC if category == "prophetic" else MAX_BULLETS
+    result["bullets"] = result.get("bullets", [])[:cap]
     return result
 
 
