@@ -314,11 +314,11 @@ def retry_failed():
 
 
 def run_once():
-    # Reset rate-limit streak so each scheduled run starts fresh.
-    # Without this, a bad run (streak=15 → 240s waits) poisons every
-    # subsequent run in the same process for the rest of the day.
-    get_transcripts._rate_limit_streak = 0
-    get_transcripts._last_rate_limit_at = 0.0
+    # Reset per-run transcript state (rate-limit streak + audio-fallback
+    # budget) so each scheduled run starts fresh. Without this, a bad run
+    # (streak=15 → 240s waits) poisons every subsequent run in the same
+    # long-lived launchd process for the rest of the day.
+    get_transcripts.reset_run_state()
 
     print(f"\n{'='*60}")
     print(f"📰 Pipeline run starting at {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}")
@@ -385,13 +385,13 @@ def run_once():
         if stats["stories_created"] == 0:
             try:
                 recent = db.get_db().table("pipeline_runs") \
-                    .select("stats") \
+                    .select("stories_created") \
                     .order("started_at", desc=True) \
                     .limit(3) \
                     .execute().data
                 zero_streak = sum(
                     1 for r in recent
-                    if (r.get("stats") or {}).get("stories_created", 0) == 0
+                    if (r.get("stories_created") or 0) == 0
                 )
                 if zero_streak >= 3:
                     print(f"  ⚠ {zero_streak} consecutive zero-story runs — pinging healthcheck FAIL")

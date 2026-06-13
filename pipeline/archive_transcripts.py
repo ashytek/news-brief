@@ -26,8 +26,41 @@ ARCHIVE_AFTER_DAYS = 14
 BUCKET = "transcripts"
 
 
+def _ensure_bucket(supabase) -> bool:
+    """Make sure the storage bucket exists. Create it if missing.
+
+    Returns True if the bucket is usable, False if we can't provision it
+    (in which case the caller should skip archival quietly rather than
+    spamming a 'Bucket not found' error for every single row).
+    """
+    try:
+        buckets = supabase.storage.list_buckets()
+        names = {getattr(b, "name", None) or (b.get("name") if isinstance(b, dict) else None) for b in buckets}
+        if BUCKET in names:
+            return True
+    except Exception as e:
+        print(f"  Archive: couldn't list storage buckets ({str(e)[:80]}) — skipping archival")
+        return False
+
+    # Bucket missing — try to create it (private)
+    try:
+        supabase.storage.create_bucket(BUCKET, options={"public": False})
+        print(f"  Archive: created private storage bucket '{BUCKET}'")
+        return True
+    except Exception as e:
+        print(f"  Archive: bucket '{BUCKET}' missing and auto-create failed "
+              f"({str(e)[:80]}) — skipping archival (DB won't be trimmed)")
+        return False
+
+
 def archive_old_transcripts(batch_size: int = 100):
     supabase = db.get_db()
+
+    # Bail early if the storage bucket isn't available — avoids 100× "Bucket
+    # not found" log spam on every daily run.
+    if not _ensure_bucket(supabase):
+        return
+
     cutoff = (datetime.now(timezone.utc) - timedelta(days=ARCHIVE_AFTER_DAYS)).isoformat()
 
     rows = (

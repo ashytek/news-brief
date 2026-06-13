@@ -47,15 +47,65 @@ _BASE_DELAY_MAX = float(os.environ.get("TRANSCRIPT_BASE_DELAY_MAX", "12"))
 _RATE_LIMIT_COOLDOWN = float(os.environ.get("TRANSCRIPT_RATE_LIMIT_COOLDOWN", "60"))
 _MAX_RETRIES_PER_VIDEO = int(os.environ.get("TRANSCRIPT_MAX_RETRIES", "3"))
 
-# Module-level state for in-run backoff. Reset implicitly each pipeline run
-# because the module is reloaded by run_pipeline.py's subprocess.
+# yt-dlp player-client selection. As of late 2025 YouTube serves a degraded
+# player response to the default `web` client unless a PoToken is attached —
+# the symptom is "Requested format is not available" / "No video formats found"
+# on videos that plainly have captions. The `android` client uses a separate
+# innertube API that still returns formats + auto-captions without a PoToken.
+#
+# CRITICAL: the android client must run WITHOUT cookies. Attaching a browser
+# session cookie re-triggers the PoToken format block (verified empirically:
+# android+cookies → "Requested format is not available"; android+no-cookies →
+# works). So cookies are attached ONLY for the web-family fallback clients.
+#
+# Default is android-only because it handles essentially everything; add
+# web_safari via env only if you need age-/members-gated content (it currently
+# gets PoToken-blocked too, so it rarely helps).
+# Override: YOUTUBE_PLAYER_CLIENTS="android,web_safari"
+_PLAYER_CLIENTS = [
+    c.strip() for c in
+    os.environ.get("YOUTUBE_PLAYER_CLIENTS", "android").split(",")
+    if c.strip()
+]
+
+# Web-family clients that benefit from (and need) cookie auth. The innertube
+# clients (android/ios/tv) must stay cookie-free — see note above.
+_COOKIE_CLIENTS = {"web", "web_safari", "web_embedded", "web_music", "mweb"}
+
+# AssemblyAI audio-fallback cost guardrail. Audio download (via the android
+# client → googlevideo CDN) is endpoint-independent from timedtext, so it works
+# even when captions are 429'd — but it costs ~$0.002/min ($0.12/audio-hour).
+# Cap how many we'll pay for per pipeline run so a fully-blocked day can't run
+# up an unbounded bill. The pipeline runs ~4×/day, so per-day spend ≈
+# 4 × cap × avg_cost. Set MAX_AUDIO_FALLBACK_PER_RUN=0 to disable audio entirely.
+MAX_AUDIO_FALLBACK_PER_RUN = int(os.environ.get("MAX_AUDIO_FALLBACK_PER_RUN", "6"))
+
+# Module-level in-run state. The launchd pipeline is a long-lived process that
+# loops via `schedule`, so this does NOT auto-reset between runs — run_pipeline
+# calls reset_run_state() at the start of each cycle.
 _rate_limit_streak = 0
 _last_rate_limit_at: float = 0.0
+_audio_fallback_count = 0
+
+
+def reset_run_state():
+    """Reset per-run counters. Called by run_pipeline at the start of each cycle."""
+    global _rate_limit_streak, _last_rate_limit_at, _audio_fallback_count
+    _rate_limit_streak = 0
+    _last_rate_limit_at = 0.0
+    _audio_fallback_count = 0
 
 
 def _is_rate_limit_error(msg: str) -> bool:
-    """Distinguish 429-style rate limits from other retryable errors."""
+    """Distinguish 429-style rate limits / bot-checks from other retryable errors.
+
+    Includes PoToken block phrases: if even the android client gets a degraded
+    response, YouTube is throttling this IP and we should back off — not retry
+    instantly and not mark the video permanent.
+    """
     m = msg.lower()
+    if any(p in m for p in POTOKEN_BLOCK_PHRASES):
+        return True
     return any(p in m for p in ("429", "too many", "ipblocked", "requestblocked", "rate limit"))
 
 
@@ -103,15 +153,21 @@ PERMANENT_ERROR_PHRASES = (
     "video unavailable",
     "no longer available",                # video deleted by creator after publishing
     "has been removed",                   # YouTube removed for policy
-    # The following used to be retryable, but observed behaviour is that they
-    # never recover — they sit in the failed pool and poison the retry batch
-    # (3 consecutive permanent-error retries → batch abort → no stories).
-    # Better to mark permanent immediately and free the retry slots for real
-    # transient failures.
-    "requested format is not available",  # yt-dlp can't find a downloadable stream
-    "no video formats found",             # yt-dlp parsed page but no formats listed
-    "premieres in",                       # scheduled future content; never airs reliably
-    "this live event has ended",          # post-stream limbo, no captions saved
+    "drm protected",                      # genuinely undownloadable (e.g. movies)
+    # DO NOT add "requested format is not available" / "no video formats found"
+    # here. Those are NOT permanent — they are the signature of YouTube's
+    # PoToken bot-check serving a degraded player response to the web client.
+    # The android player client (see _PLAYER_CLIENTS) bypasses them, so a video
+    # that hits these phrases should stay 'failed' and be retried, never killed.
+)
+
+# Phrases that mean "the web client got PoToken-blocked" — retryable, and a
+# signal to escalate to the android client / back off, but never permanent.
+POTOKEN_BLOCK_PHRASES = (
+    "requested format is not available",
+    "no video formats found",
+    "sign in to confirm",                 # "...you're not a bot"
+    "content isn't available",
 )
 
 # Error phrases that indicate a temporary block / rate-limit — must NOT mark permanent
@@ -228,56 +284,74 @@ def _get_transcript_ytdlp(video_id: str) -> tuple[str, list] | None:
 
     url = f"https://www.youtube.com/watch?v={video_id}"
     cookie_path = _resolve_cookie_path()
+    proxy_url = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        ydl_opts: dict = {
-            "writesubtitles":    True,
-            "writeautomaticsub": True,
-            "subtitleslangs":    ["en", "en-US", "en-GB"],
-            "subtitlesformat":   "vtt",
-            "skip_download":     True,
-            "outtmpl":           os.path.join(tmpdir, "%(id)s"),
-            "quiet":             True,
-            "no_warnings":       True,
-        }
-        if YOUTUBE_BROWSER:
-            ydl_opts["cookiesfrombrowser"] = (YOUTUBE_BROWSER, None, None, None)
-        elif cookie_path:
-            ydl_opts["cookiefile"] = cookie_path
+    last_permanent: PermanentNoTranscript | None = None
 
-        # Honour HTTPS_PROXY / HTTP_PROXY for yt-dlp too (Webshare proxies need
-        # the WS-specific URL format — set HTTPS_PROXY to that if using Webshare)
-        proxy_url = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
-        if proxy_url:
-            ydl_opts["proxy"] = proxy_url
+    # Try each configured player client in order. android (cookie-free) leads
+    # and handles the vast majority; web-family clients run with cookies only
+    # if explicitly configured, as a fallback for gated content.
+    for client in _PLAYER_CLIENTS:
+        use_cookies = client in _COOKIE_CLIENTS
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ydl_opts: dict = {
+                "writesubtitles":    True,
+                "writeautomaticsub": True,
+                "subtitleslangs":    ["en", "en-US", "en-GB"],
+                "subtitlesformat":   "vtt",
+                "skip_download":     True,
+                "outtmpl":           os.path.join(tmpdir, "%(id)s"),
+                "quiet":             True,
+                "no_warnings":       True,
+                # One client per attempt — mixing clients lets yt-dlp silently
+                # fall back to the PoToken-blocked web client.
+                "extractor_args":    {"youtube": {"player_client": [client]}},
+            }
+            # Cookies ONLY for web-family clients. Attaching them to android
+            # re-triggers the PoToken block (see _PLAYER_CLIENTS note).
+            if use_cookies:
+                if YOUTUBE_BROWSER:
+                    ydl_opts["cookiesfrombrowser"] = (YOUTUBE_BROWSER, None, None, None)
+                elif cookie_path:
+                    ydl_opts["cookiefile"] = cookie_path
+            if proxy_url:
+                ydl_opts["proxy"] = proxy_url
 
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
-        except Exception as e:
-            msg = str(e)
-            if is_permanent_error(msg):
-                raise PermanentNoTranscript(msg)
-            if _is_rate_limit_error(msg):
-                _record_rate_limit()
-                print(f"    ⚠ yt-dlp rate-limited: {msg[:160]}")
-            else:
-                print(f"    yt-dlp download error: {msg[:200]}")
-            return None
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([url])
+            except Exception as e:
+                msg = str(e)
+                if is_permanent_error(msg):
+                    # Trust this verdict but let a later client try too.
+                    last_permanent = PermanentNoTranscript(msg)
+                    continue
+                if _is_rate_limit_error(msg):
+                    _record_rate_limit()
+                    print(f"    ⚠ yt-dlp[{client}] blocked/rate-limited: {msg[:130]}")
+                else:
+                    print(f"    yt-dlp[{client}] error: {msg[:160]}")
+                continue
 
-        # Find the downloaded VTT file (yt-dlp names it <video_id>.<lang>.vtt)
-        vtt_files = glob.glob(os.path.join(tmpdir, "*.vtt"))
-        if not vtt_files:
-            raise PermanentNoTranscript("No subtitles available for this video")
+            vtt_files = glob.glob(os.path.join(tmpdir, "*.vtt"))
+            if not vtt_files:
+                last_permanent = PermanentNoTranscript("No subtitles available for this video")
+                continue
 
-        with open(vtt_files[0], encoding="utf-8") as f:
-            vtt_content = f.read()
+            with open(vtt_files[0], encoding="utf-8") as f:
+                vtt_content = f.read()
 
-    plain, segments = _parse_vtt(vtt_content)
-    if not plain.strip():
-        raise PermanentNoTranscript("Subtitle file was empty")
-    _record_success()
-    return plain, segments
+            plain, segments = _parse_vtt(vtt_content)
+            if not plain.strip():
+                last_permanent = PermanentNoTranscript("Subtitle file was empty")
+                continue
+            _record_success()
+            return plain, segments
+
+    # All configured clients exhausted.
+    if last_permanent is not None:
+        raise last_permanent
+    return None  # every client hit a retryable error — retry next run
 
 
 # ---------------------------------------------------------------------------
@@ -377,17 +451,24 @@ def _transcribe_via_assemblyai(video_url: str) -> tuple[str, list] | None:
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             audio_path = os.path.join(tmpdir, "audio.m4a")
+            # Use the first configured player client (android) — cookie-free,
+            # same PoToken-bypass reasoning as the subtitle path. Without this
+            # the audio download fails identically with "No video formats found".
+            primary_client = _PLAYER_CLIENTS[0] if _PLAYER_CLIENTS else "android"
             ydl_opts = {
                 "format": "bestaudio[ext=m4a]/bestaudio/best",
                 "outtmpl": audio_path,
                 "quiet": True,
                 "no_warnings": True,
                 "noplaylist": True,
+                "extractor_args": {"youtube": {"player_client": [primary_client]}},
             }
-            if YOUTUBE_BROWSER:
-                ydl_opts["cookiesfrombrowser"] = (YOUTUBE_BROWSER,)
-            elif _resolve_cookie_path():
-                ydl_opts["cookiefile"] = _resolve_cookie_path()
+            # Cookies only if the primary client is a web-family client.
+            if primary_client in _COOKIE_CLIENTS:
+                if YOUTUBE_BROWSER:
+                    ydl_opts["cookiesfrombrowser"] = (YOUTUBE_BROWSER,)
+                elif _resolve_cookie_path():
+                    ydl_opts["cookiefile"] = _resolve_cookie_path()
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([video_url])
@@ -431,31 +512,51 @@ def _transcribe_via_assemblyai(video_url: str) -> tuple[str, list] | None:
 
 def get_youtube_transcript(video_id: str) -> tuple[str, list] | None:
     """
-    Always try youtube-transcript-api first — it uses the /api/timedtext
-    endpoint which is a completely separate rate-limit bucket from the media
-    CDN that yt-dlp downloads subtitles from. When YouTube blocks yt-dlp's
-    VTT download path (as happens under sustained IP pressure), timedtext
-    often stays accessible because it is a lightweight metadata endpoint.
+    Try yt-dlp with the android player client FIRST, then youtube-transcript-api.
+
+    Why this order (reversed from the original design): the two paths hit
+    DIFFERENT YouTube endpoints with INDEPENDENT block states.
+      • youtube-transcript-api → /api/timedtext — gets 429'd hard and fast
+        once this IP fetches a handful of transcripts.
+      • yt-dlp + android client → the android innertube API — bypasses the
+        PoToken bot-check that breaks the web client, and stays accessible
+        when timedtext is already blocked (verified empirically).
+    The old code tried timedtext first and, when it got rate-limited (None),
+    returned immediately WITHOUT ever trying yt-dlp — so the working path was
+    unreachable exactly when we needed it. Now yt-dlp+android leads.
 
     Fall-through logic:
-      ytt succeeds              → return result
-      ytt rate-limited (None)   → return None (mark failed, retry later)
-      ytt PermanentNoTranscript → try yt-dlp (finds auto-subs ytt cannot)
+      ytdlp succeeds                → return result
+      ytdlp PermanentNoTranscript   → confirm with ytt (it may see a caption
+                                       track yt-dlp's client doesn't); if ytt
+                                       also says permanent → raise.
+      ytdlp None (rate-limit/error) → try ytt as a secondary path.
     """
-    try:
-        result = _get_transcript_ytt(video_id)
-        if result:
-            return result
-        # None = retryable network/429 — don't pile on with yt-dlp
-        return None
-    except PermanentNoTranscript:
-        pass  # ytt confirmed no caption track — yt-dlp may find auto-generated ones
+    have_auth = bool(YOUTUBE_BROWSER or _resolve_cookie_path())
 
-    # yt-dlp fallback: only reached when ytt finds no caption track at all
-    if YOUTUBE_BROWSER or _resolve_cookie_path():
-        return _get_transcript_ytdlp(video_id)
+    if have_auth:
+        try:
+            result = _get_transcript_ytdlp(video_id)
+            if result:
+                return result
+            # None = retryable error — fall through to ytt as a second chance
+        except PermanentNoTranscript as ytdlp_perm:
+            # yt-dlp's android client found no caption track. Double-check with
+            # ytt before declaring permanent — occasionally timedtext exposes a
+            # track the android caption list omitted.
+            try:
+                result = _get_transcript_ytt(video_id)
+                if result:
+                    return result
+            except PermanentNoTranscript:
+                raise ytdlp_perm  # both agree: genuinely no transcript
+            # ytt was rate-limited (None) — can't confirm. Trust yt-dlp's verdict.
+            raise ytdlp_perm
+        # yt-dlp returned None (retryable). Try ytt before giving up.
+        return _get_transcript_ytt(video_id)
 
-    raise PermanentNoTranscript(f"No transcript available for {video_id}")
+    # No cookies/browser configured → timedtext is the only option.
+    return _get_transcript_ytt(video_id)
 
 
 # ---------------------------------------------------------------------------
@@ -526,17 +627,10 @@ def fetch_transcript(video: dict) -> tuple:
         result = get_youtube_transcript(vid_id)
     except PermanentNoTranscript as e:
         print(f"    ✗ No YouTube captions: {str(e)[:80]}")
-        # Try audio fallback before giving up
-        audio_result = _transcribe_via_assemblyai(url)
-        if audio_result:
-            text, segments = audio_result
-            if segments:
-                last = segments[-1]
-                total_seconds = (last.get("start") or 0) + (last.get("duration") or 0)
-                if total_seconds < MIN_VIDEO_DURATION_SECONDS:
-                    print(f"    · Skipped short ({int(total_seconds)}s < {MIN_VIDEO_DURATION_SECONDS}s)")
-                    return None, "skipped_short", []
-            return text, "fetched", segments
+        # Genuinely no caption track → audio fallback before giving up.
+        audio = _try_audio_fallback(url, reason="no captions")
+        if audio is not None:
+            return audio
         if video_id:
             db.mark_video_permanent_failure(video_id)
         return None, "no_transcript", []
@@ -553,6 +647,67 @@ def fetch_transcript(video: dict) -> tuple:
         print(f"    ✓ Transcript ({len(text)} chars, {len(segments)} segments)")
         return text, "fetched", segments
 
-    # Retryable — status stays 'failed' so it will be retried next run
+    # Retryable failure (captions 429'd / network). The android client proved
+    # the video IS reachable, so the audio CDN (separate endpoint from the
+    # 429'd timedtext) can still get us a transcript. Spend an AssemblyAI call
+    # IF the video is fresh (worth the cost now) and we're under the per-run cap.
+    if _should_try_audio_on_block(video):
+        audio = _try_audio_fallback(url, reason="captions rate-limited")
+        if audio is not None:
+            return audio
+
+    # Otherwise leave as 'failed' so it retries for free on the next run.
     print(f"    ✗ Transcript fetch failed (retryable — IP block or network)")
     return None, "failed", []
+
+
+def _should_try_audio_on_block(video: dict) -> bool:
+    """Whether to spend a paid audio transcription when captions are 429'd.
+
+    Only for FRESH videos (published within 48h) — old ones can wait for a free
+    retry. Bounded by the per-run cap inside _try_audio_fallback.
+    """
+    if MAX_AUDIO_FALLBACK_PER_RUN <= 0 or not ASSEMBLYAI_API_KEY:
+        return False
+    pub = video.get("published_at")
+    if not pub:
+        return False
+    try:
+        from datetime import datetime, timezone
+        pub_dt = datetime.fromisoformat(str(pub).replace("Z", "+00:00"))
+        age_h = (datetime.now(timezone.utc) - pub_dt).total_seconds() / 3600
+        return age_h <= 48
+    except Exception:
+        return False
+
+
+def _try_audio_fallback(url: str, reason: str) -> tuple | None:
+    """Run the AssemblyAI audio fallback if under the per-run budget cap.
+
+    Returns a fetch_transcript-style (text, status, segments) tuple on success
+    (status 'fetched' or 'skipped_short'), or None if skipped/failed so the
+    caller can decide the final status.
+    """
+    global _audio_fallback_count
+    if MAX_AUDIO_FALLBACK_PER_RUN <= 0 or not ASSEMBLYAI_API_KEY:
+        return None
+    if _audio_fallback_count >= MAX_AUDIO_FALLBACK_PER_RUN:
+        print(f"    · Audio fallback skipped — per-run cap reached "
+              f"({MAX_AUDIO_FALLBACK_PER_RUN})")
+        return None
+
+    _audio_fallback_count += 1
+    print(f"    → Audio fallback ({reason}) "
+          f"[{_audio_fallback_count}/{MAX_AUDIO_FALLBACK_PER_RUN}]…")
+    audio_result = _transcribe_via_assemblyai(url)
+    if not audio_result:
+        return None
+
+    text, segments = audio_result
+    if segments:
+        last = segments[-1]
+        total_seconds = (last.get("start") or 0) + (last.get("duration") or 0)
+        if total_seconds < MIN_VIDEO_DURATION_SECONDS:
+            print(f"    · Skipped short ({int(total_seconds)}s < {MIN_VIDEO_DURATION_SECONDS}s)")
+            return None, "skipped_short", []
+    return text, "fetched", segments
