@@ -152,11 +152,11 @@ export default function ReaderClient({ userId }: { userId: string }) {
   }, [])
 
   // Close the header "More" menu on an outside tap. Deliberately NOT using a
-  // fixed inset-0 catcher element here: the header has backdrop-blur-md, and
-  // backdrop-filter on an ancestor creates a new containing block for
-  // position:fixed descendants (same rule as `filter`/`transform`) — a fixed
-  // catcher nested inside it would only cover the header's own bounds, not
-  // the full screen, so taps on the feed below wouldn't close the menu.
+  // fixed inset-0 catcher element: backdrop-filter/filter/transform on any
+  // ancestor (the header has carried backdrop-blur in the past) creates a new
+  // containing block for position:fixed descendants — a fixed catcher nested
+  // inside would only cover the header's own bounds, not the full screen, so
+  // taps on the feed below wouldn't close the menu. Ref-based is immune.
   useEffect(() => {
     if (!showMoreMenu) return
     const onPointerDown = (e: PointerEvent) => {
@@ -529,7 +529,11 @@ export default function ReaderClient({ userId }: { userId: string }) {
   return (
     <div className="min-h-screen text-slate-100">
       {/* Top bar */}
-      <header className="sticky top-0 z-50 bg-slate-950/85 backdrop-blur-md border-b border-slate-800/60">
+      {/* No backdrop-blur here: a sticky element's backdrop-filter re-samples
+          the content scrolling beneath it on every frame — one of the last
+          remaining per-frame costs on mid-range Android GPUs. Near-opaque
+          solid is visually equivalent on this dark theme. */}
+      <header className="sticky top-0 z-50 bg-slate-950/95 border-b border-slate-800/60">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500 to-violet-700 flex items-center justify-center shadow-[0_0_16px_rgba(139,92,246,0.35)]">
@@ -566,6 +570,10 @@ export default function ReaderClient({ userId }: { userId: string }) {
                     }`}>
                       <span className={`w-1.5 h-1.5 rounded-full ${dot}`} />
                       {label}
+                      {/* Build stamp — confirms which deploy this instance runs */}
+                      <span className="text-[9px] text-slate-600 font-mono ml-0.5">
+                        {process.env.NEXT_PUBLIC_BUILD_SHA}
+                      </span>
                     </p>
                   )
                 })()
@@ -736,7 +744,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
       {/* Feed */}
       {/* Offline banner — stories already on screen stay readable */}
       {isOffline && (
-        <div className="sticky top-0 z-40 bg-amber-500/15 backdrop-blur-md border-b border-amber-500/30 px-4 py-2 text-center">
+        <div className="sticky top-0 z-40 bg-slate-900 border-b border-amber-500/30 px-4 py-2 text-center">
           <p className="text-xs font-semibold text-amber-200 inline-flex items-center gap-1.5">
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 5.636a9 9 0 010 12.728m-12.728 0a9 9 0 010-12.728m2.828 9.9a5 5 0 010-7.072m7.072 0a5 5 0 010 7.072M12 12h.01" />
@@ -750,7 +758,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
       {showScrollTop && (
         <button
           onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-          className="fixed bottom-24 md:bottom-8 right-4 z-40 w-12 h-12 rounded-full bg-slate-800/90 backdrop-blur-md ring-1 ring-slate-600/80 shadow-[0_4px_20px_rgba(0,0,0,0.5)] flex items-center justify-center text-slate-200 hover:bg-slate-700 active:scale-90 transition-all animate-fade-in-up"
+          className="fixed bottom-24 md:bottom-8 right-4 z-40 w-12 h-12 rounded-full bg-slate-800 ring-1 ring-slate-600/80 shadow-[0_4px_20px_rgba(0,0,0,0.5)] flex items-center justify-center text-slate-200 hover:bg-slate-700 active:scale-90 transition-all animate-fade-in-up"
           aria-label="Scroll to top"
         >
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">

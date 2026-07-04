@@ -86,7 +86,10 @@ export function CategoryNav({ categories, active, onChange, topicCount, todayUnr
       {/* overflow-x-auto is a safety net: if enough categories are active at
           once that tabs can't all fit at their min-width, the bar scrolls
           internally instead of forcing the whole page to pan sideways. */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-slate-950/90 backdrop-blur-md border-t border-slate-800/80 flex overflow-x-auto scrollbar-hide safe-area-inset-bottom shadow-[0_-4px_20px_-4px_rgba(0,0,0,0.6)]">
+      {/* No backdrop-blur: fixed-position blur re-filters on every scroll
+          frame under it — meaningful jank on mid-range Android. Near-opaque
+          solid reads identically on the dark theme. */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-slate-950/95 border-t border-slate-800/80 flex overflow-x-auto scrollbar-hide safe-area-inset-bottom shadow-[0_-4px_20px_-4px_rgba(0,0,0,0.6)]">
         {allTabs.map(tab => (
           <NavButton
             key={tab.id}

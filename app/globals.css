@@ -107,4 +107,11 @@ body {
 .card-cv {
   content-visibility: auto;
   contain-intrinsic-size: 0 480px;
+  /* ROOT CAUSE of "page slides left / text clipped" on narrow phones:
+     real YouTube titles/bullets contain long unbroken tokens (hashtag
+     chains, URLs, ALL-CAPS runs) that cannot wrap at spaces — measured
+     at 570-619px of content width on a 360px viewport. overflow-wrap
+     is inherited, so setting it card-wide lets any hostile token break
+     mid-word and the content genuinely fits the screen. */
+  overflow-wrap: anywhere;
 }

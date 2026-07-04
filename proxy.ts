@@ -29,6 +29,12 @@ export async function proxy(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser()
 
+  // /dev-ui is an auth-free layout fixture (mock data only) used to
+  // reproduce and measure UI issues in a plain browser.
+  if (request.nextUrl.pathname.startsWith('/dev-ui')) {
+    return supabaseResponse
+  }
+
   // Redirect unauthenticated users to /auth
   if (!user && !request.nextUrl.pathname.startsWith('/auth')) {
     const url = request.nextUrl.clone()
