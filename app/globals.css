@@ -100,18 +100,22 @@ body {
   overscroll-behavior-y: contain;
 }
 
-/* Skip layout/paint for off-screen cards in long feeds — the browser only
-   does full work for cards near the viewport. contain-intrinsic-size is a
-   rough average card height so the scrollbar doesn't jump as cards resolve
-   their real size on approach. */
+/* Card-wide text hardening.
+   ROOT CAUSE of "page slides left / text clipped" on narrow phones:
+   real YouTube titles/bullets contain long unbroken tokens (hashtag
+   chains, URLs, ALL-CAPS runs) that cannot wrap at spaces — measured
+   at 570-619px of content width on a 360px viewport. overflow-wrap
+   is inherited, so setting it card-wide lets any hostile token break
+   mid-word and the content genuinely fits the screen.
+
+   NOTE: this class previously also carried `content-visibility: auto` +
+   `contain-intrinsic-size: 0 480px` as a scroll-perf optimisation. It made
+   the page UNSCROLLABLE by touch on Android: cards resolve from the 480px
+   placeholder to their real height (prophetic cards are 3-4x that) as they
+   approach the viewport, and Chrome's scroll anchoring fights the resulting
+   layout shifts — a touch fling snaps straight back, i.e. "cannot scroll".
+   Do not reintroduce content-visibility here without per-card measured
+   intrinsic sizes. */
 .card-cv {
-  content-visibility: auto;
-  contain-intrinsic-size: 0 480px;
-  /* ROOT CAUSE of "page slides left / text clipped" on narrow phones:
-     real YouTube titles/bullets contain long unbroken tokens (hashtag
-     chains, URLs, ALL-CAPS runs) that cannot wrap at spaces — measured
-     at 570-619px of content width on a 360px viewport. overflow-wrap
-     is inherited, so setting it card-wide lets any hostile token break
-     mid-word and the content genuinely fits the screen. */
   overflow-wrap: anywhere;
 }
