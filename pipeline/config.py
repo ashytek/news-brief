@@ -11,6 +11,15 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 GOOGLE_API_KEY        = os.environ["GOOGLE_API_KEY"]          # Google AI Studio key (starts with AIza...)
 YOUTUBE_API_KEY       = os.environ["YOUTUBE_API_KEY"]
 ASSEMBLYAI_API_KEY    = os.environ.get("ASSEMBLYAI_API_KEY", "")
+
+# Apify — managed YouTube transcript API (primary transcript path when set).
+# Free plan includes $5 usage credit/month which covers our volume entirely.
+# Sign up at https://apify.com (no card needed) → Settings → API tokens.
+APIFY_TOKEN           = os.environ.get("APIFY_TOKEN", "")
+APIFY_TRANSCRIPT_ACTOR = os.environ.get(
+    "APIFY_TRANSCRIPT_ACTOR",
+    "codepoetry~youtube-transcript-ai-scraper",   # ~$0.001/native transcript
+)
 # ANTHROPIC_API_KEY is no longer required — Gemini is the primary LLM.
 # To re-add Claude as a fallback: pip install anthropic, uncomment below, restore key in .env
 # ANTHROPIC_API_KEY   = os.environ["ANTHROPIC_API_KEY"]

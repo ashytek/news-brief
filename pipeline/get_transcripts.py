@@ -24,7 +24,10 @@ import tempfile
 from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled, VideoUnavailable
 
 import db
-from config import ASSEMBLYAI_API_KEY, YOUTUBE_COOKIES_FILE, YOUTUBE_BROWSER, MIN_VIDEO_DURATION_SECONDS
+from config import (
+    ASSEMBLYAI_API_KEY, YOUTUBE_COOKIES_FILE, YOUTUBE_BROWSER,
+    MIN_VIDEO_DURATION_SECONDS, APIFY_TOKEN, APIFY_TRANSCRIPT_ACTOR,
+)
 
 # ---------------------------------------------------------------------------
 # Adaptive rate-limit handling
@@ -257,7 +260,97 @@ def _parse_vtt(vtt: str) -> tuple[str, list]:
 
 
 # ---------------------------------------------------------------------------
-# yt-dlp transcript fetcher (primary when cookies configured)
+# Apify transcript fetcher — PRIMARY path when APIFY_TOKEN is set
+# ---------------------------------------------------------------------------
+#
+# Managed transcript extraction: Apify runs the proxy/PoToken arms race
+# professionally (rotating residential IPs, maintained daily), so this path
+# is ~99% reliable and works identically from home IPs and datacenter IPs
+# (GitHub Actions). Cost ≈ $0.001/transcript — covered by Apify's recurring
+# $5/month free-plan credit at our volume (~600 videos/mo).
+#
+# Failure semantics match the other fetchers:
+#   returns (plain, segments)      → success
+#   returns None                   → transport/temporary error (retry later,
+#                                    caller falls through to local fetchers)
+#   raises PermanentNoTranscript   → actor confirmed the video has no captions
+
+def _get_transcript_apify(video_id: str) -> tuple[str, list] | None:
+    if not APIFY_TOKEN:
+        return None
+
+    endpoint = (
+        f"https://api.apify.com/v2/acts/{APIFY_TRANSCRIPT_ACTOR}"
+        f"/run-sync-get-dataset-items"
+    )
+    payload = {
+        "startUrls":      [{"url": f"https://www.youtube.com/watch?v={video_id}"}],
+        "languages":      ["en"],
+        "subType":        "both",          # manual captions preferred, auto OK
+        "outputFormats":  ["json", "text"],
+        "enableAiFallback": False,         # AI transcription handled by our own
+                                           # capped AssemblyAI path instead
+        "maxResults":     1,
+    }
+
+    try:
+        resp = requests.post(
+            endpoint,
+            json=payload,
+            headers={"Authorization": f"Bearer {APIFY_TOKEN}"},
+            timeout=240,   # long prophetic videos: caption files are still small,
+                           # but actor cold-start + parse can take a couple minutes
+        )
+    except requests.RequestException as e:
+        print(f"    ⚠ Apify request error: {str(e)[:120]}")
+        return None
+
+    if resp.status_code == 402:
+        print("    ⚠ Apify credit exhausted for this month — falling back to local fetchers")
+        return None
+    if resp.status_code >= 400:
+        print(f"    ⚠ Apify HTTP {resp.status_code}: {resp.text[:120]}")
+        return None
+
+    try:
+        items = resp.json()
+    except ValueError:
+        print("    ⚠ Apify returned non-JSON response")
+        return None
+    if not isinstance(items, list) or not items:
+        print("    ⚠ Apify returned no dataset items")
+        return None
+
+    item = items[0]
+    error_code = item.get("error_code")
+    if error_code:
+        if error_code in ("NO_CAPTIONS_AVAILABLE", "LANGUAGE_NOT_FOUND"):
+            # Professional scraper confirmed: no usable English captions.
+            # (Fresh videos may grow auto-captions later — the audio fallback
+            # for <48h videos catches those before we mark permanent.)
+            raise PermanentNoTranscript(f"Apify: {error_code}")
+        print(f"    ⚠ Apify error_code={error_code} — treating as retryable")
+        return None
+
+    segs_json = item.get("transcript_json") or []
+    segments = [
+        {
+            "text": s.get("text", ""),
+            "start": s.get("start", 0),
+            "duration": max(0, (s.get("end") or s.get("start", 0)) - s.get("start", 0)),
+        }
+        for s in segs_json
+    ]
+    plain = item.get("transcript_text") or " ".join(s["text"] for s in segments)
+    if not plain.strip():
+        raise PermanentNoTranscript("Apify: transcript was empty")
+
+    _record_success()
+    return plain, segments
+
+
+# ---------------------------------------------------------------------------
+# yt-dlp transcript fetcher (free local fallback)
 # ---------------------------------------------------------------------------
 
 def _get_transcript_ytdlp(video_id: str) -> tuple[str, list] | None:
@@ -512,6 +605,16 @@ def _transcribe_via_assemblyai(video_url: str) -> tuple[str, list] | None:
 
 def get_youtube_transcript(video_id: str) -> tuple[str, list] | None:
     """
+    Fetch order:
+      0. Apify managed API (when APIFY_TOKEN set) — ~99% reliable, pennies,
+         works from any IP. PermanentNoTranscript from Apify is trusted
+         (professional scraper says the video has no English captions).
+         Transport errors fall through to the free local chain below.
+      1. yt-dlp + android player client (cookie-free)
+      2. youtube-transcript-api (timedtext)
+
+    Local-chain rationale below.
+
     Try yt-dlp with the android player client FIRST, then youtube-transcript-api.
 
     Why this order (reversed from the original design): the two paths hit
@@ -532,6 +635,13 @@ def get_youtube_transcript(video_id: str) -> tuple[str, list] | None:
                                        also says permanent → raise.
       ytdlp None (rate-limit/error) → try ytt as a secondary path.
     """
+    # ── 0. Apify managed API ────────────────────────────────────────────
+    if APIFY_TOKEN:
+        result = _get_transcript_apify(video_id)   # PermanentNoTranscript propagates
+        if result:
+            return result
+        # None → Apify transport problem / credit exhausted → free local chain
+
     have_auth = bool(YOUTUBE_BROWSER or _resolve_cookie_path())
 
     if have_auth:
@@ -612,7 +722,16 @@ def fetch_transcript(video: dict) -> tuple:
     if not vid_id:
         return None, "failed", []
 
-    if YOUTUBE_BROWSER:
+    # Duration known from discovery (YouTube Data API contentDetails)?
+    # Skip shorts BEFORE spending a transcript fetch on them.
+    dur = video.get("duration_seconds")
+    if dur and dur < MIN_VIDEO_DURATION_SECONDS:
+        print(f"    · Skipped short at discovery ({int(dur)}s < {MIN_VIDEO_DURATION_SECONDS}s)")
+        return None, "skipped_short", []
+
+    if APIFY_TOKEN:
+        fetcher = "apify"
+    elif YOUTUBE_BROWSER:
         fetcher = f"yt-dlp+{YOUTUBE_BROWSER}"
     elif _resolve_cookie_path():
         fetcher = "yt-dlp+cookiefile"
@@ -620,8 +739,13 @@ def fetch_transcript(video: dict) -> tuple:
         fetcher = "youtube-transcript-api"
     print(f"    Fetching transcript for {vid_id} via {fetcher}…")
 
-    # Adaptive pre-request delay — escalates after each rate-limit
-    _adaptive_pre_request_delay()
+    # Adaptive pre-request delay protects OUR IP from YouTube rate-limits.
+    # Irrelevant when Apify (their infrastructure) is the primary — a token
+    # politeness pause is enough and saves ~8s × N videos of runtime.
+    if APIFY_TOKEN:
+        time.sleep(1)
+    else:
+        _adaptive_pre_request_delay()
 
     try:
         result = get_youtube_transcript(vid_id)

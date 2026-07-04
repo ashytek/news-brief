@@ -171,6 +171,57 @@ def fetch_youtube_channel(source: dict, cutoff: datetime) -> list[dict]:
     return _fetch_via_uploads_playlist(channel_id, source, cutoff)
 
 
+_ISO8601_DUR = re.compile(
+    r"PT(?:(?P<h>\d+)H)?(?:(?P<m>\d+)M)?(?:(?P<s>\d+)S)?"
+)
+
+
+def _parse_iso8601_duration(dur: str) -> int | None:
+    """'PT1H2M3S' → 3723 seconds. Returns None if unparseable."""
+    m = _ISO8601_DUR.fullmatch(dur or "")
+    if not m:
+        return None
+    return (
+        int(m.group("h") or 0) * 3600
+        + int(m.group("m") or 0) * 60
+        + int(m.group("s") or 0)
+    )
+
+
+def annotate_durations(items: list[dict]) -> None:
+    """Attach duration_seconds to YouTube items via one videos.list call
+    per 50 ids (1 quota unit each).
+
+    Lets the pipeline skip shorts BEFORE spending a transcript fetch —
+    previously ~130 videos/month were fetched and then discarded as
+    skipped_short. Non-fatal on error: items just stay un-annotated and
+    the old post-fetch duration check still applies.
+    """
+    yt_items = [i for i in items if i.get("transcript_status") == "pending"]
+    if not yt_items:
+        return
+    yt = get_youtube()
+    for chunk_start in range(0, len(yt_items), 50):
+        chunk = yt_items[chunk_start:chunk_start + 50]
+        try:
+            res = yt.videos().list(
+                part="contentDetails",
+                id=",".join(i["external_id"] for i in chunk),
+                maxResults=50,
+            ).execute()
+        except Exception as e:
+            print(f"  ⚠ Duration lookup failed (non-fatal): {e}")
+            continue
+        durations = {
+            v["id"]: _parse_iso8601_duration(v.get("contentDetails", {}).get("duration"))
+            for v in res.get("items", [])
+        }
+        for item in chunk:
+            d = durations.get(item["external_id"])
+            if d is not None:
+                item["duration_seconds"] = d
+
+
 def fetch_google_news_rss(source: dict, cutoff: datetime) -> list[dict]:
     """Fetch articles from Google News RSS."""
     rss_url = source.get("rss_url")
@@ -296,5 +347,8 @@ def fetch_all_sources() -> tuple[list[dict], dict]:
         except Exception as e:
             print(f"  ✗ Error: {e}")
             db.mark_source_failure(source["id"])
+
+    # One batched duration lookup for all new YouTube items (1 unit / 50 ids)
+    annotate_durations(new_items)
 
     return new_items, stats

@@ -57,6 +57,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
     new Set(CATEGORIES.map(c => c.key))  // show all until we know
   )
   const [lastPipelineRun, setLastPipelineRun] = useState<Date | null>(null)
+  const [pipelineStruggling, setPipelineStruggling] = useState(false)
   const dwellTimers = useRef<Map<string, number>>(new Map())
 
   // Record last-visit timestamp on mount
@@ -124,15 +125,23 @@ export default function ReaderClient({ userId }: { userId: string }) {
       setActiveCategoryKeys(new Set(results.filter(r => r.hasContent).map(r => r.key)))
     })
 
-    // Last pipeline run timestamp — shown in header as a health indicator
+    // Pipeline health — last completed run of ANY status (a success-only
+    // query hides outages: the dot stayed green while runs were failing).
+    // "Struggling" = the last 3 runs found videos but produced 0 stories.
     supabase
       .from('pipeline_runs')
-      .select('finished_at')
-      .eq('status', 'success')
+      .select('finished_at, status, stories_created, videos_found')
+      .not('finished_at', 'is', null)
       .order('finished_at', { ascending: false })
-      .limit(1)
+      .limit(3)
       .then(({ data }) => {
-        if (data?.[0]?.finished_at) setLastPipelineRun(new Date(data[0].finished_at))
+        if (!data || data.length === 0) return
+        setLastPipelineRun(new Date(data[0].finished_at))
+        const struggling =
+          data.length >= 3 &&
+          data.every(r => (r.stories_created ?? 0) === 0) &&
+          data.some(r => (r.videos_found ?? 0) > 0)
+        setPipelineStruggling(struggling)
       })
   }, [])
 
@@ -462,20 +471,35 @@ export default function ReaderClient({ userId }: { userId: string }) {
             <div>
               <h1 className="text-sm font-bold text-white leading-none tracking-tight">News Brief</h1>
               {lastPipelineRun ? (
-                <p className="text-xs text-slate-400 mt-1 inline-flex items-center gap-1">
-                  <span className={`w-1.5 h-1.5 rounded-full ${
-                    Date.now() - lastPipelineRun.getTime() < 8 * 3600 * 1000
-                      ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]'
-                      : 'bg-amber-400'
-                  }`} />
-                  {(() => {
-                    const mins = Math.round((Date.now() - lastPipelineRun.getTime()) / 60000)
-                    if (mins < 60) return `${mins}m ago`
-                    const hrs = Math.round(mins / 60)
-                    if (hrs < 24) return `${hrs}h ago`
-                    return lastPipelineRun.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
-                  })()}
-                </p>
+                (() => {
+                  const ageMs = Date.now() - lastPipelineRun.getTime()
+                  const mins = Math.round(ageMs / 60000)
+                  const ago =
+                    mins < 60 ? `${mins}m ago`
+                    : mins < 24 * 60 ? `${Math.round(mins / 60)}h ago`
+                    : lastPipelineRun.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+                  // Three explicit states so silence is never ambiguous:
+                  // rose  = pipeline down (>24h) or finding-but-failing
+                  // amber = stale (8–24h since last check)
+                  // green = checked recently
+                  const down = ageMs > 24 * 3600 * 1000
+                  const stale = ageMs > 8 * 3600 * 1000
+                  const dot = down || pipelineStruggling
+                    ? 'bg-rose-400 shadow-[0_0_6px_rgba(251,113,133,0.6)]'
+                    : stale ? 'bg-amber-400' : 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]'
+                  const label = pipelineStruggling
+                    ? `Sources failing · last check ${ago}`
+                    : down ? `Pipeline down · last check ${ago}`
+                    : `Checked ${ago}`
+                  return (
+                    <p className={`text-xs mt-1 inline-flex items-center gap-1 ${
+                      down || pipelineStruggling ? 'text-rose-300' : 'text-slate-400'
+                    }`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${dot}`} />
+                      {label}
+                    </p>
+                  )
+                })()
               ) : lastUpdated && activeTab !== 'topics' ? (
                 <p className="text-xs text-slate-400 mt-1">
                   Updated {lastUpdated.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
