@@ -285,7 +285,11 @@ def _get_transcript_apify(video_id: str) -> tuple[str, list] | None:
     )
     payload = {
         "startUrls":      [{"url": f"https://www.youtube.com/watch?v={video_id}"}],
-        "languages":      ["en"],
+        # Bare ISO 639-1 codes only (actor rejects en-GB/en-US variants).
+        # First match wins, so English channels are unaffected by the "hi"
+        # fallback — it exists for Hindi-language sources (Career 247), whose
+        # transcripts Gemini summarises into English regardless.
+        "languages":      ["en", "hi"],
         "subType":        "both",          # manual captions preferred, auto OK
         "outputFormats":  ["json", "text"],
         "enableAiFallback": False,         # AI transcription handled by our own
@@ -324,12 +328,15 @@ def _get_transcript_apify(video_id: str) -> tuple[str, list] | None:
     item = items[0]
     error_code = item.get("error_code")
     if error_code:
-        if error_code in ("NO_CAPTIONS_AVAILABLE", "LANGUAGE_NOT_FOUND"):
-            # Professional scraper confirmed: no usable English captions.
+        if error_code == "NO_CAPTIONS_AVAILABLE":
+            # Professional scraper confirmed: video has no caption tracks.
             # (Fresh videos may grow auto-captions later — the audio fallback
             # for <48h videos catches those before we mark permanent.)
             raise PermanentNoTranscript(f"Apify: {error_code}")
-        print(f"    ⚠ Apify error_code={error_code} — treating as retryable")
+        # LANGUAGE_NOT_FOUND = captions exist but not in our requested
+        # languages — yt-dlp's android path can often grab YouTube's
+        # auto-TRANSLATED English track, so fall through rather than kill.
+        print(f"    ⚠ Apify error_code={error_code} — falling through to local fetchers")
         return None
 
     segs_json = item.get("transcript_json") or []
