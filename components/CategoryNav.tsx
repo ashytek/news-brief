@@ -54,7 +54,7 @@ function NavButton({ id, label, icon, isActive, color, badge, onClick }: {
   return (
     <button
       onClick={onClick}
-      className={`relative flex flex-col items-center justify-center gap-0.5 flex-1 min-w-[60px] py-2 px-1 transition-all`}
+      className={`relative flex flex-col items-center justify-center gap-0.5 flex-1 min-w-[60px] py-2 px-1 transition-all active:scale-90`}
     >
       <div className={`flex flex-col items-center justify-center gap-0.5 px-3 py-1.5 rounded-xl transition-all ${
         isActive ? `${palette.bg} ${palette.text} ring-1 ${palette.ring}` : 'text-slate-400 hover:text-slate-200'

@@ -78,3 +78,13 @@ body {
 .animate-fade-in-up {
   animation: fade-in-up 320ms cubic-bezier(0.4, 0, 0.2, 1);
 }
+
+/* ── Mobile ergonomics ─────────────────────────────────────────── */
+/* Kill the grey Android tap flash — we provide our own active: states */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+/* Prevent browser pull-to-reload fighting the app's own pull-to-refresh */
+body {
+  overscroll-behavior-y: contain;
+}

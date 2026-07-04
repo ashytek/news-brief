@@ -58,6 +58,10 @@ export default function ReaderClient({ userId }: { userId: string }) {
   )
   const [lastPipelineRun, setLastPipelineRun] = useState<Date | null>(null)
   const [pipelineStruggling, setPipelineStruggling] = useState(false)
+  const [isOffline, setIsOffline] = useState(false)
+  const [showScrollTop, setShowScrollTop] = useState(false)
+  const pullStartY = useRef<number | null>(null)
+  const [pullRefreshing, setPullRefreshing] = useState(false)
   const dwellTimers = useRef<Map<string, number>>(new Map())
 
   // Record last-visit timestamp on mount
@@ -143,6 +147,22 @@ export default function ReaderClient({ userId }: { userId: string }) {
           data.some(r => (r.videos_found ?? 0) > 0)
         setPipelineStruggling(struggling)
       })
+  }, [])
+
+  // Offline awareness + scroll-to-top visibility (mobile ergonomics)
+  useEffect(() => {
+    setIsOffline(!navigator.onLine)
+    const goOffline = () => setIsOffline(true)
+    const goOnline = () => setIsOffline(false)
+    const onScroll = () => setShowScrollTop(window.scrollY > 600)
+    window.addEventListener('offline', goOffline)
+    window.addEventListener('online', goOnline)
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      window.removeEventListener('offline', goOffline)
+      window.removeEventListener('online', goOnline)
+      window.removeEventListener('scroll', onScroll)
+    }
   }, [])
 
   // Load read item IDs once on mount — independent of active tab
@@ -265,6 +285,30 @@ export default function ReaderClient({ userId }: { userId: string }) {
   useEffect(() => {
     loadContent()
   }, [activeTab, loadContent])
+
+  // Pull-to-refresh: drag down ≥90px from the very top of the feed.
+  // Window-level listeners so it works regardless of which card is under
+  // the thumb; passive handlers keep scrolling at 60fps.
+  useEffect(() => {
+    const onTouchStart = (e: TouchEvent) => {
+      pullStartY.current = window.scrollY <= 0 ? e.touches[0].clientY : null
+    }
+    const onTouchEnd = (e: TouchEvent) => {
+      if (pullStartY.current == null) return
+      const dy = e.changedTouches[0].clientY - pullStartY.current
+      pullStartY.current = null
+      if (dy > 90 && window.scrollY <= 0 && !loading && !pullRefreshing) {
+        setPullRefreshing(true)
+        Promise.all([loadContent(), loadReadIds()]).finally(() => setPullRefreshing(false))
+      }
+    }
+    window.addEventListener('touchstart', onTouchStart, { passive: true })
+    window.addEventListener('touchend', onTouchEnd, { passive: true })
+    return () => {
+      window.removeEventListener('touchstart', onTouchStart)
+      window.removeEventListener('touchend', onTouchEnd)
+    }
+  }, [loadContent, loadReadIds, loading, pullRefreshing])
 
   const markRead = useCallback(async (storyId?: string, clusterId?: string) => {
     if (!storyId && !clusterId) return
@@ -394,6 +438,12 @@ export default function ReaderClient({ userId }: { userId: string }) {
     [clusters, soloStories, isClusterRead, readIds]
   )
 
+  // One-tap "clear the deck" for the current category view
+  const markAllVisibleRead = useCallback(() => {
+    visibleClusters.filter(c => !isClusterRead(c)).forEach(c => markRead(undefined, c.id))
+    visibleSolos.filter(s => !readIds.has(s.id)).forEach(s => markRead(s.id))
+  }, [visibleClusters, visibleSolos, isClusterRead, readIds, markRead])
+
   // Today tab — filter to active sources before passing to TodayFeed
   const activeTodayClusters = useMemo(
     () => todayClusters.filter(c => (c.stories ?? []).some(s => isActiveSource(s.source_id))),
@@ -512,13 +562,42 @@ export default function ReaderClient({ userId }: { userId: string }) {
             {activeTab !== 'topics' && activeTab !== 'today' && (
               <button
                 onClick={() => setShowUnreadOnly(v => !v)}
-                className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
+                className={`flex items-center gap-1.5 px-3 py-2 min-h-[44px] md:min-h-0 rounded-lg text-xs font-semibold transition-all active:scale-95 ${
                   showUnreadOnly
                     ? 'bg-violet-500/25 text-violet-200 ring-1 ring-violet-500/40'
                     : 'bg-slate-800/60 text-slate-300 ring-1 ring-slate-700/60 hover:bg-slate-800 hover:text-white'
                 }`}
               >
                 {showUnreadOnly ? `Unread${unreadCount > 0 ? ` · ${unreadCount}` : ''}` : 'All'}
+              </button>
+            )}
+
+            {activeTab !== 'topics' && activeTab !== 'today' && unreadCount > 0 && (
+              <button
+                onClick={markAllVisibleRead}
+                className="w-11 h-11 md:w-9 md:h-9 rounded-lg bg-slate-800/60 hover:bg-emerald-500/20 ring-1 ring-slate-700/60 hover:ring-emerald-500/40 flex items-center justify-center transition-all active:scale-95 group/mar"
+                title="Mark everything here as read"
+                aria-label="Mark all as read"
+              >
+                <svg className="w-4 h-4 text-slate-300 group-hover/mar:text-emerald-300" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M2 13l4 4L14 9m-3 4l4 4L23 7" />
+                </svg>
+              </button>
+            )}
+
+            {activeTab !== 'topics' && (
+              <button
+                onClick={() => { if (!loading) { loadContent(); loadReadIds() } }}
+                className="w-11 h-11 md:w-9 md:h-9 rounded-lg bg-slate-800/60 hover:bg-slate-800 ring-1 ring-slate-700/60 hover:ring-slate-600 flex items-center justify-center transition-all active:scale-95"
+                title="Refresh"
+                aria-label="Refresh feed"
+              >
+                <svg
+                  className={`w-4 h-4 text-slate-300 ${loading || pullRefreshing ? 'animate-spin' : ''}`}
+                  aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
               </button>
             )}
 
@@ -575,6 +654,31 @@ export default function ReaderClient({ userId }: { userId: string }) {
       </header>
 
       {/* Feed */}
+      {/* Offline banner — stories already on screen stay readable */}
+      {isOffline && (
+        <div className="sticky top-0 z-40 bg-amber-500/15 backdrop-blur-md border-b border-amber-500/30 px-4 py-2 text-center">
+          <p className="text-xs font-semibold text-amber-200 inline-flex items-center gap-1.5">
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 5.636a9 9 0 010 12.728m-12.728 0a9 9 0 010-12.728m2.828 9.9a5 5 0 010-7.072m7.072 0a5 5 0 010 7.072M12 12h.01" />
+            </svg>
+            Offline — showing last loaded stories
+          </p>
+        </div>
+      )}
+
+      {/* Scroll-to-top FAB — sits above the bottom nav, safe-area aware */}
+      {showScrollTop && (
+        <button
+          onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+          className="fixed bottom-24 md:bottom-8 right-4 z-40 w-12 h-12 rounded-full bg-slate-800/90 backdrop-blur-md ring-1 ring-slate-600/80 shadow-[0_4px_20px_rgba(0,0,0,0.5)] flex items-center justify-center text-slate-200 hover:bg-slate-700 active:scale-90 transition-all animate-fade-in-up"
+          aria-label="Scroll to top"
+        >
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+          </svg>
+        </button>
+      )}
+
       <main className="max-w-2xl mx-auto px-4 py-4 space-y-3 pb-24 md:pb-6">
         {/* Today tab */}
         {activeTab === 'today' && (

@@ -60,6 +60,18 @@ export function ClusteredCard({ cluster, isRead, readStoryIds, onRead, onEngagem
   const primaryHeadline = primaryStory?.headline ?? null
   const hasFreshContent = freshUnread != null && sortedByDate.length > 1
 
+  // Native Android/iOS share sheet; clipboard fallback on desktop
+  const handleShare = () => {
+    const shareUrl = primaryStory?.videos?.url ?? window.location.href
+    const title = primaryHeadline ?? 'News Brief story'
+    if (navigator.share) {
+      navigator.share({ title, text: title, url: shareUrl }).catch(() => {})
+    } else {
+      navigator.clipboard?.writeText(`${title}\n${shareUrl}`).catch(() => {})
+    }
+    onEngagement('share')
+  }
+
   const accentBar = CATEGORY_ACCENT_BAR[cluster.category]
   const glow = CATEGORY_GLOW_CLASS[cluster.category]
   const bulletColor = CATEGORY_BULLET_COLOR[cluster.category]
@@ -222,6 +234,7 @@ export function ClusteredCard({ cluster, isRead, readStoryIds, onRead, onEngagem
           onEngagement={onEngagement}
           onMuteTopic={onMuteTopic}
           canMute={!!onMuteTopic && clusterTopics.length > 0}
+          onShare={handleShare}
         />
       </div>
     </article>

@@ -8,9 +8,11 @@ interface Props {
   onEngagement: (signal: string) => void
   onMuteTopic?: () => void
   canMute?: boolean
+  /** Native share (Android share sheet via navigator.share). */
+  onShare?: () => void
 }
 
-export function EngagementBar({ isRead, onRead, onEngagement, onMuteTopic, canMute }: Props) {
+export function EngagementBar({ isRead, onRead, onEngagement, onMuteTopic, canMute, onShare }: Props) {
   const [liked, setLiked] = useState(false)
   const [disliked, setDisliked] = useState(false)
   const [muted, setMuted] = useState(false)
@@ -43,7 +45,7 @@ export function EngagementBar({ isRead, onRead, onEngagement, onMuteTopic, canMu
         className={`inline-flex items-center justify-center gap-1.5 px-3 min-h-[40px] rounded-lg text-xs font-semibold transition-all ring-1 ${
           liked
             ? 'bg-emerald-500/20 text-emerald-200 ring-emerald-500/40 shadow-[0_0_12px_rgba(52,211,153,0.2)]'
-            : 'bg-slate-800/60 text-slate-300 ring-slate-700/60 hover:bg-slate-800 hover:text-white hover:ring-slate-600'
+            : 'bg-slate-800/60 text-slate-300 ring-slate-700/60 hover:bg-slate-800 hover:text-white hover:ring-slate-600 active:scale-95'
         }`}
       >
         <svg className="w-3.5 h-3.5" fill={liked ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -59,7 +61,7 @@ export function EngagementBar({ isRead, onRead, onEngagement, onMuteTopic, canMu
         className={`inline-flex items-center justify-center gap-1.5 px-3 min-h-[40px] rounded-lg text-xs font-semibold transition-all ring-1 ${
           disliked
             ? 'bg-rose-500/20 text-rose-200 ring-rose-500/40'
-            : 'bg-slate-800/60 text-slate-300 ring-slate-700/60 hover:bg-slate-800 hover:text-white hover:ring-slate-600'
+            : 'bg-slate-800/60 text-slate-300 ring-slate-700/60 hover:bg-slate-800 hover:text-white hover:ring-slate-600 active:scale-95'
         }`}
       >
         <svg className="w-3.5 h-3.5" fill={disliked ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -77,13 +79,27 @@ export function EngagementBar({ isRead, onRead, onEngagement, onMuteTopic, canMu
           className={`inline-flex items-center justify-center gap-1.5 px-3 min-h-[40px] rounded-lg text-xs font-semibold transition-all ring-1 ${
             muted
               ? 'bg-slate-800/40 text-slate-500 ring-slate-800/60'
-              : 'bg-slate-800/60 text-slate-300 ring-slate-700/60 hover:bg-slate-800 hover:text-white hover:ring-slate-600'
+              : 'bg-slate-800/60 text-slate-300 ring-slate-700/60 hover:bg-slate-800 hover:text-white hover:ring-slate-600 active:scale-95'
           }`}
         >
           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
           </svg>
           <span className="hidden sm:inline">{muted ? 'Muted' : 'Mute'}</span>
+        </button>
+      )}
+
+      {onShare && (
+        <button
+          onClick={onShare}
+          aria-label="Share story"
+          title="Share"
+          className="inline-flex items-center justify-center gap-1.5 px-3 min-h-[40px] rounded-lg text-xs font-semibold transition-all ring-1 bg-slate-800/60 text-slate-300 ring-slate-700/60 hover:bg-slate-800 hover:text-white hover:ring-slate-600 active:scale-95"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+          </svg>
+          <span className="hidden sm:inline">Share</span>
         </button>
       )}
 

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Source } from '@/lib/types'
 import type { StoryWithRelations } from '@/lib/types'
 import { TsLink } from './TsLink'
@@ -45,10 +45,27 @@ function formatRelativeDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
 }
 
+/** Bullets shown before the "Show all" expander kicks in. Long prophetic
+ * broadcasts run 15-25 bullets — collapsing keeps mobile cards scannable. */
+const BULLET_PREVIEW_COUNT = 5
+
 export function SoloCard({ story, source, isRead, onRead, onEngagement, onDwellStart, onDwellEnd, onMuteTopic }: Props) {
   const video = story.videos
   const videoUrl = video?.url ?? null
   const thumbnail = video?.thumbnail_url ?? null
+
+  const [showAllBullets, setShowAllBullets] = useState(false)
+
+  // Native Android/iOS share sheet; clipboard fallback on desktop
+  const handleShare = useCallback(() => {
+    const shareUrl = videoUrl ?? window.location.href
+    if (navigator.share) {
+      navigator.share({ title: story.headline, text: story.headline, url: shareUrl }).catch(() => {})
+    } else {
+      navigator.clipboard?.writeText(`${story.headline}\n${shareUrl}`).catch(() => {})
+    }
+    onEngagement('share')
+  }, [videoUrl, story.headline, onEngagement])
 
   const isFresh = video?.published_at
     ? Date.now() - new Date(video.published_at).getTime() < SIXTY_MINUTES
@@ -163,29 +180,56 @@ export function SoloCard({ story, source, isRead, onRead, onEngagement, onDwellS
           {story.summary}
         </p>
 
-        {/* Bullet points with category-coloured markers */}
-        {story.bullets && story.bullets.length > 0 && (
-          <ul className="space-y-2 mb-1">
-            {story.bullets.map((bullet, i) => (
-              <li key={i} className="flex items-start gap-2.5 text-sm">
-                <span
-                  className={`mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${bulletColor} ${isRead ? 'opacity-40' : ''}`}
-                  aria-hidden="true"
-                />
-                <span className={`leading-relaxed ${isRead ? 'text-slate-500' : 'text-slate-200'}`}>
-                  {bullet.text}
-                  {bullet.timestamp_seconds !== null && videoUrl && (
-                    <>{' '}
-                      <TsLink videoUrl={videoUrl} timestampSeconds={bullet.timestamp_seconds}>
-                        [{formatTime(bullet.timestamp_seconds)}]
-                      </TsLink>
-                    </>
-                  )}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
+        {/* Bullet points with category-coloured markers.
+            Collapsed past BULLET_PREVIEW_COUNT — prophetic stories carry
+            15-25 bullets and were producing endless cards on mobile. */}
+        {story.bullets && story.bullets.length > 0 && (() => {
+          const needsCollapse = story.bullets.length > BULLET_PREVIEW_COUNT + 1
+          const visibleBullets = needsCollapse && !showAllBullets
+            ? story.bullets.slice(0, BULLET_PREVIEW_COUNT)
+            : story.bullets
+          return (
+            <>
+              <ul className="space-y-2 mb-1">
+                {visibleBullets.map((bullet, i) => (
+                  <li key={i} className="flex items-start gap-2.5 text-sm">
+                    <span
+                      className={`mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${bulletColor} ${isRead ? 'opacity-40' : ''}`}
+                      aria-hidden="true"
+                    />
+                    <span className={`leading-relaxed ${isRead ? 'text-slate-500' : 'text-slate-200'}`}>
+                      {bullet.text}
+                      {bullet.timestamp_seconds !== null && videoUrl && (
+                        <>{' '}
+                          <TsLink videoUrl={videoUrl} timestampSeconds={bullet.timestamp_seconds}>
+                            [{formatTime(bullet.timestamp_seconds)}]
+                          </TsLink>
+                        </>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              {needsCollapse && (
+                <button
+                  onClick={() => setShowAllBullets(v => !v)}
+                  className="w-full min-h-[44px] mt-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-slate-400 hover:text-slate-200 active:scale-[0.98] rounded-lg bg-slate-800/40 ring-1 ring-slate-800 transition-all"
+                  aria-expanded={showAllBullets}
+                >
+                  <svg
+                    className={`w-3.5 h-3.5 transition-transform ${showAllBullets ? 'rotate-180' : ''}`}
+                    fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                  </svg>
+                  {showAllBullets
+                    ? 'Show fewer'
+                    : `Show all ${story.bullets.length} bullets`}
+                </button>
+              )}
+            </>
+          )
+        })()}
 
         <EngagementBar
           isRead={isRead}
@@ -193,6 +237,7 @@ export function SoloCard({ story, source, isRead, onRead, onEngagement, onDwellS
           onEngagement={onEngagement}
           onMuteTopic={onMuteTopic}
           canMute={!!onMuteTopic && (story.matched_topics?.length ?? 0) > 0}
+          onShare={handleShare}
         />
       </div>
     </article>
