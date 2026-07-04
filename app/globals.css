@@ -88,15 +88,20 @@ body {
 * {
   -webkit-tap-highlight-color: transparent;
 }
-/* Prevent browser pull-to-reload fighting the app's own pull-to-refresh.
-   overflow-x: hidden is a structural safety net against any single element
-   (now or in future) forcing the whole page to pan sideways — the specific
-   cause of that was the header's icon row not fitting narrow Android
-   viewports (fixed below), but this guards against the whole failure class. */
-html, body {
+/* Horizontal clamp + pull-to-reload suppression — on html ONLY.
+   html's overflow/overscroll propagate to the viewport, so this clamps
+   sideways panning and stops browser pull-to-reload at the root scroller.
+
+   ⚠ Do NOT set overflow-x: hidden on BODY. Spec: if one overflow axis is
+   not `visible`, the other computes visible→auto — body silently becomes a
+   scroll container. Body's height grows with content, so body itself has
+   nothing to scroll; on TOUCH the gesture latches onto body (nearest
+   scrollable ancestor), and if body also has overscroll-behavior contain,
+   chaining to the real page scroller is forbidden → the page is completely
+   unscrollable by touch while wheel/programmatic scroll still works.
+   That exact combination shipped once and froze the app on Android. */
+html {
   overflow-x: hidden;
-}
-body {
   overscroll-behavior-y: contain;
 }
 
