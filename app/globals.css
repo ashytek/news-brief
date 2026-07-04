@@ -27,7 +27,11 @@ body {
     radial-gradient(ellipse 80% 60% at 100% 0%, rgba(139, 92, 246, 0.08), transparent 60%),
     radial-gradient(ellipse 80% 60% at 0% 100%, rgba(59, 130, 246, 0.06), transparent 60%),
     var(--background);
-  background-attachment: fixed;
+  /* NOTE: no background-attachment: fixed — on mobile Chrome/WebView it forces
+     a full repaint of this background on nearly every scroll frame, which was
+     the single biggest source of scroll jank. Scrolling with the document is
+     visually indistinguishable here since the tint is a single-digit-opacity
+     ambient glow, not a focal design element. */
   color: var(--foreground);
 }
 
@@ -84,7 +88,23 @@ body {
 * {
   -webkit-tap-highlight-color: transparent;
 }
-/* Prevent browser pull-to-reload fighting the app's own pull-to-refresh */
+/* Prevent browser pull-to-reload fighting the app's own pull-to-refresh.
+   overflow-x: hidden is a structural safety net against any single element
+   (now or in future) forcing the whole page to pan sideways — the specific
+   cause of that was the header's icon row not fitting narrow Android
+   viewports (fixed below), but this guards against the whole failure class. */
+html, body {
+  overflow-x: hidden;
+}
 body {
   overscroll-behavior-y: contain;
+}
+
+/* Skip layout/paint for off-screen cards in long feeds — the browser only
+   does full work for cards near the viewport. contain-intrinsic-size is a
+   rough average card height so the scrollbar doesn't jump as cards resolve
+   their real size on approach. */
+.card-cv {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 480px;
 }

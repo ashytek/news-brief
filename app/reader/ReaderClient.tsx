@@ -62,6 +62,8 @@ export default function ReaderClient({ userId }: { userId: string }) {
   const [showScrollTop, setShowScrollTop] = useState(false)
   const pullStartY = useRef<number | null>(null)
   const [pullRefreshing, setPullRefreshing] = useState(false)
+  const [showMoreMenu, setShowMoreMenu] = useState(false)
+  const moreMenuRef = useRef<HTMLDivElement>(null)
   const dwellTimers = useRef<Map<string, number>>(new Map())
 
   // Record last-visit timestamp on mount
@@ -148,6 +150,23 @@ export default function ReaderClient({ userId }: { userId: string }) {
         setPipelineStruggling(struggling)
       })
   }, [])
+
+  // Close the header "More" menu on an outside tap. Deliberately NOT using a
+  // fixed inset-0 catcher element here: the header has backdrop-blur-md, and
+  // backdrop-filter on an ancestor creates a new containing block for
+  // position:fixed descendants (same rule as `filter`/`transform`) — a fixed
+  // catcher nested inside it would only cover the header's own bounds, not
+  // the full screen, so taps on the feed below wouldn't close the menu.
+  useEffect(() => {
+    if (!showMoreMenu) return
+    const onPointerDown = (e: PointerEvent) => {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
+        setShowMoreMenu(false)
+      }
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => document.removeEventListener('pointerdown', onPointerDown)
+  }, [showMoreMenu])
 
   // Offline awareness + scroll-to-top visibility (mobile ergonomics)
   useEffect(() => {
@@ -558,11 +577,17 @@ export default function ReaderClient({ userId }: { userId: string }) {
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5">
+          {/* overflow-x-auto: final defensive layer. The "More" menu below
+              already keeps this row well within mobile widths in practice,
+              but this guarantees that even in an edge case (very narrow
+              device, browser zoom, extra-long "Unread · N" count) the row
+              scrolls internally instead of ever forcing the page to pan
+              sideways — same fix pattern as CategoryNav's bottom bar. */}
+          <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide">
             {activeTab !== 'topics' && activeTab !== 'today' && (
               <button
                 onClick={() => setShowUnreadOnly(v => !v)}
-                className={`flex items-center gap-1.5 px-3 py-2 min-h-[44px] md:min-h-0 rounded-lg text-xs font-semibold transition-all active:scale-95 ${
+                className={`flex items-center gap-1.5 px-3 py-2 min-h-[44px] md:min-h-0 rounded-lg text-xs font-semibold transition-all active:scale-95 shrink-0 ${
                   showUnreadOnly
                     ? 'bg-violet-500/25 text-violet-200 ring-1 ring-violet-500/40'
                     : 'bg-slate-800/60 text-slate-300 ring-1 ring-slate-700/60 hover:bg-slate-800 hover:text-white'
@@ -575,7 +600,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
             {activeTab !== 'topics' && activeTab !== 'today' && unreadCount > 0 && (
               <button
                 onClick={markAllVisibleRead}
-                className="w-11 h-11 md:w-9 md:h-9 rounded-lg bg-slate-800/60 hover:bg-emerald-500/20 ring-1 ring-slate-700/60 hover:ring-emerald-500/40 flex items-center justify-center transition-all active:scale-95 group/mar"
+                className="w-11 h-11 md:w-9 md:h-9 shrink-0 rounded-lg bg-slate-800/60 hover:bg-emerald-500/20 ring-1 ring-slate-700/60 hover:ring-emerald-500/40 flex items-center justify-center transition-all active:scale-95 group/mar"
                 title="Mark everything here as read"
                 aria-label="Mark all as read"
               >
@@ -588,7 +613,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
             {activeTab !== 'topics' && (
               <button
                 onClick={() => { if (!loading) { loadContent(); loadReadIds() } }}
-                className="w-11 h-11 md:w-9 md:h-9 rounded-lg bg-slate-800/60 hover:bg-slate-800 ring-1 ring-slate-700/60 hover:ring-slate-600 flex items-center justify-center transition-all active:scale-95"
+                className="w-11 h-11 md:w-9 md:h-9 shrink-0 rounded-lg bg-slate-800/60 hover:bg-slate-800 ring-1 ring-slate-700/60 hover:ring-slate-600 flex items-center justify-center transition-all active:scale-95"
                 title="Refresh"
                 aria-label="Refresh feed"
               >
@@ -603,7 +628,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
 
             <a
               href="/search"
-              className="w-11 h-11 md:w-9 md:h-9 rounded-lg bg-slate-800/60 hover:bg-slate-800 ring-1 ring-slate-700/60 hover:ring-slate-600 flex items-center justify-center transition-all"
+              className="w-11 h-11 md:w-9 md:h-9 shrink-0 rounded-lg bg-slate-800/60 hover:bg-slate-800 ring-1 ring-slate-700/60 hover:ring-slate-600 flex items-center justify-center transition-all"
               title="Search"
             >
               <svg className="w-4 h-4 text-slate-300" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -611,9 +636,15 @@ export default function ReaderClient({ userId }: { userId: string }) {
               </svg>
             </a>
 
+            {/* Archive / Sources / Sign out — plenty of room on desktop, so
+                they stay as individual icons there. On mobile they're the
+                least-frequently-used actions in this row, so they're folded
+                into one "More" button below — that's what actually fixed the
+                header overflowing past the screen edge on narrow Android
+                widths (was 7 fixed-width controls competing for ~330px). */}
             <a
               href="/archive"
-              className="w-11 h-11 md:w-9 md:h-9 rounded-lg bg-slate-800/60 hover:bg-slate-800 ring-1 ring-slate-700/60 hover:ring-slate-600 flex items-center justify-center transition-all"
+              className="hidden md:flex w-9 h-9 rounded-lg bg-slate-800/60 hover:bg-slate-800 ring-1 ring-slate-700/60 hover:ring-slate-600 items-center justify-center transition-all"
               title="Archive"
             >
               <svg className="w-4 h-4 text-slate-300" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -623,7 +654,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
 
             <a
               href="/sources"
-              className="w-11 h-11 md:w-9 md:h-9 rounded-lg bg-slate-800/60 hover:bg-slate-800 ring-1 ring-slate-700/60 hover:ring-slate-600 flex items-center justify-center transition-all"
+              className="hidden md:flex w-9 h-9 rounded-lg bg-slate-800/60 hover:bg-slate-800 ring-1 ring-slate-700/60 hover:ring-slate-600 items-center justify-center transition-all"
               title="Sources"
             >
               <svg className="w-4 h-4 text-slate-300" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -633,13 +664,62 @@ export default function ReaderClient({ userId }: { userId: string }) {
 
             <button
               onClick={handleSignOut}
-              className="w-11 h-11 md:w-9 md:h-9 rounded-lg bg-slate-800/60 hover:bg-slate-800 ring-1 ring-slate-700/60 hover:ring-slate-600 flex items-center justify-center transition-all"
+              className="hidden md:flex w-9 h-9 rounded-lg bg-slate-800/60 hover:bg-slate-800 ring-1 ring-slate-700/60 hover:ring-slate-600 items-center justify-center transition-all"
               title="Sign out"
             >
               <svg className="w-4 h-4 text-slate-300" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
               </svg>
             </button>
+
+            {/* Mobile-only: Archive/Sources/Sign out collapse behind here */}
+            <div ref={moreMenuRef} className="relative md:hidden shrink-0">
+              <button
+                onClick={() => setShowMoreMenu(v => !v)}
+                className="w-11 h-11 rounded-lg bg-slate-800/60 hover:bg-slate-800 ring-1 ring-slate-700/60 hover:ring-slate-600 flex items-center justify-center transition-all active:scale-95"
+                title="More"
+                aria-label="More options"
+                aria-expanded={showMoreMenu}
+              >
+                <svg className="w-4 h-4 text-slate-300" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v.01M12 12v.01M12 18v.01" />
+                </svg>
+              </button>
+
+              {showMoreMenu && (
+                  <div className="absolute right-0 top-full mt-2 z-50 w-44 rounded-xl bg-slate-900 ring-1 ring-slate-700 shadow-[0_8px_30px_rgba(0,0,0,0.5)] overflow-hidden animate-fade-in-up">
+                    <a
+                      href="/archive"
+                      className="flex items-center gap-2.5 px-4 min-h-[44px] text-sm text-slate-200 hover:bg-slate-800 active:bg-slate-800"
+                      onClick={() => setShowMoreMenu(false)}
+                    >
+                      <svg className="w-4 h-4 text-slate-400" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                      </svg>
+                      Archive
+                    </a>
+                    <a
+                      href="/sources"
+                      className="flex items-center gap-2.5 px-4 min-h-[44px] text-sm text-slate-200 hover:bg-slate-800 active:bg-slate-800"
+                      onClick={() => setShowMoreMenu(false)}
+                    >
+                      <svg className="w-4 h-4 text-slate-400" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h7" />
+                      </svg>
+                      Sources
+                    </a>
+                    <button
+                      onClick={() => { setShowMoreMenu(false); handleSignOut() }}
+                      className="w-full flex items-center gap-2.5 px-4 min-h-[44px] text-sm text-slate-200 hover:bg-slate-800 active:bg-slate-800 border-t border-slate-800"
+                    >
+                      <svg className="w-4 h-4 text-slate-400" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                      </svg>
+                      Sign out
+                    </button>
+                  </div>
+              )}
+            </div>
           </div>
         </div>
 

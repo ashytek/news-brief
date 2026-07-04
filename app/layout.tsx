@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -16,6 +16,18 @@ export const metadata: Metadata = {
   title: "News Brief",
   description: "Your adaptive intelligence digest",
   manifest: "/manifest.json",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  // Matches manifest.json's theme_color — tints the Android status bar /
+  // recent-apps card instead of leaving it default white.
+  themeColor: "#030712",
+  // Lets env(safe-area-inset-*) resolve to real values on notch/gesture-nav
+  // devices instead of always reading 0 — needed for the bottom nav and FAB
+  // to actually clear the gesture bar rather than sit under it.
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

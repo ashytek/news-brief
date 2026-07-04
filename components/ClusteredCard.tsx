@@ -78,10 +78,10 @@ export function ClusteredCard({ cluster, isRead, readStoryIds, onRead, onEngagem
 
   return (
     <article
-      className={`group relative rounded-2xl overflow-hidden transition-all card-rise ${glow} ${
+      className={`group relative rounded-2xl overflow-hidden transition-all card-rise card-cv ${glow} ${
         isRead
           ? 'bg-slate-900/40 ring-1 ring-slate-800/40'
-          : 'bg-slate-900/80 ring-1 ring-slate-800 backdrop-blur-sm'
+          : 'bg-slate-900/80 ring-1 ring-slate-800'
       }`}
     >
       {/* Wider accent bar for clusters — signals "richer story" */}

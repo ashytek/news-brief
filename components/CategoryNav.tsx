@@ -54,7 +54,7 @@ function NavButton({ id, label, icon, isActive, color, badge, onClick }: {
   return (
     <button
       onClick={onClick}
-      className={`relative flex flex-col items-center justify-center gap-0.5 flex-1 min-w-[60px] py-2 px-1 transition-all active:scale-90`}
+      className={`relative flex flex-col items-center justify-center gap-0.5 flex-1 min-w-[44px] py-2 px-1 transition-all active:scale-90`}
     >
       <div className={`flex flex-col items-center justify-center gap-0.5 px-3 py-1.5 rounded-xl transition-all ${
         isActive ? `${palette.bg} ${palette.text} ring-1 ${palette.ring}` : 'text-slate-400 hover:text-slate-200'
@@ -83,7 +83,10 @@ export function CategoryNav({ categories, active, onChange, topicCount, todayUnr
   return (
     <>
       {/* ── Mobile: fixed bottom nav ──────────────────────────────── */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-slate-950/90 backdrop-blur-md border-t border-slate-800/80 flex safe-area-inset-bottom shadow-[0_-4px_20px_-4px_rgba(0,0,0,0.6)]">
+      {/* overflow-x-auto is a safety net: if enough categories are active at
+          once that tabs can't all fit at their min-width, the bar scrolls
+          internally instead of forcing the whole page to pan sideways. */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-slate-950/90 backdrop-blur-md border-t border-slate-800/80 flex overflow-x-auto scrollbar-hide safe-area-inset-bottom shadow-[0_-4px_20px_-4px_rgba(0,0,0,0.6)]">
         {allTabs.map(tab => (
           <NavButton
             key={tab.id}
