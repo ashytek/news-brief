@@ -190,25 +190,48 @@ export function SoloCard({ story, source, isRead, onRead, onEngagement, onDwellS
             : story.bullets
           return (
             <>
-              <ul className="space-y-2 mb-1">
-                {visibleBullets.map((bullet, i) => (
-                  <li key={i} className="flex items-start gap-2.5 text-sm">
-                    <span
-                      className={`mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${bulletColor} ${isRead ? 'opacity-40' : ''}`}
-                      aria-hidden="true"
-                    />
-                    <span className={`leading-relaxed ${isRead ? 'text-slate-500' : 'text-slate-200'}`}>
-                      {bullet.text}
-                      {bullet.timestamp_seconds !== null && videoUrl && (
-                        <>{' '}
-                          <TsLink videoUrl={videoUrl} timestampSeconds={bullet.timestamp_seconds}>
-                            [{formatTime(bullet.timestamp_seconds)}]
-                          </TsLink>
-                        </>
-                      )}
-                    </span>
-                  </li>
-                ))}
+              <ul className={`${visibleBullets[0]?.title ? 'space-y-3.5' : 'space-y-2'} mb-1`}>
+                {visibleBullets.map((bullet, i) =>
+                  bullet.title ? (
+                    /* Walkthrough section: [MM:SS] — Title, prose beneath */
+                    <li key={i} className="text-sm">
+                      <p className="leading-snug mb-1">
+                        {bullet.timestamp_seconds !== null && videoUrl && (
+                          <>
+                            <TsLink videoUrl={videoUrl} timestampSeconds={bullet.timestamp_seconds}>
+                              [{formatTime(bullet.timestamp_seconds)}]
+                            </TsLink>
+                            <span className={isRead ? 'text-slate-600' : 'text-slate-500'}>{' — '}</span>
+                          </>
+                        )}
+                        <span className={`font-semibold ${isRead ? 'text-slate-400' : 'text-white'}`}>
+                          {bullet.title}
+                        </span>
+                      </p>
+                      <p className={`leading-relaxed ${isRead ? 'text-slate-500' : 'text-slate-300'}`}>
+                        {bullet.text}
+                      </p>
+                    </li>
+                  ) : (
+                    /* Legacy dot bullet (stories summarised before July 2026) */
+                    <li key={i} className="flex items-start gap-2.5 text-sm">
+                      <span
+                        className={`mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${bulletColor} ${isRead ? 'opacity-40' : ''}`}
+                        aria-hidden="true"
+                      />
+                      <span className={`leading-relaxed ${isRead ? 'text-slate-500' : 'text-slate-200'}`}>
+                        {bullet.text}
+                        {bullet.timestamp_seconds !== null && videoUrl && (
+                          <>{' '}
+                            <TsLink videoUrl={videoUrl} timestampSeconds={bullet.timestamp_seconds}>
+                              [{formatTime(bullet.timestamp_seconds)}]
+                            </TsLink>
+                          </>
+                        )}
+                      </span>
+                    </li>
+                  )
+                )}
               </ul>
               {needsCollapse && (
                 <button
@@ -224,7 +247,7 @@ export function SoloCard({ story, source, isRead, onRead, onEngagement, onDwellS
                   </svg>
                   {showAllBullets
                     ? 'Show fewer'
-                    : `Show all ${story.bullets.length} bullets`}
+                    : `Show all ${story.bullets.length} ${story.bullets[0]?.title ? 'sections' : 'bullets'}`}
                 </button>
               )}
             </>

@@ -17,6 +17,9 @@ export interface Source {
 }
 
 export interface Bullet {
+  /** Walkthrough section mini-headline (stories summarised after July 2026).
+      Absent on older stories — renderers fall back to plain dot bullets. */
+  title?: string
   text: string
   timestamp_seconds: number | null
 }

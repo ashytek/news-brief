@@ -22,11 +22,20 @@ const NASTY_TITLE =
   'PAKISTAN FOOLED USA | Iran Fighter Jets Inside Pakistan #TrumpGoldPhoneBreakingNewsExclusiveGeopoliticsAnalysis2026'
 
 const mkBullet = (i: number) => ({
+  // Walkthrough-format sections (title present) — matches post-July-2026
+  // summariser output. One in four carries a hostile unbroken token.
+  title: `Section ${i}: The Mechanics of ThingNumber${i}`,
   text:
     i % 4 === 0
-      ? `Bullet ${i}: includes an unbroken token WWW.SOMEEXTREMELYLONGDOMAINNAMETHATWILLNOTWRAP.COM/PATH_SEGMENT_${i} — why it matters: tests overflow.`
-      : `Bullet ${i}: a normal-length point with a hard fact (${i * 7}%) and a why-it-matters clause to give realistic length.`,
+      ? `Includes an unbroken token WWW.SOMEEXTREMELYLONGDOMAINNAMETHATWILLNOTWRAP.COM/PATH_SEGMENT_${i} to test overflow. A second sentence explains the mechanism in flowing prose so the section reads like a briefing note.`
+      : `A flowing two-sentence explanation with a hard fact (${i * 7}%) preserved exactly. The mechanism is taught back rather than merely asserted, matching the walkthrough style.`,
   timestamp_seconds: i * 95,
+})
+
+/** Legacy pre-walkthrough bullet (no title) — old stories must still render */
+const mkLegacyBullet = (i: number) => ({
+  text: `Legacy bullet ${i}: hard fact (${i * 3}%) first, then a why-it-matters clause in the old dot style.`,
+  timestamp_seconds: i * 60,
 })
 
 const solo = {
@@ -51,6 +60,10 @@ const clusterStory = (n: number) =>
     ...solo,
     id: `dev-cs-${n}`,
     headline: `Cluster member ${n}: ${NASTY_TITLE}`,
+    // Member 2 uses legacy bullets so the cluster view exercises the fallback
+    bullets: n === 2
+      ? Array.from({ length: 4 }, (_, i) => mkLegacyBullet(i + 1))
+      : Array.from({ length: 5 }, (_, i) => mkBullet(i + 1)),
     created_at: new Date(Date.now() - n * 7200e3).toISOString(),
   }) as unknown as StoryWithRelations
 

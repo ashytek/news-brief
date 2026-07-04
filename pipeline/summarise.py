@@ -17,31 +17,34 @@ from config import MAX_BULLETS, MAX_BULLETS_PROPHETIC, PROPHETIC_BULLETS_PER_SEC
 # Prompts
 # ---------------------------------------------------------------------------
 
-BULLET_SYSTEM = """You are a news summariser for a busy emergency medicine doctor who wants to stay informed on global affairs, geopolitics, technology, and faith-related news. He skims fast and hates generic summaries.
+BULLET_SYSTEM = """You are writing a chronological video walkthrough for a busy emergency medicine doctor. He reads instead of watching — your job is to let him experience the video's full arc in two minutes, in order, with nothing important missing.
 
-Extract the most newsworthy points from the full transcript below.
+OVERVIEW (the "summary" field)
+- 2-4 sentences of flowing prose capturing the video's THESIS, not merely its topic: what question it explores, what it argues, and where it lands.
+- If the video carries a tension or a twist ("X looks responsible, but the real driver is Y"), the overview MUST carry that arc — set-up AND conclusion.
+- No throat-clearing. "This video discusses…" is banned. Write like the opening paragraph of a good briefing note.
 
-COVERAGE
-- Mentally divide the transcript into 3 equal sections (beginning, middle, end). You MUST extract at least one bullet from each section — do not cluster bullets at the start.
-- If the video covers multiple topics or segments, every major topic gets at least one bullet.
-- Extract 5-8 bullets covering ALL major claims, facts, and developments across the ENTIRE transcript.
+SECTIONS (the "bullets" field — chronological sections, NOT importance-ranked bullets)
+Walk the video START to END, in order. Each section = one beat/topic of the video.
+Each section must have:
+- timestamp_seconds — where this beat begins in the transcript
+- title — a descriptive mini-headline for the beat, 3-8 words. Written like a section header: "The Mechanics of an Omega Block", "The Primary Factor: El Niño", "Broadcast Outro". Never generic ("Introduction", "More Details").
+- text — 2-4 sentences of explanatory prose:
+  · EXPLAIN THE MECHANISM, not just the claim. If the presenter explains how something works, teach it back clearly (e.g. what an Omega block is and why it stalls jet streams — not just "an Omega block is causing it").
+  · Keep every hard specific exactly as stated: names, numbers, dates, percentages, temperatures, currency amounts.
+  · Preserve sharp, provocative, or controversial framing in the presenter's own words — never soften or abstract it.
+  · Flowing sentences, not telegraphic fragments.
 
-BULLET QUALITY (each bullet MUST satisfy all four)
-1. ANCHOR — lead with a hard specific: a name, number, country, date, percentage, or dollar amount drawn directly from the transcript. Never start with "The speaker discusses…" or similar.
-2. WHY — end with a short "— why it matters" clause: the implication, consequence, or stake. Do not just state the event; give its significance in plain terms.
-3. EDGE — if the presenter makes a sharp, provocative, or controversial claim, quote their framing directly (or paraphrase tightly). Do NOT soften, hedge, or abstract it into bland summary.
-4. NO OVERLAP — before finalising, re-read all bullets. If any two overlap >50% in content or entities, merge them into a single sharper bullet.
-
-TIMESTAMPS
-- For each bullet, find the transcript start_time (in seconds) of the sentence it comes from.
-- If transcript is an article (no timestamps), use null for timestamp_seconds.
+COVERAGE RULES
+- Sections must span the ENTIRE runtime: first section at/near the start, last section at/near the end. Do not cluster sections in the opening third.
+- A ~5-minute segment needs roughly 4-6 sections; a ~10-minute piece 6-9. Every distinct topic gets its own section.
+- If the video ends with promotion or sign-off, include it as a brief one-line final section (title like "Broadcast Outro") so the walkthrough visibly reaches the end.
+- NO OVERLAP: each beat appears exactly once, in its chronological place.
+- If the transcript is an article (no timestamps), use null for timestamp_seconds and order sections as the article flows.
 
 HEADLINE
 - Max 12 words, punchy, factual.
-- MUST include at least one proper noun (person, place, or organisation) unless the event is truly abstract (e.g. a new AI capability with no named actor).
-
-SUMMARY
-- 2 sentences, plain English, covering who/what/why. No throat-clearing, no "this video discusses". Lead with the fact."""
+- MUST include at least one proper noun (person, place, or organisation) unless the event is truly abstract."""
 
 PROPHETIC_BULLET_SYSTEM = """You are extracting prophetic content from a ministry video for a discerning Christian leader who wants COMPREHENSIVE coverage of every prophetic element across the entire broadcast.
 
@@ -75,14 +78,16 @@ PROPHETIC_BULLET_SYSTEM = """You are extracting prophetic content from a ministr
 - Off-topic small talk, technical issues, audio checks
 - Generic worship lyrics with no prophetic interpretation attached
 
-═══ STYLE ═══
-- Be precise and literal. If a nation is named, name it. If a number or date is declared, quote it exactly.
-- Use the prophet's own language where possible. Preserve their force and edge — do not soften.
-- Each bullet should be ONE complete prophetic point with a timestamp.
-- Avoid duplication — if a declaration appears multiple times, include it ONCE at first occurrence.
+═══ STYLE — chronological walkthrough sections ═══
+Each extracted item is a SECTION of a chronological walkthrough, in video order:
+- timestamp_seconds — where this moment begins
+- title — a 3-8 word mini-headline naming the declaration/vision/word (e.g. "Vision: Three Storms Over Britain", "Decree Over India's Government", "[CONTEXT] Isaiah 60 Foundation"). Keep the [CONTEXT] prefix ON THE TITLE for context items.
+- text — 2-4 sentences of flowing prose. Be precise and literal: if a nation is named, name it; if a number or date is declared, quote it exactly. Use the prophet's own language and preserve their force and edge — do not soften. Give enough of the surrounding moment that the reader experiences the broadcast's flow, not a fragment.
+- Avoid duplication — if a declaration repeats, include it ONCE at first occurrence.
+- The overview ("summary" field): 2-4 sentences of prose capturing the broadcast's overall thrust and its weightiest declarations.
 
 ═══ OUTPUT VERIFICATION ═══
-Before submitting, count your bullets. Check timestamps span from early in the video to near the end. If your latest timestamp is less than 50% through the video duration, you have under-covered — go back and add more from the latter half."""
+Before submitting, count your sections. Check timestamps span from early in the video to near the end. If your latest timestamp is less than 50% through the video duration, you have under-covered — go back and add more from the latter half."""
 
 SYNTHESIS_SYSTEM = """You synthesise multiple news perspectives into a structured brief for a busy doctor.
 Given multiple source stories on the same event, produce:
@@ -104,10 +109,14 @@ BULLET_SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
+                    "title":             {"type": "string"},
                     "text":              {"type": "string"},
                     "timestamp_seconds": {"type": "integer", "nullable": True},
                 },
-                "required": ["text"],
+                # title required for the walkthrough format; stories created
+                # before this change simply lack the key (frontend falls back
+                # to the old dot-bullet rendering for those).
+                "required": ["title", "text"],
             },
         },
     },
@@ -203,7 +212,7 @@ def summarise_video(
             system_instruction=BULLET_SYSTEM,
             response_schema=BULLET_SCHEMA,
             temperature=0.2,
-            max_output_tokens=4096,
+            max_output_tokens=8192,   # prose sections run ~3x longer than the old bullets
             thinking_budget=2048,
         )
     else:
@@ -212,7 +221,7 @@ def summarise_video(
             system_instruction=BULLET_SYSTEM,
             response_schema=BULLET_SCHEMA,
             temperature=0.2,
-            max_output_tokens=4096,
+            max_output_tokens=8192,   # prose sections run ~3x longer than the old bullets
         )
 
     if not result:

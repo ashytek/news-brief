@@ -164,7 +164,23 @@ export function ClusteredCard({ cluster, isRead, readStoryIds, onRead, onEngagem
                     {sourceName && (
                       <p className="text-[11px] font-semibold text-slate-300 mb-1 uppercase tracking-wide">{sourceName}</p>
                     )}
-                    {story.bullets?.slice(0, 3).map((b, i) => (
+                    {story.bullets?.slice(0, 3).map((b, i) => b.title ? (
+                      /* Walkthrough section (post-July-2026 stories) */
+                      <div key={i} className="text-sm mb-2">
+                        <p className="leading-snug">
+                          {b.timestamp_seconds !== null && videoUrl && (
+                            <>
+                              <TsLink videoUrl={videoUrl} timestampSeconds={b.timestamp_seconds}>
+                                [{formatTime(b.timestamp_seconds)}]
+                              </TsLink>
+                              <span className="text-slate-500">{' — '}</span>
+                            </>
+                          )}
+                          <span className="font-semibold text-white">{b.title}</span>
+                        </p>
+                        <p className="text-slate-300 leading-relaxed">{b.text}</p>
+                      </div>
+                    ) : (
                       <div key={i} className="flex items-start gap-2 text-sm mb-1">
                         <span className={`mt-1.5 w-1 h-1 rounded-full flex-shrink-0 ${bulletColor}`} aria-hidden="true" />
                         <span className="text-slate-200 leading-relaxed">

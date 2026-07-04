@@ -47,8 +47,10 @@ CLUSTER_THRESHOLD = 0.78
 # still filtering out genuine 30-60s Shorts
 MIN_VIDEO_DURATION_SECONDS = 120
 
-# Max bullet points per story (8 gives good depth for segment-style channels like Vantage)
-MAX_BULLETS = 8
+# Max walkthrough sections per story. Sections are chronological beats
+# (~4-6 for a 5-min Vantage segment, 6-9 for a 10-min piece) — 10 leaves
+# headroom without letting Flash ramble.
+MAX_BULLETS = 10
 # Prophetic broadcasts can run 60–120 min and pack many distinct declarations,
 # visions, and warnings — needs a much higher cap to give comprehensive coverage.
 MAX_BULLETS_PROPHETIC = 25
