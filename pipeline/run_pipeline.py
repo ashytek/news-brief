@@ -399,6 +399,31 @@ def run_once():
             except Exception as e:
                 print(f"  ⚠ Zero-streak check error (non-fatal): {e}")
 
+        # ── Transcript source-mix check ────────────────────────────────────
+        # The zero-story-streak check above only catches total blackout. It
+        # misses the more likely failure mode: Apify (primary) silently
+        # degrading — credit exhausted, actor broken — while the fragile
+        # local fallback chain (yt-dlp/timedtext/AssemblyAI) quietly absorbs
+        # the load and stories keep appearing. That's exactly the scenario
+        # that produced the pre-v2 firefights, so flag it same-run instead
+        # of waiting for the fallback chain to fail too.
+        fetcher_mix = get_transcripts.get_fetcher_mix()
+        total_via_fetchers = sum(fetcher_mix.values())
+        if os.environ.get("APIFY_TOKEN", "").strip() and total_via_fetchers > 0 and fetcher_mix.get("apify", 0) == 0:
+            print(f"  ⚠ Apify produced 0/{total_via_fetchers} transcripts this run "
+                  f"(mix: {fetcher_mix}) — primary path degraded, running on local fallback chain")
+            _ping_healthcheck(success=False)
+        elif fetcher_mix:
+            print(f"  Transcript sources this run: {fetcher_mix}")
+
+        # Persist source mix to pipeline_runs (column may not exist yet — ignore errors)
+        try:
+            db.get_db().table("pipeline_runs").update({
+                "fetcher_mix": fetcher_mix,
+            }).eq("id", run_id).execute()
+        except Exception:
+            pass  # column added separately via Supabase SQL migration
+
         # ── Token usage summary ───────────────────────────────────────────
         usage = llm.get_usage()
         flash_tok = usage["flash_input_tokens"] + usage["flash_output_tokens"]

@@ -90,13 +90,28 @@ _rate_limit_streak = 0
 _last_rate_limit_at: float = 0.0
 _audio_fallback_count = 0
 
+# Per-run tally of which fetcher produced each successful transcript
+# (e.g. {"apify": 12, "yt-dlp": 2}). Lets run_pipeline detect the primary
+# path (Apify) silently degrading — credit exhausted, actor broken — while
+# the fragile local fallback chain quietly picks up the slack. See
+# get_fetcher_mix().
+_fetcher_success_counts: dict[str, int] = {}
+
 
 def reset_run_state():
     """Reset per-run counters. Called by run_pipeline at the start of each cycle."""
-    global _rate_limit_streak, _last_rate_limit_at, _audio_fallback_count
+    global _rate_limit_streak, _last_rate_limit_at, _audio_fallback_count, _fetcher_success_counts
     _rate_limit_streak = 0
     _last_rate_limit_at = 0.0
     _audio_fallback_count = 0
+    _fetcher_success_counts = {}
+
+
+def get_fetcher_mix() -> dict[str, int]:
+    """Per-run breakdown of successful transcripts by fetcher. Read by
+    run_pipeline at the end of a run to detect Apify (primary) degrading
+    while the local fallback chain absorbs the load unnoticed."""
+    return dict(_fetcher_success_counts)
 
 
 def _is_rate_limit_error(msg: str) -> bool:
@@ -118,9 +133,11 @@ def _record_rate_limit():
     _last_rate_limit_at = time.time()
 
 
-def _record_success():
+def _record_success(fetcher: str | None = None):
     global _rate_limit_streak
     _rate_limit_streak = 0
+    if fetcher:
+        _fetcher_success_counts[fetcher] = _fetcher_success_counts.get(fetcher, 0) + 1
 
 
 def _adaptive_pre_request_delay():
@@ -352,7 +369,7 @@ def _get_transcript_apify(video_id: str) -> tuple[str, list] | None:
     if not plain.strip():
         raise PermanentNoTranscript("Apify: transcript was empty")
 
-    _record_success()
+    _record_success("apify")
     return plain, segments
 
 
@@ -445,7 +462,7 @@ def _get_transcript_ytdlp(video_id: str) -> tuple[str, list] | None:
             if not plain.strip():
                 last_permanent = PermanentNoTranscript("Subtitle file was empty")
                 continue
-            _record_success()
+            _record_success("yt-dlp")
             return plain, segments
 
     # All configured clients exhausted.
@@ -515,7 +532,7 @@ def _get_transcript_ytt(video_id: str) -> tuple[str, list] | None:
         fetched  = _ytt.fetch(video_id, languages=["en", "en-GB", "en-US"])
         segments = [{"text": s.text, "start": s.start, "duration": s.duration} for s in fetched]
         plain    = " ".join(s["text"] for s in segments)
-        _record_success()
+        _record_success("youtube-transcript-api")
         return plain, segments
 
     except (TranscriptsDisabled, NoTranscriptFound, VideoUnavailable) as e:
@@ -599,6 +616,7 @@ def _transcribe_via_assemblyai(video_url: str) -> tuple[str, list] | None:
                         "duration": (w.end - w.start) / 1000.0,
                     })
             print(f"    ✓ AssemblyAI transcript ({len(text)} chars)")
+            _record_success("assemblyai")
             return text, segments
 
     except Exception as e:
