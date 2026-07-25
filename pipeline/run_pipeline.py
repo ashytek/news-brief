@@ -1,22 +1,19 @@
 #!/usr/bin/env python3
 """
 Main pipeline runner.
-Run this script on your home machine — it will loop every 90 minutes.
+Invoked by GitHub Actions (.github/workflows/news-pipeline.yml) 4x/day with --once.
 
 Usage:
-    python run_pipeline.py           # runs once immediately, then loops
-    python run_pipeline.py --once    # runs once and exits
+    python run_pipeline.py --once    # runs once and exits (the only mode GH Actions uses)
     python run_pipeline.py --retry   # retries failed transcripts only, then exits
 """
 
 import os
 import re
 import sys
-import time
-import schedule
 import subprocess
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 import requests as _requests
 
@@ -28,6 +25,7 @@ import cluster
 import llm
 import archive_transcripts
 import update_weights
+from config import MAX_VANTAGE_RECAP_SECONDS
 
 
 def _ping_healthcheck(success: bool = True):
@@ -44,7 +42,7 @@ def _ping_healthcheck(success: bool = True):
     except Exception:
         pass  # never let monitoring break the pipeline
 
-INTERVAL_MINUTES = 360  # 6 hours
+DB_SIZE_ALERT_MB = 400  # warn before Supabase free-tier's 500MB cap
 
 
 _WORD_BOUNDARY_CACHE: dict[str, "re.Pattern[str]"] = {}
@@ -71,19 +69,43 @@ def match_topics(text: str, keywords: list[str]) -> list[str]:
     return [kw for kw in keywords if _kw_pattern(kw).search(text)]
 
 
-def process_transcripts_and_summarise(items, stats, source_map):
+def _is_vantage_source(source: dict) -> bool:
+    """Mirrors the frontend's isVantage heuristic (ReaderClient.tsx) — no
+    dedicated column exists on `sources` to identify this more precisely."""
+    name = (source.get("name") or "").lower()
+    return "vantage" in name or "firstpost" in name
+
+
+def process_transcripts_and_summarise(items, stats, source_map, retry_delay_range=None):
     """
     Shared logic: fetch transcripts, summarise, embed, cluster.
     Works for both new items and retry items.
+    retry_delay_range: optional (min, max) seconds override for the
+    pre-request jitter — used for retry batches to back off harder without
+    monkey-patching the process-global random module (see get_transcripts.
+    _adaptive_pre_request_delay).
     Returns updated stats.
     """
     processed = []
     consecutive_failures = 0
     MAX_CONSECUTIVE_FAILURES = 3  # abort early if YouTube is 429-ing everything
 
-    for item in items:
+    for idx, item in enumerate(items):
         print(f"  → {item['title'][:60]}…")
-        transcript_text, status, segments = get_transcripts.fetch_transcript(item)
+
+        # Vantage/Firstpost videos over ~20min are usually recap/rehash
+        # content, not worth Gemini tokens — skip before any network call.
+        # duration_seconds is only reliably populated for fresh discovery
+        # items (see fetch_sources.annotate_durations), so this can't catch
+        # a long recap re-entering via the retry/recovery queues — accepted,
+        # low-cost gap (see Feature 2 plan notes).
+        source = source_map.get(item["source_id"], {})
+        dur = item.get("duration_seconds")
+        if dur and dur > MAX_VANTAGE_RECAP_SECONDS and _is_vantage_source(source):
+            print(f"    · Skipped long Vantage recap ({int(dur)}s > {MAX_VANTAGE_RECAP_SECONDS}s)")
+            transcript_text, status, segments = None, "skipped_long_recap", []
+        else:
+            transcript_text, status, segments = get_transcripts.fetch_transcript(item, retry_delay_range)
 
         if status == "failed":
             # Only true fetch failures (IP block, network) count toward abort.
@@ -91,6 +113,29 @@ def process_transcripts_and_summarise(items, stats, source_map):
             consecutive_failures += 1
             if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
                 print(f"  ⚠ {consecutive_failures} consecutive failures — aborting batch (likely IP rate-limited)")
+                # This item and everything still unprocessed would otherwise
+                # vanish silently — the loop below that writes a video row
+                # never runs for them because we break before reaching it.
+                # Without a DB row they don't enter the retry queue; they'd
+                # only resurface if fetch_sources happens to rediscover them,
+                # which depends on each source's lookback_hours window.
+                for pending in items[idx:]:
+                    if pending.get("video_id"):
+                        continue  # retry item — already has a row, leave its status alone
+                    try:
+                        db.upsert_video({
+                            "source_id": pending["source_id"],
+                            "external_id": pending["external_id"],
+                            "title": pending["title"],
+                            "url": pending["url"],
+                            "published_at": pending["published_at"],
+                            "transcript_text": None,
+                            "transcript_status": "failed",
+                            "fetched_at": "now()",
+                            "thumbnail_url": pending.get("thumbnail_url"),
+                        })
+                    except Exception as e:
+                        print(f"    ✗ Couldn't persist abort-time failure for {pending.get('title', '?')[:40]}: {e}")
                 break
         else:
             consecutive_failures = 0  # reset on any non-failure (including skips)
@@ -109,8 +154,13 @@ def process_transcripts_and_summarise(items, stats, source_map):
         }
         video_id = item.get("video_id") or db.upsert_video(video_record)
 
-        # If retrying, update the existing row
-        if item.get("video_id") and transcript_text:
+        # If retrying, always persist the fresh status — even a no-text
+        # outcome like skipped_short. The old `and transcript_text` guard
+        # meant a retried short resolved to skipped_short and never got
+        # written, leaving transcript_status stuck at 'failed': every
+        # subsequent run re-fetched (and re-paid for) the same short until
+        # the 14-day stale-failure expiry finally caught it.
+        if item.get("video_id"):
             db.get_db().table("videos").update({
                 "transcript_text": transcript_text,
                 "transcript_status": status,
@@ -180,91 +230,109 @@ def process_transcripts_and_summarise(items, stats, source_map):
         else:
             print(f"    ✓ Story saved")
 
-    # Embed + cluster new stories
-    print(f"\n  Embedding and clustering {len(story_ids)} stories…")
-    clustered = 0
+    # Embed new stories (for semantic/hybrid search — clustering removed)
+    print(f"\n  Embedding {len(story_ids)} stories…")
 
     for story_id, headline, summary_text, category in story_ids:
-        cluster_id = cluster.embed_and_cluster_story(
-            story_id=story_id,
-            headline=headline,
-            summary=summary_text,
-            category=category,
-        )
-        if cluster_id:
-            clustered += 1
-
-    stats["clusters_touched"] = stats.get("clusters_touched", 0) + clustered
+        try:
+            cluster.embed_and_cluster_story(
+                story_id=story_id,
+                headline=headline,
+                summary=summary_text,
+                category=category,
+            )
+        except Exception as e:
+            # One embedding failure (non-retryable 4xx, or a sustained outage
+            # after cluster.get_embedding exhausts its own retries) must not
+            # abort the rest of the batch — the retry pass and daily jobs
+            # still need to run.
+            print(f"    ✗ Embedding failed for story {story_id}: {e}")
 
     # Also embed any previously saved stories that are still missing embeddings
     missing = db.get_stories_missing_embeddings(limit=30)
     if missing:
         print(f"\n  Embedding {len(missing)} previously unembedded stories…")
         for s in missing:
-            cluster.embed_and_cluster_story(
-                story_id=s["id"],
-                headline=s["headline"],
-                summary=s["summary"],
-                category=s["category"],
-            )
-
-    # Synthesise
-    print("\n  Synthesising clusters…")
-    cluster.synthesise_ready_clusters()
+            try:
+                cluster.embed_and_cluster_story(
+                    story_id=s["id"],
+                    headline=s["headline"],
+                    summary=s["summary"],
+                    category=s["category"],
+                )
+            except Exception as e:
+                # Without this, a single poison row here re-wedges every
+                # future run at the same point — this query always serves
+                # it first (get_stories_missing_embeddings orders by
+                # created_at desc, and the row stays embedding IS NULL).
+                print(f"    ✗ Embedding failed for story {s['id']}: {e}")
 
     return stats
 
 
-def recluster_all():
+def recover_missing_stories(stats, source_map):
+    """Re-attempt summarisation for videos whose transcript was fetched
+    successfully but never produced a story (summarise_video returned None —
+    e.g. Gemini quota exhausted mid-run). Without this, those videos are
+    lost forever: nothing else revisits a video once transcript_status is
+    'fetched'. Segments aren't persisted, so recovered stories fall back to
+    plain (non-timestamped) bullets — degraded but far better than silently
+    dropped.
     """
-    Reset all cluster assignments and re-cluster every embedded story from scratch.
-    Useful after fixing the clustering logic or after a first bulk embedding run.
-    """
-    print(f"\n{'='*60}")
-    print(f"🔁 Re-clustering all stories at {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}")
-    print(f"{'='*60}")
+    orphans = db.get_videos_missing_stories(limit=30)
+    if not orphans:
+        return stats
 
-    supabase_db = db.get_db()
+    print(f"\n  Recovering {len(orphans)} video(s) with fetched transcripts but no story…")
+    topic_keywords = db.get_topic_keywords()
 
-    # Wipe existing cluster assignments on stories
-    supabase_db.table("stories").update({"cluster_id": None}).neq("id", "00000000-0000-0000-0000-000000000000").execute()
-    # Delete all clusters
-    supabase_db.table("clusters").delete().neq("id", "00000000-0000-0000-0000-000000000000").execute()
-    print("  Cleared all existing clusters.")
+    for video in orphans:
+        try:
+            source = source_map.get(video["source_id"], {})
+            category = source.get("category", "tech_ai")
 
-    # Fetch all embedded stories ordered oldest-first
-    res = supabase_db.table("stories") \
-        .select("id, headline, summary, category, embedding") \
-        .not_.is_("embedding", "null") \
-        .order("created_at", desc=False) \
-        .execute()
-    stories = res.data
-    print(f"  Re-clustering {len(stories)} stories…\n")
+            summary_data = summarise.summarise_video(
+                title=video["title"],
+                transcript=video["transcript_text"],
+                segments=[],
+                category=category,
+            )
+            if not summary_data:
+                print(f"    ✗ Still failing to summarise: {video['title'][:50]}")
+                continue
 
-    clustered = 0
-    for s in stories:
-        embedding = s["embedding"]
-        if not embedding:
-            continue
-        cluster_id, is_new = cluster.find_or_create_cluster(
-            story_id=s["id"],
-            story_embedding=embedding,
-            category=s["category"],
-        )
-        if cluster_id:
-            db.assign_story_to_cluster(s["id"], cluster_id)
-            if not is_new:
-                db.increment_cluster_story_count(cluster_id)
-            action = "new cluster" if is_new else "joined cluster"
-            print(f"  ✓ {s['headline'][:55]}… → {action} {cluster_id[:8]}")
-            clustered += 1
-        else:
-            print(f"  · {s['headline'][:55]}… → solo")
+            story_id = db.insert_story({
+                "video_id": video["id"],
+                "source_id": video["source_id"],
+                "category": category,
+                "headline": summary_data["headline"],
+                "summary": summary_data["summary"],
+                "bullets": summary_data["bullets"],
+            })
+            stats["stories_created"] += 1
+            print(f"    ✓ Recovered: {summary_data['headline'][:50]}")
 
-    print(f"\n  Synthesising clusters…")
-    cluster.synthesise_ready_clusters()
-    print(f"\n✅ Re-cluster done! {clustered}/{len(stories)} stories clustered.")
-    print(f"{'='*60}\n")
+            if topic_keywords:
+                searchable = " ".join([
+                    summary_data["headline"],
+                    summary_data["summary"],
+                    " ".join(b["text"] for b in summary_data.get("bullets", [])),
+                    video["title"],
+                ])
+                matched = match_topics(searchable, topic_keywords)
+                if matched:
+                    db.tag_story_topics(story_id, matched)
+
+            cluster.embed_and_cluster_story(
+                story_id=story_id,
+                headline=summary_data["headline"],
+                summary=summary_data["summary"],
+                category=category,
+            )
+        except Exception as e:
+            print(f"    ✗ Recovery failed for {video.get('title', video.get('id'))[:50]}: {e}")
+
+    return stats
 
 
 def retry_failed():
@@ -277,7 +345,7 @@ def retry_failed():
     if failed:
         print(f"  Found {len(failed)} failed videos to retry\n")
         source_map = {s["id"]: s for s in db.get_active_sources()}
-        stats = {"transcripts_fetched": 0, "stories_created": 0, "clusters_touched": 0}
+        stats = {"transcripts_fetched": 0, "stories_created": 0}
         items = [{
             "video_id": v["id"],
             "source_id": v["source_id"],
@@ -306,8 +374,6 @@ def retry_failed():
                 )
             except Exception as e:
                 print(f"    ✗ Embedding failed: {e}")
-        print("  Synthesising clusters…")
-        cluster.synthesise_ready_clusters()
         print(f"  ✓ Embedding complete")
 
     print(f"\n{'='*60}\n")
@@ -324,14 +390,51 @@ def run_once():
     print(f"📰 Pipeline run starting at {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}")
     print(f"{'='*60}")
 
-    run_id = db.start_pipeline_run()
+    # ── Skip if a manual trigger already covered this window ──────────────
+    # Set via GitHub Actions' github.event_name expression (news-pipeline.yml).
+    # Only scheduled runs are ever skipped — a manual trigger always runs.
+    trigger_source = os.environ.get("PIPELINE_TRIGGER_SOURCE", "schedule")
+    if trigger_source == "schedule":
+        try:
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()
+            # status IN (success, partial) only — a failed or still-running
+            # manual trigger must NOT suppress the next scheduled run too,
+            # or a crashed manual trigger compounds into ~12h of silence.
+            recent_manual = db.get_db().table("pipeline_runs") \
+                .select("started_at") \
+                .eq("trigger_source", "manual") \
+                .in_("status", ["success", "partial"]) \
+                .gte("started_at", cutoff) \
+                .order("started_at", desc=True) \
+                .limit(1) \
+                .execute().data
+            if recent_manual:
+                print(f"⏭ Skipping scheduled run — manual trigger covered this window "
+                      f"at {recent_manual[0]['started_at']}")
+                # A deliberate skip is a healthy state — ping success so the
+                # healthcheck dead-man's switch doesn't fire a false "down"
+                # alert a few hours later. No pipeline_runs row is written
+                # for a skipped run (keeps the zero-story-streak / health
+                # indicator logic reading only real runs).
+                _ping_healthcheck(success=True)
+                return
+        except Exception as e:
+            # Fail open — if the skip-check itself errors, run normally
+            # rather than silently skipping (or crashing) a scheduled run.
+            print(f"⚠ Skip-check error (non-fatal, running normally): {e}")
+
+    run_id = db.start_pipeline_run(trigger_source=trigger_source)
     stats = {
         "sources_checked": 0,
         "videos_found": 0,
         "transcripts_fetched": 0,
         "stories_created": 0,
-        "clusters_touched": 0,
     }
+
+    # Set by any soft-fail alert below (zero-story streak, Apify degradation,
+    # DB size) so the unconditional success ping at the end of the run
+    # doesn't immediately flip the healthcheck back to "up" and erase it.
+    soft_failed = False
 
     try:
         source_map = {s["id"]: s for s in db.get_active_sources()}
@@ -342,6 +445,18 @@ def run_once():
         stats["sources_checked"] = fetch_stats["sources_checked"]
         stats["videos_found"] = fetch_stats["videos_found"]
         print(f"  → {len(new_items)} new items total")
+
+        # Cap items processed per run — discovery volume is unbounded (a
+        # source with a long gap since its last check can surface up to 200
+        # items), and nothing else caps how much a single run tries to fetch/
+        # summarise/embed within the 45-minute workflow timeout. Anything
+        # over the cap isn't lost: it has no video row yet, so it's simply
+        # rediscovered by fetch_sources on the next scheduled run.
+        MAX_ITEMS_PER_RUN = 60
+        if len(new_items) > MAX_ITEMS_PER_RUN:
+            print(f"  ⚠ Capping to {MAX_ITEMS_PER_RUN} items this run "
+                  f"({len(new_items) - MAX_ITEMS_PER_RUN} deferred to next run)")
+            new_items = new_items[:MAX_ITEMS_PER_RUN]
 
         if new_items:
             # ── Steps 2-4: Transcripts → Summarise → Embed → Cluster ─────
@@ -363,14 +478,21 @@ def run_once():
                 "published_at": v["published_at"],
                 "transcript_status": v["transcript_status"],
             } for v in failed]
-            # Patch the transcript fetcher to use a longer delay for retries
-            import get_transcripts as _gt
-            _orig_sleep = _gt.random.uniform
-            _gt.random.uniform = lambda a, b: _orig_sleep(10.0, 20.0)  # type: ignore
-            try:
-                stats = process_transcripts_and_summarise(retry_items, stats, source_map)
-            finally:
-                _gt.random.uniform = _orig_sleep  # restore
+            # Explicit override, not a monkey-patch of the global `random`
+            # module — the old approach also stretched unrelated jitter in
+            # llm.py/cluster.py's backoff sleeps for the duration of the
+            # retry batch, and did nothing on the Apify path anyway (that
+            # path uses a fixed 1s pause and never calls random.uniform).
+            stats = process_transcripts_and_summarise(
+                retry_items, stats, source_map, retry_delay_range=(10.0, 20.0)
+            )
+
+        # ── Step 6: Recover videos whose transcript fetched but never got
+        # summarised (e.g. Gemini quota exhausted mid-run) ─────────────────
+        try:
+            stats = recover_missing_stories(stats, source_map)
+        except Exception as e:
+            print(f"  ⚠ Recovery pass error (non-fatal): {e}")
 
         if not new_items and not failed:
             print("  Nothing new. Run complete.")
@@ -396,6 +518,7 @@ def run_once():
                 if zero_streak >= 3:
                     print(f"  ⚠ {zero_streak} consecutive zero-story runs — pinging healthcheck FAIL")
                     _ping_healthcheck(success=False)
+                    soft_failed = True
             except Exception as e:
                 print(f"  ⚠ Zero-streak check error (non-fatal): {e}")
 
@@ -413,6 +536,7 @@ def run_once():
             print(f"  ⚠ Apify produced 0/{total_via_fetchers} transcripts this run "
                   f"(mix: {fetcher_mix}) — primary path degraded, running on local fallback chain")
             _ping_healthcheck(success=False)
+            soft_failed = True
         elif fetcher_mix:
             print(f"  Transcript sources this run: {fetcher_mix}")
 
@@ -424,12 +548,28 @@ def run_once():
         except Exception:
             pass  # column added separately via Supabase SQL migration
 
+        # ── Database size check ──────────────────────────────────────────
+        # Supabase free tier caps the database at 500MB. stories.embedding
+        # (vector(3072), ~12KB/row) is the fastest-growing column with no
+        # pruning in place — warn well before the cap silently blocks inserts.
+        try:
+            size_mb = db.get_db().rpc("get_database_size_mb", {}).execute().data
+            if size_mb is not None:
+                if size_mb >= DB_SIZE_ALERT_MB:
+                    print(f"  ⚠ Database size {size_mb:.0f}MB — approaching the 500MB plan cap")
+                    _ping_healthcheck(success=False)
+                    soft_failed = True
+                else:
+                    print(f"  DB size: {size_mb:.0f}MB")
+        except Exception as e:
+            print(f"  ⚠ DB size check error (non-fatal, RPC may not exist yet): {e}")
+
         # ── Token usage summary ───────────────────────────────────────────
         usage = llm.get_usage()
         flash_tok = usage["flash_input_tokens"] + usage["flash_output_tokens"]
         pro_tok   = usage["pro_input_tokens"] + usage["pro_output_tokens"]
         print(f"\n{'='*60}")
-        print(f"✅ Done! {stats['stories_created']} stories created, {stats['clusters_touched']} clustered")
+        print(f"✅ Done! {stats['stories_created']} stories created")
         print(f"   LLM: {usage['calls']} calls · Flash {flash_tok:,} tokens · Pro {pro_tok:,} tokens · {usage['failures']} failures")
         print(f"{'='*60}\n")
 
@@ -446,16 +586,24 @@ def run_once():
 
         # ── Daily jobs (run once per ~24h, regardless of schedule offset) ──
         # Old gate was `if datetime.now().hour == 6:` which never fired because
-        # the 6-hour schedule offset rarely hit exactly hour 6. Now we persist
-        # the last-daily-jobs timestamp to a file and run if >22h since last.
-        _daily_marker = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".last_daily_jobs")
+        # the 6-hour schedule offset rarely hit exactly hour 6. A later fix
+        # persisted the marker to a local file — which doesn't survive
+        # GitHub Actions' fresh checkout each run, so daily jobs (weight
+        # updates especially) ran on all 4 scheduled runs/day instead of 1.
+        # The database is the only state that actually persists between runs.
         _should_run_daily = True
         try:
-            with open(_daily_marker, "r") as _f:
-                _last = datetime.fromisoformat(_f.read().strip())
-                _should_run_daily = (datetime.now() - _last).total_seconds() > 22 * 3600
-        except (FileNotFoundError, ValueError):
-            pass
+            recent = db.get_db().table("pipeline_runs") \
+                .select("daily_jobs_ran_at") \
+                .not_.is_("daily_jobs_ran_at", "null") \
+                .order("daily_jobs_ran_at", desc=True) \
+                .limit(1) \
+                .execute().data
+            if recent:
+                _last = datetime.fromisoformat(recent[0]["daily_jobs_ran_at"].replace("Z", "+00:00"))
+                _should_run_daily = (datetime.now(timezone.utc) - _last).total_seconds() > 22 * 3600
+        except Exception as e:
+            print(f"  ⚠ Daily-jobs marker check error (non-fatal, defaulting to run): {e}")
 
         if _should_run_daily:
             print("\n── Running daily jobs ─────────────────────────────")
@@ -480,15 +628,22 @@ def run_once():
             except Exception as e:
                 print(f"  ⚠ Stale failure expiry error (non-fatal): {e}")
 
-            # Persist marker so we don't repeat for ~24h
+            # Persist marker so we don't repeat for ~24h (column may not
+            # exist yet — ignore errors, matching the fetcher_mix/usage
+            # columns above; migration in supabase/migrations/)
             try:
-                with open(_daily_marker, "w") as _f:
-                    _f.write(datetime.now().isoformat())
+                db.get_db().table("pipeline_runs").update({
+                    "daily_jobs_ran_at": "now()",
+                }).eq("id", run_id).execute()
             except Exception as e:
                 print(f"  ⚠ Couldn't persist daily marker (non-fatal): {e}")
 
         # ── Healthcheck ping (set HEALTHCHECK_URL in .env to enable) ─────
-        _ping_healthcheck(success=True)
+        # Skip the success ping if a soft-fail alert already fired above —
+        # otherwise this unconditional ping flips the check back to "up"
+        # seconds later and the alert never surfaces as a lasting down state.
+        if not soft_failed:
+            _ping_healthcheck(success=True)
 
     except Exception as e:
         print(f"\n❌ Pipeline error: {e}")
@@ -530,29 +685,17 @@ def _code_version_banner():
 
 
 def main():
-    retry_mode    = "--retry" in sys.argv
-    recluster_mode = "--recluster" in sys.argv
-    once = "--once" in sys.argv or retry_mode or recluster_mode
+    retry_mode = "--retry" in sys.argv
 
     _code_version_banner()
     print(f"   Supabase:   connected")
 
-    if recluster_mode:
-        print(f"   Mode: re-cluster all embedded stories")
-        recluster_all()
-    elif retry_mode:
+    if retry_mode:
         print(f"   Mode: retry failed transcripts")
         retry_failed()
     else:
-        print(f"   Mode: {'run once' if once else f'every {INTERVAL_MINUTES} minutes'}")
+        print(f"   Mode: run once")
         run_once()
-
-    if not once:
-        schedule.every(INTERVAL_MINUTES).minutes.do(run_once)
-        print(f"\n⏰ Next run in {INTERVAL_MINUTES} minutes. Press Ctrl+C to stop.\n")
-        while True:
-            schedule.run_pending()
-            time.sleep(30)
 
 
 if __name__ == "__main__":

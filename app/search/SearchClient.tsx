@@ -45,9 +45,14 @@ export default function SearchClient({ userId }: { userId: string }) {
   const [searchMode,  setSearchMode]  = useState<string | null>(null)
   const [readIds,     setReadIds]     = useState<Set<string>>(new Set())
   const [sources,     setSources]     = useState<Record<string, Source>>({})
+  const [searchError, setSearchError] = useState(false)
 
   const inputRef    = useRef<HTMLInputElement>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Cancels the in-flight request when a newer search supersedes it — without
+  // this, a slow earlier query (e.g. "gaza") can resolve after a faster later
+  // one (e.g. "gaza ceasefire") and overwrite its results.
+  const abortRef    = useRef<AbortController | null>(null)
 
   // Autofocus the search box on mount
   useEffect(() => {
@@ -63,23 +68,34 @@ export default function SearchClient({ userId }: { userId: string }) {
         setSources(map)
       }
     })
-    supabase.from('read_items').select('story_id').eq('user_id', userId).then(({ data }) => {
-      if (data) {
-        const ids = new Set<string>()
-        data.forEach(r => { if (r.story_id) ids.add(r.story_id) })
-        setReadIds(ids)
-      }
-    })
+    // Ordered + capped: an unordered fetch past Supabase's row cap returns a
+    // nondeterministic subset; most-recent-first makes the truncation
+    // predictable (old reads may resurface as unread, not a random slice).
+    supabase.from('read_items').select('story_id').eq('user_id', userId)
+      .order('read_at', { ascending: false }).limit(2000).then(({ data }) => {
+        if (data) {
+          const ids = new Set<string>()
+          data.forEach(r => { if (r.story_id) ids.add(r.story_id) })
+          setReadIds(ids)
+        }
+      })
   }, [userId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const doSearch = useCallback(async (q: string, cat: CategoryFilter, date: DateFilter) => {
     if (q.length < 2) {
+      abortRef.current?.abort()
       setResults(null)
       setSearchMode(null)
+      setSearchError(false)
       return
     }
 
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+
     setLoading(true)
+    setSearchError(false)
     try {
       const body: Record<string, unknown> = { query: q }
       if (cat  !== 'all') body.category = cat
@@ -89,14 +105,27 @@ export default function SearchClient({ userId }: { userId: string }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+        signal: controller.signal,
       })
       if (res.ok) {
         const data: SearchResult = await res.json()
         setResults(data.results)
         setSearchMode(data.mode ?? null)
+      } else {
+        console.error('search request failed', res.status)
+        setSearchError(true)
+      }
+    } catch (err) {
+      if ((err as Error).name !== 'AbortError') {
+        console.error('search request errored', err)
+        setSearchError(true)
       }
     } finally {
-      setLoading(false)
+      // Guard: only the most recent request may clear loading — an aborted
+      // superseded request's finally must not stomp on the newer one's state.
+      if (abortRef.current === controller) {
+        setLoading(false)
+      }
     }
   }, [])
 
@@ -111,16 +140,26 @@ export default function SearchClient({ userId }: { userId: string }) {
 
   const markRead = useCallback(async (storyId: string) => {
     setReadIds(prev => new Set([...prev, storyId]))
-    await supabase.from('read_items').upsert(
-      { user_id: userId, story_id: storyId },
-      { onConflict: 'user_id,story_id', ignoreDuplicates: true }
-    )
+    // Plain insert tolerating 23505 (duplicate key) — upsert(onConflict) was
+    // found to silently lose writes elsewhere (see ReaderClient.tsx markRead)
+    // because the constraint name lookup didn't always resolve.
+    const { error } = await supabase.from('read_items').insert({
+      user_id: userId, story_id: storyId,
+    })
+    if (error && error.code !== '23505') {
+      console.error('markRead failed', { storyId, error })
+    }
   }, [userId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const sendEngagement = useCallback(async (storyId: string, signal: string) => {
-    await supabase.from('engagement_events').insert({
+    // Must match the table ReaderClient/update_weights.py use — a separate
+    // 'engagement_events' table doesn't exist, so writes there were lost.
+    const { error } = await supabase.from('engagement').insert({
       user_id: userId, story_id: storyId, signal,
     })
+    if (error) {
+      console.error('sendEngagement failed', { storyId, signal, error })
+    }
   }, [userId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const hasResults  = results !== null && results.length > 0
@@ -255,8 +294,17 @@ export default function SearchClient({ userId }: { userId: string }) {
           </div>
         )}
 
+        {/* Search failed — distinct from "no results" so a network/server
+            error doesn't read as "nothing matched" */}
+        {!loading && searchError && (
+          <div className="flex flex-col items-center justify-center pt-16 text-center gap-2">
+            <p className="text-sm text-rose-300">Search failed</p>
+            <p className="text-xs text-slate-600">Check your connection and try again</p>
+          </div>
+        )}
+
         {/* No results */}
-        {!loading && emptySearch && (
+        {!loading && !searchError && emptySearch && (
           <div className="flex flex-col items-center justify-center pt-16 text-center gap-2">
             <p className="text-sm text-slate-400">No stories found for <span className="text-white">"{query}"</span></p>
             <p className="text-xs text-slate-600">Try broader terms or a different date range</p>

@@ -10,16 +10,25 @@ import {
   STORY_SELECT,
 } from '@/lib/constants'
 
+// Local-time date math, not UTC — toISOString()/'Z' boundaries bucket by UTC
+// days, which during BST (UTC+1) misclassifies stories published 00:00-01:00
+// local time into the wrong day, and "yesterday" resolves one day further
+// back than intended when opened between local midnight and 1am.
 function formatDate(d: Date): string {
-  return d.toISOString().split('T')[0]
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
 }
 
 function toDateStart(dateStr: string): string {
-  return `${dateStr}T00:00:00.000Z`
+  const [y, m, d] = dateStr.split('-').map(Number)
+  return new Date(y, m - 1, d, 0, 0, 0, 0).toISOString()
 }
 
 function toDateEnd(dateStr: string): string {
-  return `${dateStr}T23:59:59.999Z`
+  const [y, m, d] = dateStr.split('-').map(Number)
+  return new Date(y, m - 1, d, 23, 59, 59, 999).toISOString()
 }
 
 function shiftDate(dateStr: string, days: number): string {
@@ -54,13 +63,17 @@ export default function ArchiveClient({ userId }: Props) {
         setSources(map)
       }
     })
-    supabase.from('read_items').select('story_id').eq('user_id', userId).then(({ data }) => {
-      if (data) {
-        const ids = new Set<string>()
-        data.forEach(r => { if (r.story_id) ids.add(r.story_id) })
-        setReadIds(ids)
-      }
-    })
+    // Ordered + capped: an unordered fetch past Supabase's row cap returns a
+    // nondeterministic subset; most-recent-first makes the truncation
+    // predictable (old reads may resurface as unread, not a random slice).
+    supabase.from('read_items').select('story_id').eq('user_id', userId)
+      .order('read_at', { ascending: false }).limit(2000).then(({ data }) => {
+        if (data) {
+          const ids = new Set<string>()
+          data.forEach(r => { if (r.story_id) ids.add(r.story_id) })
+          setReadIds(ids)
+        }
+      })
   }, [userId])
 
   const loadStories = useCallback(async (date: string) => {
@@ -113,8 +126,6 @@ export default function ArchiveClient({ userId }: Props) {
     acc[key] = stories.filter(s => s.category === key)
     return acc
   }, {})
-
-  const displayStories = filterCategory === 'all' ? stories : filtered
 
   const dateLabel = selectedDate === yesterday
     ? 'Yesterday'
@@ -209,7 +220,7 @@ export default function ArchiveClient({ userId }: Props) {
           <div className="flex justify-center py-16">
             <div className="w-6 h-6 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
           </div>
-        ) : displayStories.length === 0 ? (
+        ) : filtered.length === 0 ? (
           <div className="text-center py-20">
             <div className="text-4xl mb-3">📭</div>
             <p className="text-slate-400 font-medium">No stories on this date</p>
@@ -219,7 +230,7 @@ export default function ArchiveClient({ userId }: Props) {
           </div>
         ) : (
           <div className="space-y-3">
-            {displayStories.map(story => (
+            {filtered.map(story => (
               <SoloCard
                 key={story.id}
                 story={story}

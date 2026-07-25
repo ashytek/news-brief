@@ -23,6 +23,7 @@ export function TopicsPanel({ userId, readIds, onMarkRead, onEngagement }: Props
   const [loading, setLoading] = useState(true)
   const [newKeyword, setNewKeyword] = useState('')
   const [adding, setAdding] = useState(false)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -62,20 +63,42 @@ export function TopicsPanel({ userId, readIds, onMarkRead, onEngagement }: Props
     const kw = newKeyword.trim()
     if (!kw) return
     setAdding(true)
-    await supabase.from('topic_keywords').insert({ keyword: kw, is_active: true })
-    setNewKeyword('')
-    await loadData()
+    setErrorMsg(null)
+    const { error } = await supabase.from('topic_keywords').insert({ keyword: kw, is_active: true })
+    if (error) {
+      console.error('addKeyword failed', { kw, error })
+      setErrorMsg(error.code === '23505' ? `"${kw}" is already tracked` : 'Could not add keyword — try again')
+    } else {
+      setNewKeyword('')
+      await loadData()
+    }
     setAdding(false)
   }
 
+  // Optimistic update, reverted on failure — without this a failed write
+  // (RLS denial, network error) left the UI showing a state that never
+  // actually persisted, silently reappearing/disappearing on next load.
   const toggleKeyword = async (id: string, is_active: boolean) => {
-    await supabase.from('topic_keywords').update({ is_active: !is_active }).eq('id', id)
+    setErrorMsg(null)
     setKeywords(prev => prev.map(k => k.id === id ? { ...k, is_active: !is_active } : k))
+    const { error } = await supabase.from('topic_keywords').update({ is_active: !is_active }).eq('id', id)
+    if (error) {
+      console.error('toggleKeyword failed', { id, error })
+      setKeywords(prev => prev.map(k => k.id === id ? { ...k, is_active } : k))
+      setErrorMsg('Could not update keyword — try again')
+    }
   }
 
   const deleteKeyword = async (id: string) => {
-    await supabase.from('topic_keywords').delete().eq('id', id)
+    setErrorMsg(null)
+    const removed = keywords.find(k => k.id === id)
     setKeywords(prev => prev.filter(k => k.id !== id))
+    const { error } = await supabase.from('topic_keywords').delete().eq('id', id)
+    if (error) {
+      console.error('deleteKeyword failed', { id, error })
+      if (removed) setKeywords(prev => [...prev, removed].sort((a, b) => a.keyword.localeCompare(b.keyword)))
+      setErrorMsg('Could not remove keyword — try again')
+    }
   }
 
   const activeKeywords = keywords.filter(k => k.is_active)
@@ -109,6 +132,9 @@ export function TopicsPanel({ userId, readIds, onMarkRead, onEngagement }: Props
               {adding ? '…' : 'Add'}
             </button>
           </div>
+          {errorMsg && (
+            <p className="text-xs text-rose-400 mt-2">{errorMsg}</p>
+          )}
         </div>
 
         {/* Active keywords */}

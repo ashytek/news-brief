@@ -1,7 +1,7 @@
 """
 Gemini-powered summarisation. Zero cost at current volumes (free tier).
 
-- gemini-2.0-flash  →  general news bullets + cluster synthesis
+- gemini-2.0-flash  →  general news bullets
 - gemini-2.5-pro    →  prophetic extraction (1M-token context, thinking mode)
 
 Claude fallback removed — Gemini's exponential retry in llm.py handles
@@ -89,12 +89,6 @@ Each extracted item is a SECTION of a chronological walkthrough, in video order:
 ═══ OUTPUT VERIFICATION ═══
 Before submitting, count your sections. Check timestamps span from early in the video to near the end. If your latest timestamp is less than 50% through the video duration, you have under-covered — go back and add more from the latter half."""
 
-SYNTHESIS_SYSTEM = """You synthesise multiple news perspectives into a structured brief for a busy doctor.
-Given multiple source stories on the same event, produce:
-- core_fact: one sentence — the undisputed factual core of the event
-- consensus: 2-3 sentences — what all or most sources agree on
-- perspectives: array of per-source angles (max 4), each with the unique framing that source adds"""
-
 # ---------------------------------------------------------------------------
 # Native JSON schemas — Gemini enforces these natively; no markdown stripping needed
 # ---------------------------------------------------------------------------
@@ -122,28 +116,6 @@ BULLET_SCHEMA = {
     },
     "required": ["headline", "summary", "bullets"],
 }
-
-SYNTHESIS_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "core_fact":   {"type": "string"},
-        "consensus":   {"type": "string"},
-        "perspectives": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "source":          {"type": "string"},
-                    "angle":           {"type": "string"},
-                    "timestamp_link":  {"type": "string", "nullable": True},
-                },
-                "required": ["source", "angle"],
-            },
-        },
-    },
-    "required": ["core_fact", "consensus", "perspectives"],
-}
-
 
 # ---------------------------------------------------------------------------
 # Transcript builder
@@ -242,38 +214,4 @@ def summarise_video(
     # of ~1 bullet per 5 min of video so coverage scales with duration.
     cap = MAX_BULLETS_PROPHETIC if category == "prophetic" else MAX_BULLETS
     result["bullets"] = result.get("bullets", [])[:cap]
-    return result
-
-
-def synthesise_cluster(
-    category: str,
-    stories: list[dict],
-) -> dict | None:
-    """
-    Synthesises a multi-source cluster → {"core_fact", "consensus", "perspectives"}
-    Uses Gemini Flash (free, fast).
-    """
-    if len(stories) < 2:
-        return None
-
-    stories_text = ""
-    for i, s in enumerate(stories, 1):
-        stories_text += f"\n--- Source {i}: {s['source_name']} ---\n"
-        stories_text += f"Headline: {s['headline']}\n"
-        stories_text += f"Summary: {s['summary']}\n"
-        stories_text += "Key points:\n"
-        for b in s.get("bullets", [])[:4]:
-            ts = f" [{b['timestamp_seconds']}s]" if b.get("timestamp_seconds") else ""
-            stories_text += f"  • {b['text']}{ts}\n"
-        if s.get("video_url"):
-            stories_text += f"Video: {s['video_url']}\n"
-
-    result = llm.flash_json(
-        contents=f"Category: {category}\n\nStories:\n{stories_text}",
-        system_instruction=SYNTHESIS_SYSTEM,
-        response_schema=SYNTHESIS_SCHEMA,
-        temperature=0.2,
-        max_output_tokens=4096,
-    )
-
     return result

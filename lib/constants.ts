@@ -68,25 +68,10 @@ export const STORY_SELECT =
   'id, source_id, video_id, category, headline, summary, bullets, cluster_id, matched_topics, created_at, ' +
   'videos(id, url, published_at, thumbnail_url), sources(id, name)'
 
-export const CLUSTER_SELECT =
-  'id, category, core_fact, consensus, perspectives, story_count, first_seen_at, last_updated_at, synthesised_at, ' +
-  'stories(id, source_id, headline, summary, bullets, created_at, matched_topics, ' +
-  'videos(id, url, published_at, thumbnail_url), sources(id, name))'
-
 /** mm:ss formatting for video timestamps */
 export function formatTime(seconds: number): string {
-  const m = Math.floor(seconds / 60)
-  const s = seconds % 60
+  const total = Math.floor(seconds)
+  const m = Math.floor(total / 60)
+  const s = total % 60
   return `${m}:${s.toString().padStart(2, '0')}`
-}
-
-/** True if every story in a cluster is in the read set (or the cluster id itself is). */
-export function isClusterFullyRead(
-  cluster: { id: string; stories?: { id: string }[] | null },
-  readIds: Set<string>,
-): boolean {
-  if (readIds.has(cluster.id)) return true
-  const stories = cluster.stories ?? []
-  if (stories.length === 0) return false
-  return stories.every(s => readIds.has(s.id))
 }

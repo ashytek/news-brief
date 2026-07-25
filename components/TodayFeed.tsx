@@ -1,31 +1,29 @@
 'use client'
 
 import { useMemo } from 'react'
-import type { ClusterWithRelations, StoryWithRelations, Source } from '@/lib/types'
+import type { StoryWithRelations, Source } from '@/lib/types'
 import { SoloCard } from './SoloCard'
-import { ClusteredCard } from './ClusteredCard'
 import { SkeletonCard } from './SkeletonCard'
 import { CATEGORY_LABELS, CATEGORY_PILL_COLORS } from '@/lib/constants'
 import { rankItems } from '@/lib/ranking'
-import type { RankedItem } from '@/lib/ranking'
 
 interface Props {
-  clusters: ClusterWithRelations[]
   stories: StoryWithRelations[]
   sources: Record<string, Source>
   readIds: Set<string>
   sourceWeights?: Record<string, number>
   topicWeights?: Record<string, number>
-  onMarkRead: (storyId?: string, clusterId?: string) => void
-  onEngagement: (signal: string, storyId?: string, clusterId?: string) => void
+  onMarkRead: (storyId?: string) => void
+  onEngagement: (signal: string, storyId?: string) => void
   onDwellStart: (id: string) => void
-  onDwellEnd: (id: string, storyId?: string, clusterId?: string) => void
+  onDwellEnd: (id: string, storyId?: string) => void
   onMuteTopic?: (keywords: string[]) => void
   loading: boolean
+  error?: boolean
+  onRetry?: () => void
 }
 
 export function TodayFeed({
-  clusters,
   stories,
   sources,
   readIds,
@@ -37,22 +35,42 @@ export function TodayFeed({
   onDwellEnd,
   onMuteTopic,
   loading,
+  error = false,
+  onRetry,
 }: Props) {
   const ranked = useMemo(
-    () => rankItems(clusters, stories, readIds, sourceWeights, topicWeights),
-    [clusters, stories, readIds, sourceWeights, topicWeights],
+    () => rankItems(stories, readIds, sourceWeights, topicWeights),
+    [stories, readIds, sourceWeights, topicWeights],
   )
 
-  const unreadCount = ranked.filter(item =>
-    item.type === 'cluster'
-      ? !(readIds.has(item.data.id) || (item.data.stories?.every(s => readIds.has(s.id)) ?? false))
-      : !readIds.has(item.data.id)
-  ).length
+  const unreadCount = ranked.filter(item => !readIds.has(item.data.id)).length
 
   if (loading) {
     return (
       <div className="space-y-3">
         {Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="text-center py-20 px-6">
+        <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-rose-500/10 ring-1 ring-rose-500/30 mb-4">
+          <svg className="w-8 h-8 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+          </svg>
+        </div>
+        <p className="text-base font-semibold text-rose-200">Couldn&apos;t load today&apos;s brief</p>
+        <p className="text-sm text-slate-400 mt-1.5">Something went wrong fetching stories — check the pipeline status above, or try refreshing.</p>
+        {onRetry && (
+          <button
+            onClick={onRetry}
+            className="mt-5 text-sm font-semibold text-violet-300 hover:text-violet-200 transition-colors inline-flex items-center gap-1"
+          >
+            Try again
+          </button>
+        )}
       </div>
     )
   }
@@ -90,58 +108,26 @@ export function TodayFeed({
       </div>
 
       {/* Ranked feed */}
-      {ranked.map((item: RankedItem) => {
-        if (item.type === 'cluster') {
-          const cluster = item.data as ClusterWithRelations
-          return (
-            <div key={cluster.id} className="relative">
-              {/* Category chip overlay */}
-              <div className="absolute top-3 right-3 z-10">
-                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${CATEGORY_PILL_COLORS[cluster.category]}`}>
-                  {CATEGORY_LABELS[cluster.category]}
-                </span>
-              </div>
-              <ClusteredCard
-                cluster={cluster}
-                isRead={
-                  readIds.has(cluster.id) ||
-                  (!!cluster.stories?.length && cluster.stories.every(s => readIds.has(s.id)))
-                }
-                readStoryIds={readIds}
-                onRead={() => onMarkRead(undefined, cluster.id)}
-                onEngagement={(signal) => onEngagement(signal, undefined, cluster.id)}
-                onDwellStart={() => onDwellStart(cluster.id)}
-                onDwellEnd={() => onDwellEnd(cluster.id, undefined, cluster.id)}
-                onMuteTopic={onMuteTopic ? () => onMuteTopic(
-                  Array.from(new Set((cluster.stories ?? []).flatMap(s => s.matched_topics ?? [])))
-                ) : undefined}
-              />
-            </div>
-          )
-        }
-
-        const story = item.data as StoryWithRelations
-        return (
-          <div key={story.id} className="relative">
-            {/* Category chip overlay */}
-            <div className="absolute top-3 right-3 z-10">
-              <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${CATEGORY_PILL_COLORS[story.category]}`}>
-                {CATEGORY_LABELS[story.category]}
-              </span>
-            </div>
-            <SoloCard
-              story={story}
-              source={sources[story.source_id]}
-              isRead={readIds.has(story.id)}
-              onRead={() => onMarkRead(story.id)}
-              onEngagement={(signal) => onEngagement(signal, story.id)}
-              onDwellStart={() => onDwellStart(story.id)}
-              onDwellEnd={() => onDwellEnd(story.id, story.id)}
-              onMuteTopic={onMuteTopic ? () => onMuteTopic(story.matched_topics ?? []) : undefined}
-            />
+      {ranked.map(({ data: story }) => (
+        <div key={story.id} className="relative">
+          {/* Category chip overlay */}
+          <div className="absolute top-3 right-3 z-10">
+            <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${CATEGORY_PILL_COLORS[story.category]}`}>
+              {CATEGORY_LABELS[story.category]}
+            </span>
           </div>
-        )
-      })}
+          <SoloCard
+            story={story}
+            source={sources[story.source_id]}
+            isRead={readIds.has(story.id)}
+            onRead={() => onMarkRead(story.id)}
+            onEngagement={(signal) => onEngagement(signal, story.id)}
+            onDwellStart={() => onDwellStart(story.id)}
+            onDwellEnd={() => onDwellEnd(story.id, story.id)}
+            onMuteTopic={onMuteTopic ? () => onMuteTopic(story.matched_topics ?? []) : undefined}
+          />
+        </div>
+      ))}
     </div>
   )
 }

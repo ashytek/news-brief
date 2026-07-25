@@ -39,19 +39,29 @@ export async function proxy(request: NextRequest) {
   if (!user && !request.nextUrl.pathname.startsWith('/auth')) {
     const url = request.nextUrl.clone()
     url.pathname = '/auth'
-    return NextResponse.redirect(url)
+    const redirectResponse = NextResponse.redirect(url)
+    supabaseResponse.cookies.getAll().forEach(cookie => redirectResponse.cookies.set(cookie))
+    return redirectResponse
   }
 
   // Redirect authenticated users away from /auth
   if (user && request.nextUrl.pathname.startsWith('/auth')) {
     const url = request.nextUrl.clone()
     url.pathname = '/reader'
-    return NextResponse.redirect(url)
+    const redirectResponse = NextResponse.redirect(url)
+    supabaseResponse.cookies.getAll().forEach(cookie => redirectResponse.cookies.set(cookie))
+    return redirectResponse
   }
 
   return supabaseResponse
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|api).*)'],
+  // Browsers fetch manifest.json and icons without cookies (even same-origin),
+  // so routing them through auth makes the proxy 307 them to /auth — Chrome
+  // gets an HTML login page where it expects JSON/PNG and fails PWA
+  // installability entirely. Exclude static/manifest assets from the gate.
+  matcher: [
+    '/((?!_next/static|_next/image|favicon\\.ico|api|manifest\\.json|icons/|.*\\.(?:png|svg|ico|webmanifest)$).*)',
+  ],
 }

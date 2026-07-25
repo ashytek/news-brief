@@ -2,7 +2,7 @@
  * Client-side ranking logic for the Today feed.
  *
  * Score formula:
- *   base  = recency_score + cluster_breadth_bonus
+ *   base  = recency_score + 1
  *   score = base × source_weight × topic_boost
  *
  * source_weight: from source_weights table; default 1.0; range 0.5–1.5.
@@ -13,12 +13,13 @@
  *
  * Read items always sink to the bottom regardless of score.
  */
-import type { ClusterWithRelations, StoryWithRelations } from '@/lib/types'
-import { isClusterFullyRead } from '@/lib/constants'
+import type { StoryWithRelations } from '@/lib/types'
 
-export type RankedItem =
-  | { type: 'cluster'; data: ClusterWithRelations; score: number }
-  | { type: 'story';   data: StoryWithRelations;   score: number }
+export interface RankedItem {
+  type: 'story'
+  data: StoryWithRelations
+  score: number
+}
 
 /**
  * Recency decay: score halves every ~6 h.
@@ -51,56 +52,34 @@ function getTopicBoost(
 }
 
 /**
- * Rank a mixed set of clusters and solo stories.
- * @param clusters   - cluster items for the today feed
- * @param solos      - unclustered story items
- * @param readIds    - set of read story/cluster IDs (read items sink to bottom)
+ * Rank a set of solo stories.
+ * @param solos      - story items for the today feed
+ * @param readIds    - set of read story IDs (read items sink to bottom)
  * @param sourceWeights - map of source_id → weight (empty = all neutral)
  * @param topicWeights  - map of keyword → weight  (empty = all neutral)
  * @param limit      - max items to return (default 12)
  */
 export function rankItems(
-  clusters: ClusterWithRelations[],
   solos: StoryWithRelations[],
   readIds: Set<string>,
   sourceWeights: Record<string, number> = {},
   topicWeights: Record<string, number> = {},
   limit = 12,
 ): RankedItem[] {
-  const items: RankedItem[] = [
-    ...clusters.map(c => {
-      const stories = c.stories ?? []
-      // Source weight: average across all contributing sources in the cluster
-      const avgSourceW = stories.length > 0
-        ? stories.reduce((sum, s) => sum + getSourceWeight(s.source_id, sourceWeights), 0) / stories.length
-        : 1.0
-      const allTopics = Array.from(new Set(stories.flatMap(s => s.matched_topics ?? [])))
-      const base = recencyScore(new Date(c.last_updated_at)) + c.story_count * 1.5
-      return {
-        type: 'cluster' as const,
-        data: c,
-        score: base * avgSourceW * getTopicBoost(allTopics, topicWeights),
-      }
-    }),
-    ...solos.map(s => {
-      const base = recencyScore(new Date(s.videos?.published_at ?? s.created_at)) + 1
-      return {
-        type: 'story' as const,
-        data: s,
-        score: base * getSourceWeight(s.source_id, sourceWeights) * getTopicBoost(s.matched_topics, topicWeights),
-      }
-    }),
-  ]
+  const items: RankedItem[] = solos.map(s => {
+    const base = recencyScore(new Date(s.videos?.published_at ?? s.created_at)) + 1
+    return {
+      type: 'story' as const,
+      data: s,
+      score: base * getSourceWeight(s.source_id, sourceWeights) * getTopicBoost(s.matched_topics, topicWeights),
+    }
+  })
 
   return items
     .sort((a, b) => {
       // Read items always sink to the bottom
-      const aRead = a.type === 'cluster'
-        ? isClusterFullyRead(a.data, readIds)
-        : readIds.has(a.data.id)
-      const bRead = b.type === 'cluster'
-        ? isClusterFullyRead(b.data, readIds)
-        : readIds.has(b.data.id)
+      const aRead = readIds.has(a.data.id)
+      const bRead = readIds.has(b.data.id)
       if (aRead !== bRead) return aRead ? 1 : -1
       return b.score - a.score
     })

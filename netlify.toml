@@ -7,3 +7,17 @@
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
+
+# No headers were set at all — the /auth page was frameable (clickjacking),
+# and there was no HSTS/nosniff/referrer policy. A CSP is deliberately not
+# added here — it needs careful tuning against every external origin the app
+# actually loads (Supabase, YouTube thumbnails, Google's embedding API) and a
+# wrong one silently breaks the app rather than failing loudly.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Strict-Transport-Security = "max-age=31536000; includeSubDomains"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"

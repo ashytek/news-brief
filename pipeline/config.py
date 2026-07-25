@@ -36,16 +36,15 @@ SUPABASE_SERVICE_KEY  = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 # How many hours back to look for new videos
 LOOKBACK_HOURS = 4
 
-# Cosine similarity threshold to merge stories into a cluster.
-# 0.72 was over-aggressive (e.g. "India-NZ FTA" merged with unrelated
-# "Butter Chicken Tsunami" remark). 0.78 keeps tight near-duplicates
-# clustered while letting different events stay solo.
-CLUSTER_THRESHOLD = 0.78
-
 # Videos shorter than this are treated as filler/shorts and skipped entirely
 # Vantage segments can run 2-8 min — 2 min floor catches them all while
 # still filtering out genuine 30-60s Shorts
 MIN_VIDEO_DURATION_SECONDS = 120
+
+# Vantage/Firstpost videos longer than this are usually recap/rehash content
+# covering earlier news, not worth spending Gemini tokens on — see the
+# skip check in run_pipeline.py's process_transcripts_and_summarise().
+MAX_VANTAGE_RECAP_SECONDS = 20 * 60
 
 # Max walkthrough sections per story. Sections are chronological beats
 # (~4-6 for a 5-min Vantage segment, 6-9 for a 10-min piece) — 10 leaves
@@ -60,7 +59,7 @@ PROPHETIC_BULLETS_PER_SECONDS = 300  # 1 bullet per 5 min minimum
 
 # Gemini models — primary LLM, free tier, zero cost at current volumes
 # Check https://ai.google.dev/gemini-api/docs/models for latest stable model strings
-GEMINI_FLASH_MODEL = "gemini-2.5-flash"  # general news summarisation + cluster synthesis
+GEMINI_FLASH_MODEL = "gemini-2.5-flash"  # general news summarisation
 GEMINI_PRO_MODEL   = "gemini-2.5-pro"   # prophetic extraction (1M context + thinking mode)
 
 # Optional: Healthchecks.io ping URL for dead-man's switch monitoring

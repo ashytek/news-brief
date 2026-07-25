@@ -140,17 +140,23 @@ def _record_success(fetcher: str | None = None):
         _fetcher_success_counts[fetcher] = _fetcher_success_counts.get(fetcher, 0) + 1
 
 
-def _adaptive_pre_request_delay():
+def _adaptive_pre_request_delay(delay_range: tuple[float, float] | None = None):
     """
     Sleep before the next request. Length scales with how recently / how many
     times we've been rate-limited:
-      streak 0 → normal jittered delay (5–12s)
+      streak 0 → normal jittered delay (5–12s, or delay_range if given)
       streak 1 → cooldown × 1   (60s default)
       streak 2 → cooldown × 2   (120s)
       streak 3+ → cooldown × 4  (240s — last-ditch)
+
+    delay_range overrides the streak-0 jitter window explicitly (e.g. a wider
+    window for retry batches) instead of the caller monkey-patching the
+    process-global `random.uniform`, which used to also stretch unrelated
+    jitter in llm.py/cluster.py backoffs for the duration of the retry batch.
     """
     if _rate_limit_streak == 0:
-        time.sleep(random.uniform(_BASE_DELAY_MIN, _BASE_DELAY_MAX))
+        lo, hi = delay_range if delay_range else (_BASE_DELAY_MIN, _BASE_DELAY_MAX)
+        time.sleep(random.uniform(lo, hi))
         return
     multiplier = min(4, 2 ** (_rate_limit_streak - 1))
     wait = _RATE_LIMIT_COOLDOWN * multiplier
@@ -703,8 +709,15 @@ def extract_video_id(url: str) -> str | None:
     return match.group(1) if match else None
 
 
-def get_article_text(url: str, title: str) -> str:
-    """For non-video sources: scrape article text."""
+MIN_ARTICLE_TEXT_CHARS = 200
+
+
+def get_article_text(url: str, title: str) -> str | None:
+    """For non-video sources: scrape article text. Returns None if the page
+    didn't yield real body text (paywall, bot block, empty page) — callers
+    must NOT fall back to summarising from the title alone, since Gemini
+    will happily fabricate a full headline/summary/bullets from one line
+    and present it identically to a genuine story."""
     try:
         resp = requests.get(url, timeout=15, headers={
             "User-Agent": "Mozilla/5.0 (compatible; NewsBot/1.0)"
@@ -716,22 +729,30 @@ def get_article_text(url: str, title: str) -> str:
         article    = soup.find("article") or soup.find("main") or soup
         paragraphs = article.find_all("p")
         text = " ".join(p.get_text(strip=True) for p in paragraphs if len(p.get_text(strip=True)) > 50)
-        return f"{title}\n\n{text}" if text else title
+        if len(text) < MIN_ARTICLE_TEXT_CHARS:
+            print(f"    Article scrape yielded too little text ({len(text)} chars) — treating as failed")
+            return None
+        return f"{title}\n\n{text}"
     except Exception as e:
         print(f"    Article scrape error: {e}")
-        return title
+        return None
 
 
 # ---------------------------------------------------------------------------
 # Entry point called by run_pipeline.py
 # ---------------------------------------------------------------------------
 
-def fetch_transcript(video: dict) -> tuple:
+def fetch_transcript(video: dict, retry_delay_range: tuple[float, float] | None = None) -> tuple:
     """
     Returns (transcript_text, status, segments).
     status: fetched | not_applicable | failed | no_transcript
       'failed'        → retryable (IP block, network error)
       'no_transcript' → permanent (captions disabled on this video)
+
+    retry_delay_range overrides the pre-request jitter window (e.g. a wider
+    window when retrying previously-failed videos) — see
+    _adaptive_pre_request_delay. No-op on the Apify path, which uses a fixed
+    1s politeness pause instead.
     """
     url               = video["url"]
     title             = video["title"]
@@ -741,6 +762,8 @@ def fetch_transcript(video: dict) -> tuple:
     # Non-video sources (articles, RSS)
     if transcript_status == "not_applicable":
         text = get_article_text(url, title)
+        if text is None:
+            return None, "failed", []
         return text, "not_applicable", []
 
     vid_id = extract_video_id(url)
@@ -770,7 +793,7 @@ def fetch_transcript(video: dict) -> tuple:
     if APIFY_TOKEN:
         time.sleep(1)
     else:
-        _adaptive_pre_request_delay()
+        _adaptive_pre_request_delay(retry_delay_range)
 
     try:
         result = get_youtube_transcript(vid_id)

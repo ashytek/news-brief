@@ -118,7 +118,14 @@ export async function POST(req: NextRequest) {
 
   // ── Simple text fallback (no migration needed) ────────────────────────────
   // ilike on headline + summary — catches most name/country/topic queries
-  const words = query.split(/\s+/).filter(w => w.length >= 2).slice(0, 5)
+  // Strip PostgREST or-filter metacharacters (`,`.()`) and ilike wildcards
+  // (`%`, `_`) so a search term can't break out of the filter grammar or
+  // inject extra conditions.
+  const words = query
+    .split(/\s+/)
+    .map(w => w.replace(/[,()%_]/g, ''))
+    .filter(w => w.length >= 2)
+    .slice(0, 5)
   if (words.length === 0) return NextResponse.json({ results: [] })
 
   // Build OR filter: headline or summary contains any word in the query

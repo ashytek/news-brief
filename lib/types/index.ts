@@ -50,25 +50,6 @@ export interface Video {
   thumbnail_url: string | null
 }
 
-export interface PerspectiveItem {
-  source: string
-  angle: string
-  timestamp_link: string | null
-}
-
-export interface Cluster {
-  id: string
-  category: Category
-  core_fact: string | null
-  consensus: string | null
-  perspectives: PerspectiveItem[]
-  story_count: number
-  first_seen_at: string
-  last_updated_at: string
-  synthesised_at: string | null
-  stories?: Story[]
-}
-
 export interface EngagementSignal {
   story_id?: string
   cluster_id?: string
@@ -79,8 +60,4 @@ export interface EngagementSignal {
 export interface StoryWithRelations extends Omit<Story, 'video' | 'source'> {
   videos?: Video | null
   sources?: Source | null
-}
-
-export interface ClusterWithRelations extends Cluster {
-  stories?: StoryWithRelations[]
 }

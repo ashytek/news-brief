@@ -93,7 +93,7 @@ def recover():
         else:
             print(f"    ✓ Story saved")
 
-    print(f"\n  Embedding and clustering {len(story_ids)} recovered stories…")
+    print(f"\n  Embedding {len(story_ids)} recovered stories…")
     for story_id, headline, summary_text, category in story_ids:
         cluster.embed_and_cluster_story(
             story_id=story_id,
@@ -101,9 +101,6 @@ def recover():
             summary=summary_text,
             category=category,
         )
-
-    print("\n  Synthesising clusters…")
-    cluster.synthesise_ready_clusters()
 
     print(f"\n✅ Recovery complete — {len(story_ids)} stories created")
 

@@ -68,6 +68,32 @@ def mark_video_permanent_failure(video_id: str):
     }).eq("id", video_id).execute()
 
 
+def get_videos_missing_stories(limit: int = 30, lookback_hours: int = 72) -> list:
+    """Videos whose transcript was fetched successfully but never produced a
+    story (summarise_video returned None — e.g. Gemini quota exhausted
+    mid-run). Nothing else in the scheduled pipeline revisits these, so they
+    were silently lost forever without this. Bounded lookback avoids
+    re-scanning the whole table on every run."""
+    db = get_db()
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=lookback_hours)).isoformat()
+    fetched = db.table("videos") \
+        .select("id, title, url, published_at, transcript_text, source_id") \
+        .eq("transcript_status", "fetched") \
+        .gte("fetched_at", cutoff) \
+        .order("fetched_at", desc=True) \
+        .limit(limit * 3) \
+        .execute().data
+    if not fetched:
+        return []
+    video_ids = [v["id"] for v in fetched]
+    has_story = db.table("stories") \
+        .select("video_id") \
+        .in_("video_id", video_ids) \
+        .execute().data
+    covered = {s["video_id"] for s in has_story}
+    return [v for v in fetched if v["id"] not in covered][:limit]
+
+
 def get_stories_missing_embeddings(limit: int = 50) -> list:
     """Return stories that were summarised but not yet embedded (e.g. after a crash)."""
     db = get_db()
@@ -112,37 +138,6 @@ def insert_story(record: dict) -> str:
     return res.data[0]["id"]
 
 
-def get_recent_embeddings(category: str, hours: int = 48) -> list[dict]:
-    """Fetch recent story embeddings for clustering."""
-    db = get_db()
-    res = db.rpc("get_recent_embeddings_for_clustering", {
-        "p_category": category,
-        "p_hours": hours
-    }).execute()
-    return res.data
-
-
-def get_or_create_cluster(category: str) -> str:
-    db = get_db()
-    res = db.table("clusters").insert({"category": category}).execute()
-    return res.data[0]["id"]
-
-
-def assign_story_to_cluster(story_id: str, cluster_id: str):
-    db = get_db()
-    db.table("stories").update({"cluster_id": cluster_id}).eq("id", story_id).execute()
-
-
-def update_cluster(cluster_id: str, updates: dict):
-    db = get_db()
-    db.table("clusters").update(updates).eq("id", cluster_id).execute()
-
-
-def increment_cluster_story_count(cluster_id: str):
-    db = get_db()
-    db.rpc("increment_cluster_story_count", {"p_cluster_id": cluster_id}).execute()
-
-
 def mark_source_success(source_id: str):
     db = get_db()
     db.table("sources").update({
@@ -167,9 +162,18 @@ def log_pipeline_run(status: str, stats: dict) -> str:
     return res.data[0]["id"]
 
 
-def start_pipeline_run() -> str:
+def start_pipeline_run(trigger_source: str = "schedule") -> str:
     db = get_db()
-    res = db.table("pipeline_runs").insert({"status": "running"}).execute()
+    try:
+        res = db.table("pipeline_runs").insert({
+            "status": "running",
+            "trigger_source": trigger_source,
+        }).execute()
+    except Exception:
+        # trigger_source column may not exist yet — ignore and insert
+        # without it (see supabase/migrations/pipeline_runs_trigger_source.sql).
+        # A run must never fail to start over an optional/cosmetic column.
+        res = db.table("pipeline_runs").insert({"status": "running"}).execute()
     return res.data[0]["id"]
 
 

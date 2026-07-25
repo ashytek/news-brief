@@ -7,7 +7,7 @@ interface Props {
 }
 
 export function TsLink({ videoUrl, timestampSeconds, children }: Props) {
-  const url = timestampSeconds
+  const url = timestampSeconds != null
     ? `${videoUrl}${videoUrl.includes('?') ? '&' : '?'}t=${timestampSeconds}s`
     : videoUrl
 

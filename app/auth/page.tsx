@@ -1,7 +1,5 @@
 'use client'
 
-export const dynamic = 'force-dynamic'
-
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 
@@ -22,6 +20,9 @@ export default function AuthPage() {
       email,
       options: {
         emailRedirectTo: `${window.location.origin}/reader`,
+        // Personal single-user app — block anyone who isn't already a
+        // registered user from self-signing-up via the magic link.
+        shouldCreateUser: false,
       },
     })
 

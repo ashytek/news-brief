@@ -7,13 +7,27 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>
 }
 
+const DISMISS_KEY = 'newsbrief_install_dismissed'
+const SNOOZE_DAYS = 7
+
+// Only "installed" is permanent — a snoozed timestamp re-offers the prompt
+// after SNOOZE_DAYS so a single accidental tap doesn't hide it forever.
+function isSnoozed(): boolean {
+  const stored = localStorage.getItem(DISMISS_KEY)
+  if (!stored) return false
+  if (stored === 'installed') return true
+  const snoozedAt = Number(stored)
+  if (Number.isNaN(snoozedAt)) return false
+  return Date.now() - snoozedAt < SNOOZE_DAYS * 24 * 60 * 60 * 1000
+}
+
 export function InstallPrompt() {
   const [prompt, setPrompt] = useState<BeforeInstallPromptEvent | null>(null)
   const [dismissed, setDismissed] = useState(false)
 
   useEffect(() => {
     if (typeof window === 'undefined') return
-    if (localStorage.getItem('newsbrief_install_dismissed')) return
+    if (isSnoozed()) return
 
     const handler = (e: Event) => {
       e.preventDefault()
@@ -28,15 +42,14 @@ export function InstallPrompt() {
   const handleInstall = async () => {
     await prompt.prompt()
     const { outcome } = await prompt.userChoice
-    if (outcome === 'accepted' || outcome === 'dismissed') {
-      setDismissed(true)
-      localStorage.setItem('newsbrief_install_dismissed', '1')
-    }
+    setDismissed(true)
+    // Only "accepted" is permanent — a swipe-away of the native sheet just snoozes.
+    localStorage.setItem(DISMISS_KEY, outcome === 'accepted' ? 'installed' : String(Date.now()))
   }
 
   const handleDismiss = () => {
     setDismissed(true)
-    localStorage.setItem('newsbrief_install_dismissed', '1')
+    localStorage.setItem(DISMISS_KEY, String(Date.now()))
   }
 
   return (

@@ -3,16 +3,15 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import type { Category, Source } from '@/lib/types'
-import type { StoryWithRelations, ClusterWithRelations } from '@/lib/types'
+import type { StoryWithRelations } from '@/lib/types'
 import { SoloCard } from '@/components/SoloCard'
-import { ClusteredCard } from '@/components/ClusteredCard'
 import { CategoryNav, type ActiveTab } from '@/components/CategoryNav'
 import { TopicsPanel } from '@/components/TopicsPanel'
 import { TodayFeed } from '@/components/TodayFeed'
 import { SkeletonCard } from '@/components/SkeletonCard'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { InstallPrompt } from '@/components/InstallPrompt'
-import { STORY_SELECT, CLUSTER_SELECT, isClusterFullyRead } from '@/lib/constants'
+import { STORY_SELECT } from '@/lib/constants'
 
 const CATEGORIES: { key: Category; label: string; color: string }[] = [
   { key: 'prophetic',    label: 'Prophetic',      color: 'violet' },
@@ -40,13 +39,12 @@ export default function ReaderClient({ userId }: { userId: string }) {
   }, [])
 
   const [showUnreadOnly, setShowUnreadOnly] = useState(true)
-  const [clusters, setClusters] = useState<ClusterWithRelations[]>([])
   const [soloStories, setSoloStories] = useState<StoryWithRelations[]>([])
-  const [todayClusters, setTodayClusters] = useState<ClusterWithRelations[]>([])
   const [todayStories, setTodayStories] = useState<StoryWithRelations[]>([])
   const [readIds, setReadIds] = useState<Set<string>>(new Set())
   const [mutedKeywords, setMutedKeywords] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [sources, setSources] = useState<Record<string, Source>>({})
   const [topicCount, setTopicCount] = useState(0)
@@ -58,6 +56,16 @@ export default function ReaderClient({ userId }: { userId: string }) {
   )
   const [lastPipelineRun, setLastPipelineRun] = useState<Date | null>(null)
   const [pipelineStruggling, setPipelineStruggling] = useState(false)
+  // Manual "Run now" trigger — see handleTriggerPipeline below.
+  const [triggerState, setTriggerState] = useState<'idle' | 'triggering' | 'waiting' | 'running'>('idle')
+  const [triggerError, setTriggerError] = useState<string | null>(null)
+  const [triggerMessage, setTriggerMessage] = useState<string | null>(null)
+  const triggerPollRef = useRef<{
+    timeoutId: ReturnType<typeof setTimeout> | null
+    baselineId: string | null
+    phase: 'waiting' | 'running'
+    deadline: number
+  }>({ timeoutId: null, baselineId: null, phase: 'waiting', deadline: 0 })
   const [isOffline, setIsOffline] = useState(false)
   const [showScrollTop, setShowScrollTop] = useState(false)
   const pullStartY = useRef<number | null>(null)
@@ -65,6 +73,11 @@ export default function ReaderClient({ userId }: { userId: string }) {
   const [showMoreMenu, setShowMoreMenu] = useState(false)
   const moreMenuRef = useRef<HTMLDivElement>(null)
   const dwellTimers = useRef<Map<string, number>>(new Map())
+  // Bumped on every loadContent() call; a response only commits state if it's
+  // still the latest in-flight request — otherwise rapid tab switching can
+  // let an older, slower response land after a newer one and show the wrong
+  // category's stories.
+  const loadReqId = useRef(0)
 
   // Record last-visit timestamp on mount
   useEffect(() => {
@@ -99,6 +112,27 @@ export default function ReaderClient({ userId }: { userId: string }) {
       })
   }, [userId]) // eslint-disable-line react-hooks/exhaustive-deps — load once on mount
 
+  // Pipeline health — last completed run of ANY status (a success-only
+  // query hides outages: the dot stayed green while runs were failing).
+  // "Struggling" = the last 3 runs found videos but produced 0 stories.
+  // Extracted as a callback so it can also be re-run after a manually
+  // triggered run finishes (see pollTriggerStatus below).
+  const refreshPipelineHealth = useCallback(async () => {
+    const { data } = await supabase
+      .from('pipeline_runs')
+      .select('finished_at, status, stories_created, videos_found')
+      .not('finished_at', 'is', null)
+      .order('finished_at', { ascending: false })
+      .limit(3)
+    if (!data || data.length === 0) return
+    setLastPipelineRun(new Date(data[0].finished_at))
+    const struggling =
+      data.length >= 3 &&
+      data.every(r => (r.stories_created ?? 0) === 0) &&
+      data.some(r => (r.videos_found ?? 0) > 0)
+    setPipelineStruggling(struggling)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Load sources into a lookup map
   useEffect(() => {
     supabase.from('sources').select('id, name, category, source_type, is_active').then(({ data }) => {
@@ -109,15 +143,20 @@ export default function ReaderClient({ userId }: { userId: string }) {
       }
     })
 
-    // Load topic count badge
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+
+    // Load topic count badge — scoped to the last 7 days, not all-time.
+    // An unscoped count only ever grows and renders as a permanently
+    // pinned "99+" in the same badge style as an unread count, conveying
+    // nothing useful.
     supabase
       .from('stories')
       .select('id', { count: 'exact', head: true })
       .not('matched_topics', 'is', null)
+      .gte('created_at', sevenDaysAgo)
       .then(({ count }) => { if (count) setTopicCount(count) })
 
     // Detect which categories have recent content (last 7 days) — hides dead tabs
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
     Promise.all(
       CATEGORIES.map(cat =>
         supabase
@@ -131,25 +170,8 @@ export default function ReaderClient({ userId }: { userId: string }) {
       setActiveCategoryKeys(new Set(results.filter(r => r.hasContent).map(r => r.key)))
     })
 
-    // Pipeline health — last completed run of ANY status (a success-only
-    // query hides outages: the dot stayed green while runs were failing).
-    // "Struggling" = the last 3 runs found videos but produced 0 stories.
-    supabase
-      .from('pipeline_runs')
-      .select('finished_at, status, stories_created, videos_found')
-      .not('finished_at', 'is', null)
-      .order('finished_at', { ascending: false })
-      .limit(3)
-      .then(({ data }) => {
-        if (!data || data.length === 0) return
-        setLastPipelineRun(new Date(data[0].finished_at))
-        const struggling =
-          data.length >= 3 &&
-          data.every(r => (r.stories_created ?? 0) === 0) &&
-          data.some(r => (r.videos_found ?? 0) > 0)
-        setPipelineStruggling(struggling)
-      })
-  }, [])
+    refreshPipelineHealth()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps — load once on mount
 
   // Close the header "More" menu on an outside tap. Deliberately NOT using a
   // fixed inset-0 catcher element: backdrop-filter/filter/transform on any
@@ -186,10 +208,16 @@ export default function ReaderClient({ userId }: { userId: string }) {
 
   // Load read item IDs once on mount — independent of active tab
   const loadReadIds = useCallback(async () => {
+    // Ordered + capped: Supabase enforces a server-side row cap regardless
+    // of .limit(), and an unordered query returns a nondeterministic subset
+    // once past it. Ordering by most-recent-first means old reads are what
+    // silently drop off (they may resurface as unread), not a random slice.
     const { data } = await supabase
       .from('read_items')
       .select('story_id, cluster_id')
       .eq('user_id', userId)
+      .order('read_at', { ascending: false })
+      .limit(2000)
     if (data) {
       const ids = new Set<string>()
       data.forEach(r => {
@@ -253,50 +281,50 @@ export default function ReaderClient({ userId }: { userId: string }) {
       return
     }
 
+    // Rapid tab switching fires overlapping requests; only the response
+    // matching the most recently issued request is allowed to commit state —
+    // otherwise an older, slower response can land after a newer one and
+    // show the wrong category's stories.
+    const reqId = ++loadReqId.current
+    const isStale = () => reqId !== loadReqId.current
+
     setLoading(true)
+    setLoadError(false)
 
     if (activeTab === 'today') {
       const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
-      const [clusterRes, storyRes] = await Promise.all([
-        supabase
-          .from('clusters')
-          .select(CLUSTER_SELECT)
-          .gte('last_updated_at', yesterday)
-          .order('last_updated_at', { ascending: false })
-          .limit(60),
-        supabase
-          .from('stories')
-          .select(STORY_SELECT)
-          .is('cluster_id', null)
-          .gte('created_at', yesterday)
-          .order('created_at', { ascending: false })
-          .limit(60),
-      ])
-      if (clusterRes.data) setTodayClusters(clusterRes.data as unknown as ClusterWithRelations[])
-      if (storyRes.data) setTodayStories(storyRes.data as unknown as StoryWithRelations[])
+      const storyRes = await supabase
+        .from('stories')
+        .select(STORY_SELECT)
+        .gte('created_at', yesterday)
+        .order('created_at', { ascending: false })
+        .limit(60)
+      if (isStale()) return
+      if (storyRes.error) {
+        console.error('loadContent (today) failed', storyRes.error)
+        setLoadError(true)
+      } else if (storyRes.data) {
+        setTodayStories(storyRes.data as unknown as StoryWithRelations[])
+      }
       setLastUpdated(new Date())
       setLoading(false)
       return
     }
 
-    const [clusterRes, storyRes] = await Promise.all([
-      supabase
-        .from('clusters')
-        .select(CLUSTER_SELECT)
-        .eq('category', activeTab)
-        .order('last_updated_at', { ascending: false })
-        .limit(100),
-      supabase
-        .from('stories')
-        .select(STORY_SELECT)
-        .eq('category', activeTab)
-        .is('cluster_id', null)
-        .order('created_at', { ascending: false })
-        .limit(100),
-    ])
+    const storyRes = await supabase
+      .from('stories')
+      .select(STORY_SELECT)
+      .eq('category', activeTab)
+      .order('created_at', { ascending: false })
+      .limit(100)
 
-    if (clusterRes.data) setClusters(clusterRes.data as unknown as ClusterWithRelations[])
-    if (storyRes.data) setSoloStories(storyRes.data as unknown as StoryWithRelations[])
+    if (isStale()) return
+    if (storyRes.error) {
+      console.error('loadContent failed', storyRes.error)
+      setLoadError(true)
+    } else if (storyRes.data) {
+      setSoloStories(storyRes.data as unknown as StoryWithRelations[])
+    }
     setLastUpdated(new Date())
     setLoading(false)
   }, [activeTab])
@@ -304,6 +332,109 @@ export default function ReaderClient({ userId }: { userId: string }) {
   useEffect(() => {
     loadContent()
   }, [activeTab, loadContent])
+
+  // ── Manual pipeline trigger ────────────────────────────────────────────
+  // workflow_dispatch returns no run ID, so there's no way to directly
+  // correlate this trigger with the resulting Actions run — we can only
+  // watch pipeline_runs for a new row to appear (id differs from the
+  // baseline captured at trigger time) and then track it to completion.
+  const POLL_INTERVAL_WAITING_MS = 15_000
+  const POLL_INTERVAL_RUNNING_MS = 45_000
+  const MAX_WAITING_MS = 10 * 60_000  // GitHub queue + checkout + pip install
+  const MAX_RUNNING_MS = 45 * 60_000  // matches the workflow's own timeout
+
+  const pollTriggerStatus = useCallback(async () => {
+    const ref = triggerPollRef.current
+    const { data } = await supabase
+      .from('pipeline_runs')
+      .select('id, status, started_at, finished_at, stories_created')
+      .order('started_at', { ascending: false })
+      .limit(1)
+    const row = data?.[0]
+    const isNewRow = row && row.id !== ref.baselineId
+
+    if (!isNewRow) {
+      if (Date.now() > ref.deadline) {
+        setTriggerMessage('Still waiting on GitHub — check back shortly.')
+        setTriggerState('idle')
+        return
+      }
+      ref.timeoutId = setTimeout(pollTriggerStatus, POLL_INTERVAL_WAITING_MS)
+      return
+    }
+
+    // A new row exists — switch to the "running" phase bookkeeping the
+    // first time we see it (fresh deadline, slower poll cadence).
+    if (ref.phase !== 'running') {
+      ref.phase = 'running'
+      ref.deadline = Date.now() + MAX_RUNNING_MS
+      setTriggerState('running')
+    }
+
+    if (row.finished_at) {
+      setTriggerState('idle')
+      setTriggerMessage(
+        row.status === 'success' ? `✓ Done — ${row.stories_created ?? 0} new stories.`
+        : row.status === 'partial' ? 'Finished with some issues — see status below.'
+        : 'Run failed — see status below.'
+      )
+      // The whole point of the button is fresh content — completion alone
+      // doesn't update what's on screen.
+      loadContent()
+      loadReadIds()
+      refreshPipelineHealth()
+      return
+    }
+
+    setTriggerMessage('Pipeline is running…')
+    if (Date.now() > ref.deadline) {
+      setTriggerMessage('Still running — check back shortly.')
+      setTriggerState('idle')
+      return
+    }
+    ref.timeoutId = setTimeout(pollTriggerStatus, POLL_INTERVAL_RUNNING_MS)
+  }, [loadContent, loadReadIds, refreshPipelineHealth]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleTriggerPipeline = useCallback(async () => {
+    if (triggerState !== 'idle') return
+    setTriggerError(null)
+    setTriggerMessage(null)
+    setTriggerState('triggering')
+    try {
+      const res = await fetch('/api/pipeline/trigger', { method: 'POST' })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setTriggerError(
+          res.status === 401 ? 'Please sign in again.'
+          : res.status === 409 ? 'A pipeline run is already in progress.'
+          : res.status === 429 ? `Triggered recently — wait ${Math.ceil((body.retryAfterSeconds ?? 60) / 60)} min.`
+          : "Couldn't trigger the pipeline — try again shortly."
+        )
+        setTriggerState('idle')
+        return
+      }
+      triggerPollRef.current = {
+        timeoutId: null,
+        baselineId: body.latestRunId ?? null,
+        phase: 'waiting',
+        deadline: Date.now() + MAX_WAITING_MS,
+      }
+      setTriggerState('waiting')
+      setTriggerMessage('Triggered — waiting for it to start…')
+      triggerPollRef.current.timeoutId = setTimeout(pollTriggerStatus, POLL_INTERVAL_WAITING_MS)
+    } catch (e) {
+      console.error('trigger pipeline failed', e)
+      setTriggerError("Couldn't trigger the pipeline — try again shortly.")
+      setTriggerState('idle')
+    }
+  }, [triggerState, pollTriggerStatus]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Stop any in-flight poll on unmount
+  useEffect(() => {
+    return () => {
+      if (triggerPollRef.current.timeoutId) clearTimeout(triggerPollRef.current.timeoutId)
+    }
+  }, [])
 
   // Pull-to-refresh: drag down ≥90px from the very top of the feed.
   // Window-level listeners so it works regardless of which card is under
@@ -329,43 +460,63 @@ export default function ReaderClient({ userId }: { userId: string }) {
     }
   }, [loadContent, loadReadIds, loading, pullRefreshing])
 
-  const markRead = useCallback(async (storyId?: string, clusterId?: string) => {
-    if (!storyId && !clusterId) return
-    if (storyId && readIds.has(storyId)) return
-    if (clusterId && readIds.has(clusterId)) return
+  const markRead = useCallback(async (storyId?: string) => {
+    if (!storyId) return
+    if (readIds.has(storyId)) return
 
     // Optimistic update first so the UI reacts even if the network is slow
-    setReadIds(prev => {
-      const next = new Set(prev)
-      if (storyId) next.add(storyId)
-      if (clusterId) next.add(clusterId)
-      return next
-    })
+    setReadIds(prev => new Set(prev).add(storyId))
 
-    // Plain insert — Postgres unique index (user_id,story_id) / (user_id,cluster_id)
-    // prevents real duplicates. PostgREST's `upsert(... onConflict)` was failing
-    // silently because the constraint name lookup didn't resolve, so writes
-    // were being lost. We tolerate the 23505 duplicate-key error explicitly
+    // Plain insert — Postgres unique index (user_id,story_id) prevents real
+    // duplicates. PostgREST's `upsert(... onConflict)` was failing silently
+    // because the constraint name lookup didn't resolve, so writes were
+    // being lost. We tolerate the 23505 duplicate-key error explicitly
     // (which only happens in rare cross-tab races).
     const { error } = await supabase.from('read_items').insert({
       user_id: userId,
-      story_id: storyId ?? null,
-      cluster_id: clusterId ?? null,
+      story_id: storyId,
     })
     if (error && error.code !== '23505') {
-      console.error('markRead failed', { storyId, clusterId, error })
+      console.error('markRead failed', { storyId, error })
     }
   }, [userId, readIds])
 
-  const sendEngagement = useCallback(async (signal: string, storyId?: string, clusterId?: string) => {
+  // Batched version for "mark all as read" — the old implementation fired
+  // one insert per item (up to ~200 concurrent requests on a full category).
+  const markManyRead = useCallback(async (storyIds: string[]) => {
+    const newStoryIds = storyIds.filter(id => !readIds.has(id))
+    if (newStoryIds.length === 0) return
+
+    setReadIds(prev => {
+      const next = new Set(prev)
+      newStoryIds.forEach(id => next.add(id))
+      return next
+    })
+
+    const rows = newStoryIds.map(id => ({ user_id: userId, story_id: id }))
+    const { error } = await supabase.from('read_items').insert(rows)
+    if (error) {
+      console.error('markManyRead failed', { count: rows.length, error })
+    }
+  }, [userId, readIds])
+
+  // storyId -> story, across both collections currently in memory (category
+  // tab + Today) — used so a like/dislike can look up the story's source_id.
+  const storyById = useMemo(() => {
+    const map = new Map<string, StoryWithRelations>()
+    for (const s of soloStories) map.set(s.id, s)
+    for (const s of todayStories) map.set(s.id, s)
+    return map
+  }, [soloStories, todayStories])
+
+  const sendEngagement = useCallback(async (signal: string, storyId?: string) => {
     await supabase.from('engagement').insert({
       user_id: userId,
       story_id: storyId ?? null,
-      cluster_id: clusterId ?? null,
       signal,
     })
     if (storyId) {
-      const story = soloStories.find(s => s.id === storyId)
+      const story = storyById.get(storyId)
       if (story) {
         const delta = signal === 'like' ? 0.1 : signal === 'dislike' ? -0.15 : 0
         if (delta !== 0) {
@@ -383,23 +534,23 @@ export default function ReaderClient({ userId }: { userId: string }) {
         }
       }
     }
-  }, [userId, soloStories])
+  }, [userId, storyById])
 
   // Dwell time tracking — auto-mark-read when user dwells >20s
   const startDwell = useCallback((id: string) => {
     dwellTimers.current.set(id, Date.now())
   }, [])
 
-  const endDwell = useCallback((id: string, storyId?: string, clusterId?: string) => {
+  const endDwell = useCallback((id: string, storyId?: string) => {
     const start = dwellTimers.current.get(id)
     if (!start) return
     const elapsed = (Date.now() - start) / 1000
     dwellTimers.current.delete(id)
     if (elapsed > 20) {
-      sendEngagement('dwell_long', storyId, clusterId)
-      markRead(storyId, clusterId) // auto-mark-read after sufficient reading time
+      sendEngagement('dwell_long', storyId)
+      markRead(storyId) // auto-mark-read after sufficient reading time
     } else if (elapsed < 3) {
-      sendEngagement('dwell_short', storyId, clusterId)
+      sendEngagement('dwell_short', storyId)
     }
   }, [sendEngagement, markRead])
 
@@ -408,82 +559,57 @@ export default function ReaderClient({ userId }: { userId: string }) {
     window.location.href = '/auth'
   }
 
-  // A cluster counts as "read" when the user marked it read OR every story
-  // inside is read. When a new unread story lands in the cluster later, it
-  // resurfaces automatically.
-  const isClusterRead = useCallback((c: ClusterWithRelations) => {
-    if (readIds.has(c.id)) return true
-    const stories = c.stories ?? []
-    if (stories.length === 0) return false
-    return stories.every(s => readIds.has(s.id))
-  }, [readIds])
-
   // Returns true if any of the given topic keywords are currently muted
   const hasMutedTopic = useCallback((topics: string[] | null | undefined) => {
     if (!topics || topics.length === 0) return false
     return topics.some(t => mutedKeywords.has(t))
   }, [mutedKeywords])
 
-  const isClusterMuted = useCallback((c: ClusterWithRelations) => {
-    const stories = c.stories ?? []
-    if (stories.length === 0) return false
-    // Mute the cluster only when every story has a muted topic — avoids
-    // hiding a cluster where only one source mentioned a muted keyword.
-    return stories.every(s => hasMutedTopic(s.matched_topics))
-  }, [hasMutedTopic])
-
   const isActiveSource = useCallback((sourceId: string) =>
     sources[sourceId]?.is_active !== false,
   [sources])
 
-  // Filter by unread (only applies to category tabs), mute, AND active source
-  const visibleClusters = useMemo(
-    () => clusters
-      .filter(c => (c.stories ?? []).some(s => isActiveSource(s.source_id)))
-      .filter(c => !isClusterMuted(c))
-      .filter(c => showUnreadOnly ? !isClusterRead(c) : true),
-    [clusters, isClusterRead, isClusterMuted, showUnreadOnly, isActiveSource]
-  )
-  const visibleSolos = useMemo(
+  // Mute + active-source filters, independent of the unread-only toggle —
+  // shared base for both the rendered feed and the unread count, so they
+  // can't drift apart.
+  const mutedAndActiveSolos = useMemo(
     () => soloStories
       .filter(s => isActiveSource(s.source_id))
-      .filter(s => !hasMutedTopic(s.matched_topics))
-      .filter(s => showUnreadOnly ? !readIds.has(s.id) : true),
-    [soloStories, readIds, hasMutedTopic, showUnreadOnly, isActiveSource]
+      .filter(s => !hasMutedTopic(s.matched_topics)),
+    [soloStories, hasMutedTopic, isActiveSource]
+  )
+
+  const visibleSolos = useMemo(
+    () => mutedAndActiveSolos.filter(s => showUnreadOnly ? !readIds.has(s.id) : true),
+    [mutedAndActiveSolos, readIds, showUnreadOnly]
   )
 
   const unreadCount = useMemo(
-    () => clusters.filter(c => !isClusterRead(c)).length + soloStories.filter(s => !readIds.has(s.id)).length,
-    [clusters, soloStories, isClusterRead, readIds]
+    () => mutedAndActiveSolos.filter(s => !readIds.has(s.id)).length,
+    [mutedAndActiveSolos, readIds]
   )
 
   // One-tap "clear the deck" for the current category view
   const markAllVisibleRead = useCallback(() => {
-    visibleClusters.filter(c => !isClusterRead(c)).forEach(c => markRead(undefined, c.id))
-    visibleSolos.filter(s => !readIds.has(s.id)).forEach(s => markRead(s.id))
-  }, [visibleClusters, visibleSolos, isClusterRead, readIds, markRead])
+    const storyIds = visibleSolos.filter(s => !readIds.has(s.id)).map(s => s.id)
+    markManyRead(storyIds)
+  }, [visibleSolos, readIds, markManyRead])
 
-  // Today tab — filter to active sources before passing to TodayFeed
-  const activeTodayClusters = useMemo(
-    () => todayClusters.filter(c => (c.stories ?? []).some(s => isActiveSource(s.source_id))),
-    [todayClusters, isActiveSource]
-  )
+  // Today tab — filter to active sources and muted topics before passing to
+  // TodayFeed.
   const activeTodayStories = useMemo(
-    () => todayStories.filter(s => isActiveSource(s.source_id)),
-    [todayStories, isActiveSource]
+    () => todayStories
+      .filter(s => isActiveSource(s.source_id))
+      .filter(s => !hasMutedTopic(s.matched_topics)),
+    [todayStories, isActiveSource, hasMutedTopic]
   )
 
   const todayUnread = useMemo(
-    () => activeTodayClusters.filter(c => !isClusterRead(c)).length + activeTodayStories.filter(s => !readIds.has(s.id)).length,
-    [activeTodayClusters, activeTodayStories, isClusterRead, readIds]
+    () => activeTodayStories.filter(s => !readIds.has(s.id)).length,
+    [activeTodayStories, readIds]
   )
 
-  const isEmpty = visibleClusters.length === 0 && visibleSolos.length === 0
-
-  // Build unified feed — memoised to avoid recomputing on every render
-  type FeedItem =
-    | { type: 'cluster'; data: ClusterWithRelations; date: Date }
-    | { type: 'story';   data: StoryWithRelations;   date: Date }
+  const isEmpty = visibleSolos.length === 0
 
   const isVantage = useCallback((story: StoryWithRelations) => {
     const src = sources[story.source_id]
@@ -502,28 +628,19 @@ export default function ReaderClient({ userId }: { userId: string }) {
     [visibleSolos, isVantage]
   )
 
+  // Feed sorted latest→oldest, with read items sunk below unread in "Show All" mode
   const mergedFeed = useMemo(
-    (): FeedItem[] => [
-      ...visibleClusters.map(c => ({
-        type: 'cluster' as const,
-        data: c,
-        date: new Date(c.last_updated_at),
-      })),
-      ...visibleSolos
-        .filter(s => !isVantage(s))
-        .map(s => ({
-          type: 'story' as const,
-          data: s,
-          date: new Date(s.videos?.published_at ?? s.created_at),
-        })),
-    ].sort((a, b) => {
-      // B3: In "Show All" mode, sink fully-read items below unread
-      const aRead = a.type === 'cluster' ? isClusterRead(a.data) : readIds.has(a.data.id)
-      const bRead = b.type === 'cluster' ? isClusterRead(b.data) : readIds.has(b.data.id)
-      if (aRead !== bRead) return aRead ? 1 : -1
-      return b.date.getTime() - a.date.getTime()
-    }),
-    [visibleClusters, visibleSolos, isVantage, isClusterRead, readIds]
+    () => visibleSolos
+      .filter(s => !isVantage(s))
+      .sort((a, b) => {
+        const aRead = readIds.has(a.id)
+        const bRead = readIds.has(b.id)
+        if (aRead !== bRead) return aRead ? 1 : -1
+        const da = new Date(a.videos?.published_at ?? a.created_at).getTime()
+        const db = new Date(b.videos?.published_at ?? b.created_at).getTime()
+        return db - da
+      }),
+    [visibleSolos, isVantage, readIds]
   )
 
   return (
@@ -582,16 +699,59 @@ export default function ReaderClient({ userId }: { userId: string }) {
                   Updated {lastUpdated.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
                 </p>
               ) : null}
+
+              {/* Manual pipeline trigger — deliberately a labelled text
+                  pill, not another icon in the crowded action row, so it
+                  can't be confused with the cosmetic "Refresh feed" button
+                  (which only re-fetches already-loaded data) and doesn't
+                  reintroduce the overflow issues that row has a documented
+                  history of on narrow Android widths. */}
+              {triggerState === 'idle' && !triggerMessage && !triggerError && (
+                <button
+                  onClick={handleTriggerPipeline}
+                  className="mt-1 text-[11px] font-semibold text-violet-300 hover:text-violet-200 transition-colors inline-flex items-center gap-1"
+                >
+                  ⚡ Run now
+                </button>
+              )}
+              {(triggerState !== 'idle' || triggerMessage || triggerError) && (
+                <p className={`mt-1 text-[11px] font-semibold inline-flex items-center gap-1 ${
+                  triggerError ? 'text-rose-300' : 'text-violet-300'
+                }`}>
+                  {triggerState === 'triggering' && 'Triggering…'}
+                  {triggerState === 'waiting' && triggerMessage}
+                  {triggerState === 'running' && triggerMessage}
+                  {triggerState === 'idle' && (triggerError || triggerMessage)}
+                  {triggerState === 'idle' && (triggerError || triggerMessage) && (
+                    <button
+                      onClick={() => { setTriggerError(null); setTriggerMessage(null) }}
+                      className="text-slate-500 hover:text-slate-300"
+                      aria-label="Dismiss"
+                    >
+                      ×
+                    </button>
+                  )}
+                </p>
+              )}
             </div>
           </div>
 
+          {/* Outer wrapper: the More button + its dropdown live OUTSIDE the
+              overflow-x-auto row below on purpose. Per the CSS overflow
+              spec, setting overflow-x to anything but visible forces the
+              computed overflow-y to 'auto' too (same trap documented in
+              globals.css for html/body) — the dropdown opens *downward*
+              below the row's own bounds, so nesting it inside that row
+              silently clipped it to nothing. Confirmed live: the button
+              worked, the menu was just invisible. */}
+          <div className="flex items-center gap-1.5 min-w-0">
           {/* overflow-x-auto: final defensive layer. The "More" menu below
               already keeps this row well within mobile widths in practice,
               but this guarantees that even in an edge case (very narrow
               device, browser zoom, extra-long "Unread · N" count) the row
               scrolls internally instead of ever forcing the page to pan
               sideways — same fix pattern as CategoryNav's bottom bar. */}
-          <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide">
+          <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide min-w-0">
             {activeTab !== 'topics' && activeTab !== 'today' && (
               <button
                 onClick={() => setShowUnreadOnly(v => !v)}
@@ -679,12 +839,18 @@ export default function ReaderClient({ userId }: { userId: string }) {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
               </svg>
             </button>
+          </div>
 
-            {/* Mobile-only: Archive/Sources/Sign out collapse behind here */}
+            {/* Mobile-only: Archive/Sources/Sign out collapse behind here.
+                A bare ⋮ icon doesn't read as "Sources lives here" to anyone
+                who isn't already familiar with the app — labelled so the
+                place to add a YouTube channel is actually findable.
+                Deliberately a sibling of the overflow-x-auto row above, not
+                nested inside it — see the wrapper comment. */}
             <div ref={moreMenuRef} className="relative md:hidden shrink-0">
               <button
                 onClick={() => setShowMoreMenu(v => !v)}
-                className="w-11 h-11 rounded-lg bg-slate-800/60 hover:bg-slate-800 ring-1 ring-slate-700/60 hover:ring-slate-600 flex items-center justify-center transition-all active:scale-95"
+                className="flex items-center gap-1 px-2.5 h-11 rounded-lg bg-slate-800/60 hover:bg-slate-800 ring-1 ring-slate-700/60 hover:ring-slate-600 transition-all active:scale-95"
                 title="More"
                 aria-label="More options"
                 aria-expanded={showMoreMenu}
@@ -692,6 +858,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
                 <svg className="w-4 h-4 text-slate-300" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v.01M12 12v.01M12 18v.01" />
                 </svg>
+                <span className="text-xs font-semibold text-slate-300">More</span>
               </button>
 
               {showMoreMenu && (
@@ -772,7 +939,6 @@ export default function ReaderClient({ userId }: { userId: string }) {
         {activeTab === 'today' && (
           <ErrorBoundary>
             <TodayFeed
-              clusters={activeTodayClusters}
               stories={activeTodayStories}
               sources={sources}
               readIds={readIds}
@@ -784,6 +950,8 @@ export default function ReaderClient({ userId }: { userId: string }) {
               onDwellEnd={endDwell}
               onMuteTopic={muteTopics}
               loading={loading}
+              error={loadError}
+              onRetry={() => { loadContent(); loadReadIds() }}
             />
           </ErrorBoundary>
         )}
@@ -807,7 +975,27 @@ export default function ReaderClient({ userId }: { userId: string }) {
               </div>
             )}
 
-            {!loading && isEmpty && (
+            {!loading && loadError && (
+              <div className="text-center py-20 px-6">
+                <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-rose-500/10 ring-1 ring-rose-500/30 mb-4">
+                  <svg className="w-8 h-8 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                  </svg>
+                </div>
+                <p className="text-base font-semibold text-rose-200">Couldn't load this feed</p>
+                <p className="text-sm text-slate-400 mt-1.5 max-w-xs mx-auto">
+                  Something went wrong fetching stories — check the pipeline status above, or try refreshing.
+                </p>
+                <button
+                  onClick={() => { loadContent(); loadReadIds() }}
+                  className="mt-5 text-sm font-semibold text-violet-300 hover:text-violet-200 transition-colors inline-flex items-center gap-1"
+                >
+                  Try again
+                </button>
+              </div>
+            )}
+
+            {!loading && !loadError && isEmpty && (
               <div className="text-center py-20 px-6">
                 <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-slate-800/60 ring-1 ring-slate-700/60 mb-4">
                   {showUnreadOnly ? (
@@ -876,37 +1064,21 @@ export default function ReaderClient({ userId }: { userId: string }) {
               </>
             )}
 
-            {/* Unified merged feed — clusters + non-Vantage solos sorted latest→oldest */}
+            {/* Unified merged feed — non-Vantage solos sorted latest→oldest */}
             <ErrorBoundary>
-              {!loading && mergedFeed.map(item =>
-                item.type === 'cluster' ? (
-                  <ClusteredCard
-                    key={item.data.id}
-                    cluster={item.data}
-                    isRead={isClusterRead(item.data)}
-                    readStoryIds={readIds}
-                    onRead={() => markRead(undefined, item.data.id)}
-                    onEngagement={(signal) => sendEngagement(signal, undefined, item.data.id)}
-                    onDwellStart={() => startDwell(item.data.id)}
-                    onDwellEnd={() => endDwell(item.data.id, undefined, item.data.id)}
-                    onMuteTopic={() => muteTopics(
-                      Array.from(new Set((item.data.stories ?? []).flatMap(s => s.matched_topics ?? [])))
-                    )}
-                  />
-                ) : (
-                  <SoloCard
-                    key={item.data.id}
-                    story={item.data}
-                    source={sources[item.data.source_id]}
-                    isRead={readIds.has(item.data.id)}
-                    onRead={() => markRead(item.data.id)}
-                    onEngagement={(signal) => sendEngagement(signal, item.data.id)}
-                    onDwellStart={() => startDwell(item.data.id)}
-                    onDwellEnd={() => endDwell(item.data.id, item.data.id)}
-                    onMuteTopic={() => muteTopics(item.data.matched_topics ?? [])}
-                  />
-                )
-              )}
+              {!loading && mergedFeed.map(story => (
+                <SoloCard
+                  key={story.id}
+                  story={story}
+                  source={sources[story.source_id]}
+                  isRead={readIds.has(story.id)}
+                  onRead={() => markRead(story.id)}
+                  onEngagement={(signal) => sendEngagement(signal, story.id)}
+                  onDwellStart={() => startDwell(story.id)}
+                  onDwellEnd={() => endDwell(story.id, story.id)}
+                  onMuteTopic={() => muteTopics(story.matched_topics ?? [])}
+                />
+              ))}
             </ErrorBoundary>
           </>
         )}

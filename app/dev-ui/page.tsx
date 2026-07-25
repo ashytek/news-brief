@@ -12,9 +12,8 @@
  */
 
 import { SoloCard } from '@/components/SoloCard'
-import { ClusteredCard } from '@/components/ClusteredCard'
 import { CategoryNav } from '@/components/CategoryNav'
-import type { StoryWithRelations, ClusterWithRelations, Category } from '@/lib/types'
+import type { StoryWithRelations, Category } from '@/lib/types'
 
 const noop = () => {}
 
@@ -30,12 +29,6 @@ const mkBullet = (i: number) => ({
       ? `Includes an unbroken token WWW.SOMEEXTREMELYLONGDOMAINNAMETHATWILLNOTWRAP.COM/PATH_SEGMENT_${i} to test overflow. A second sentence explains the mechanism in flowing prose so the section reads like a briefing note.`
       : `A flowing two-sentence explanation with a hard fact (${i * 7}%) preserved exactly. The mechanism is taught back rather than merely asserted, matching the walkthrough style.`,
   timestamp_seconds: i * 95,
-})
-
-/** Legacy pre-walkthrough bullet (no title) — old stories must still render */
-const mkLegacyBullet = (i: number) => ({
-  text: `Legacy bullet ${i}: hard fact (${i * 3}%) first, then a why-it-matters clause in the old dot style.`,
-  timestamp_seconds: i * 60,
 })
 
 const solo = {
@@ -54,28 +47,6 @@ const solo = {
     published_at: new Date(Date.now() - 1800e3).toISOString(),
   },
 } as unknown as StoryWithRelations
-
-const clusterStory = (n: number) =>
-  ({
-    ...solo,
-    id: `dev-cs-${n}`,
-    headline: `Cluster member ${n}: ${NASTY_TITLE}`,
-    // Member 2 uses legacy bullets so the cluster view exercises the fallback
-    bullets: n === 2
-      ? Array.from({ length: 4 }, (_, i) => mkLegacyBullet(i + 1))
-      : Array.from({ length: 5 }, (_, i) => mkBullet(i + 1)),
-    created_at: new Date(Date.now() - n * 7200e3).toISOString(),
-  }) as unknown as StoryWithRelations
-
-const cluster = {
-  id: 'dev-cluster-1',
-  category: 'prophetic' as Category,
-  consensus_summary:
-    'Consensus with a long unbroken chunk LOREMIPSUMDOLORSITAMETCONSECTETURADIPISCINGELITSEDDOEIUSMOD to stress the consensus block.',
-  last_updated_at: new Date().toISOString(),
-  story_count: 3,
-  stories: [clusterStory(1), clusterStory(2), clusterStory(3)],
-} as unknown as ClusterWithRelations
 
 const CATS = [
   { key: 'prophetic' as Category, label: 'Prophetic Word', color: 'violet' },
@@ -127,17 +98,6 @@ export default function DevUiPage() {
           story={solo}
           source={{ id: 'dev-src-1', name: 'Firstpost Vantage Extended Name' } as never}
           isRead={false}
-          onRead={noop}
-          onEngagement={noop}
-          onDwellStart={noop}
-          onDwellEnd={noop}
-          onMuteTopic={noop}
-        />
-
-        <ClusteredCard
-          cluster={cluster}
-          isRead={false}
-          readStoryIds={new Set<string>()}
           onRead={noop}
           onEngagement={noop}
           onDwellStart={noop}

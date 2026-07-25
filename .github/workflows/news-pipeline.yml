@@ -18,6 +18,12 @@ on:
     - cron: "17 3,9,15,21 * * *"
   workflow_dispatch: {}   # manual "Run workflow" button for testing
 
+# Without this, the job token gets the repo's default permissions (often
+# read/write). This workflow only checks out code and calls external APIs —
+# it never needs to touch the repo itself.
+permissions:
+  contents: read
+
 concurrency:
   group: news-pipeline
   cancel-in-progress: false   # never kill a run mid-summarisation
@@ -52,6 +58,10 @@ jobs:
           HEALTHCHECK_URL:           ${{ secrets.HEALTHCHECK_URL }}
           # No YOUTUBE_BROWSER here — headless runner has no Chrome profile.
           # The local fallback chain (yt-dlp android client) is cookie-free.
+          # Lets run_pipeline.py tell a manual "Run now" trigger (app button,
+          # or the GitHub UI) apart from the scheduled cron — a scheduled run
+          # skips real work if a manual one already covered this window.
+          PIPELINE_TRIGGER_SOURCE:   ${{ github.event_name == 'workflow_dispatch' && 'manual' || 'schedule' }}
         run: python run_pipeline.py --once
 
       - name: Ping healthcheck on job failure

@@ -1,10 +1,11 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import type { Source } from '@/lib/types'
 import type { StoryWithRelations } from '@/lib/types'
 import { TsLink } from './TsLink'
 import { EngagementBar } from './EngagementBar'
+import { useDwellVisibility } from '@/lib/useDwellVisibility'
 import {
   formatTime,
   CATEGORY_ACCENT_BAR,
@@ -76,10 +77,7 @@ export function SoloCard({ story, source, isRead, onRead, onEngagement, onDwellS
     [story.summary, story.bullets],
   )
 
-  useEffect(() => {
-    onDwellStart()
-    return () => onDwellEnd()
-  }, [])
+  const dwellRef = useDwellVisibility<HTMLElement>(onDwellStart, onDwellEnd)
 
   const accentBar = CATEGORY_ACCENT_BAR[story.category]
   const glow = CATEGORY_GLOW_CLASS[story.category]
@@ -87,6 +85,7 @@ export function SoloCard({ story, source, isRead, onRead, onEngagement, onDwellS
 
   return (
     <article
+      ref={dwellRef}
       className={`group relative rounded-2xl overflow-hidden transition-all card-rise card-cv ${glow} ${
         isRead
           ? 'bg-slate-900/40 ring-1 ring-slate-800/40'

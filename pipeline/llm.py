@@ -96,7 +96,23 @@ def _generate(
                     _usage["pro_input_tokens"]  += in_tok
                     _usage["pro_output_tokens"] += out_tok
 
-            return resp.text or ""
+            text = resp.text or ""
+            if not text.strip():
+                # Empty/blocked candidate (safety filter, no candidates
+                # returned) — previously counted as success (returned ""
+                # without incrementing failures), which under-reported
+                # exactly the failures that matter for spotting orphaned
+                # videos (see run_pipeline.recover_missing_stories).
+                if attempt < max_retries:
+                    wait = min(4 * (2 ** attempt) + random.uniform(0, 2), 120)
+                    _log.warning(f"Gemini returned empty response (attempt {attempt+1}). Waiting {wait:.0f}s…")
+                    time.sleep(wait)
+                    continue
+                _usage["failures"] += 1
+                _log.error(f"Gemini returned empty response after {attempt+1} attempt(s)")
+                return None
+
+            return text
 
         except Exception as e:
             msg = str(e).lower()
