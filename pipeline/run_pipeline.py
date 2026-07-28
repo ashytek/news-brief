@@ -103,7 +103,17 @@ def process_transcripts_and_summarise(items, stats, source_map, retry_delay_rang
         dur = item.get("duration_seconds")
         if dur and dur > MAX_VANTAGE_RECAP_SECONDS and _is_vantage_source(source):
             print(f"    · Skipped long Vantage recap ({int(dur)}s > {MAX_VANTAGE_RECAP_SECONDS}s)")
-            transcript_text, status, segments = None, "skipped_long_recap", []
+            # 'skipped_filter' — NOT a new status. videos.transcript_status has
+            # a DB-level CHECK constraint (no local migration source — created
+            # directly in Supabase) limiting it to a fixed enum; introducing
+            # 'skipped_long_recap' violated it and crashed every run outright
+            # (the whole pipeline, not just this one video) the moment a long
+            # Vantage recap was discovered. 'skipped_filter' is already an
+            # allowed value and unused by any other current code — reusing it
+            # needs no migration. Allowed set confirmed via existing rows:
+            # fetched, no_transcript, skipped_short, skipped_filter, pending,
+            # not_applicable.
+            transcript_text, status, segments = None, "skipped_filter", []
         else:
             transcript_text, status, segments = get_transcripts.fetch_transcript(item, retry_delay_range)
 
