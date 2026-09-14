@@ -20,13 +20,19 @@ _log = logging.getLogger(__name__)
 _client = genai.Client(api_key=GOOGLE_API_KEY)
 
 # In-memory token usage tracking (reset per process)
+# Thinking tokens are billed at the OUTPUT rate but are reported separately
+# by the API (usage_metadata.thoughts_token_count). They were untracked until
+# 14 Sep 2026, which is how a >£10/month Pro bill hid behind modest-looking
+# token counts.
 _usage: dict[str, int] = {
-    "flash_input_tokens":  0,
-    "flash_output_tokens": 0,
-    "pro_input_tokens":    0,
-    "pro_output_tokens":   0,
-    "calls":               0,
-    "failures":            0,
+    "flash_input_tokens":    0,
+    "flash_output_tokens":   0,
+    "flash_thinking_tokens": 0,
+    "pro_input_tokens":      0,
+    "pro_output_tokens":     0,
+    "pro_thinking_tokens":   0,
+    "calls":                 0,
+    "failures":              0,
 }
 
 
@@ -87,14 +93,13 @@ def _generate(
             # Track token usage
             um = getattr(resp, "usage_metadata", None)
             if um:
-                in_tok  = getattr(um, "prompt_token_count", 0) or 0
-                out_tok = getattr(um, "candidates_token_count", 0) or 0
-                if "flash" in model:
-                    _usage["flash_input_tokens"]  += in_tok
-                    _usage["flash_output_tokens"] += out_tok
-                else:
-                    _usage["pro_input_tokens"]  += in_tok
-                    _usage["pro_output_tokens"] += out_tok
+                in_tok    = getattr(um, "prompt_token_count", 0) or 0
+                out_tok   = getattr(um, "candidates_token_count", 0) or 0
+                think_tok = getattr(um, "thoughts_token_count", 0) or 0
+                prefix = "flash" if "flash" in model else "pro"
+                _usage[f"{prefix}_input_tokens"]    += in_tok
+                _usage[f"{prefix}_output_tokens"]   += out_tok
+                _usage[f"{prefix}_thinking_tokens"] += think_tok
 
             text = resp.text or ""
             if not text.strip():
@@ -204,7 +209,7 @@ def flash_json(
     response_schema: dict,
     **kwargs,
 ) -> dict | list | None:
-    """Generate JSON with Gemini 2.0 Flash (fast, free, general use)."""
+    """Generate JSON with Gemini 2.5 Flash — the model for every category."""
     return generate_json(
         model=GEMINI_FLASH_MODEL,
         contents=contents,
@@ -220,7 +225,7 @@ def pro_json(
     response_schema: dict,
     **kwargs,
 ) -> dict | list | None:
-    """Generate JSON with Gemini 2.5 Pro (1M context, thinking, prophetic use)."""
+    """Generate JSON with Gemini 2.5 Pro. Unused since 14 Sep 2026 — kept for rollback."""
     return generate_json(
         model=GEMINI_PRO_MODEL,
         contents=contents,

@@ -1,8 +1,7 @@
 """
-Gemini-powered summarisation. Zero cost at current volumes (free tier).
-
-- gemini-2.0-flash  →  general news bullets
-- gemini-2.5-pro    →  prophetic extraction (1M-token context, thinking mode)
+Gemini-powered summarisation — all categories on gemini-2.5-flash (paid
+tier, ~£2.50/month at Sept 2026 volume). See summarise_video for why Pro
+and Flash-Lite are not used.
 
 Claude fallback removed — Gemini's exponential retry in llm.py handles
 transient failures. Add anthropic back to requirements.txt and uncomment
@@ -11,7 +10,7 @@ _claude_fallback() below if you ever need it again.
 from __future__ import annotations
 
 import llm
-from config import MAX_BULLETS, MAX_BULLETS_PROPHETIC, PROPHETIC_BULLETS_PER_SECONDS
+from config import MAX_BULLETS, MAX_BULLETS_PROPHETIC, PROPHETIC_BULLETS_PER_SECONDS, TRANSCRIPT_WINDOW_SECONDS
 
 # ---------------------------------------------------------------------------
 # Prompts
@@ -121,6 +120,28 @@ BULLET_SCHEMA = {
 # Transcript builder
 # ---------------------------------------------------------------------------
 
+def merge_segments(segments: list[dict], window_seconds: int = TRANSCRIPT_WINDOW_SECONDS) -> list[dict]:
+    """
+    Coalesce caption segments (typically one every 2-6 s) into fixed time
+    windows, each keeping the start time of its first caption. A '[Ns] '
+    prefix on every raw caption was ~19% of prompt characters; 30 s windows
+    cut total input ~15% (measured on real IGR + prophetic captions) with
+    no loss of text. Section timestamps land on a window start, i.e. at or
+    just before the beat — the right direction for a deep link.
+    """
+    merged: list[dict] = []
+    for seg in segments:
+        text = (seg.get("text") or "").strip()
+        if not text:
+            continue
+        start = float(seg.get("start") or 0)
+        if merged and start < merged[-1]["start"] + window_seconds:
+            merged[-1]["text"] += " " + text
+        else:
+            merged.append({"start": start, "text": text})
+    return merged
+
+
 def build_transcript_context(title: str, transcript: str, segments: list[dict]) -> str:
     """
     Build the full transcript context.
@@ -131,7 +152,7 @@ def build_transcript_context(title: str, transcript: str, segments: list[dict]) 
 
     if segments:
         context = f"Title: {title}\n\nTranscript with timestamps:\n"
-        for seg in segments:
+        for seg in merge_segments(segments):
             line = f"[{int(seg['start'])}s] {seg['text']}\n"
             if len(context) + len(line) > MAX_CHARS:
                 context += "\n[remaining transcript omitted — summarise what you have above]\n"
@@ -160,40 +181,42 @@ def summarise_video(
     Returns {"headline", "summary", "bullets": [{"text", "timestamp_seconds"}]}
     or None on failure.
 
-    Prophetic     → Gemini 2.5 Pro with thinking (nuanced extraction)
-    India/Global  → Gemini 2.5 Pro (geopolitics benefits from deeper reasoning)
-    Others        → Gemini 2.5 Flash (cost-efficient)
+    Prophetic     → Gemini 2.5 Flash with a 4096 thinking budget
+    Everything else → Gemini 2.5 Flash with thinking OFF
+
+    Pro was dropped 14 Sep 2026: every story was running on it (Pro output
+    is $10/MTok and thinking bills at that rate), which is what pushed the
+    bill past £10/month. A live A/B on real IGR + prophetic transcripts
+    showed Flash matching Pro's coverage and preserving every hard figure
+    (Flash-Lite did NOT — it dropped numbers and inverted chronology once,
+    so it is deliberately not used). llm.pro_json is kept for rollback.
     """
     context = build_transcript_context(title, transcript, segments)
 
     if category == "prophetic":
         # Long broadcasts (60-120 min) need much higher output budget.
         # 25 bullets × ~80 tokens each + headline + summary ≈ 2.5K, but we
-        # give plenty of headroom + thinking budget for nuanced extraction.
-        result = llm.pro_json(
+        # give plenty of headroom + a thinking budget for nuanced extraction
+        # (Flash at 4096 reached further into a 58-min sermon than Pro at 8192).
+        result = llm.flash_json(
             contents=context,
             system_instruction=PROPHETIC_BULLET_SYSTEM,
             response_schema=BULLET_SCHEMA,
             temperature=0.2,
             max_output_tokens=16384,
-            thinking_budget=8192,
-        )
-    elif category == "india_global":
-        result = llm.pro_json(
-            contents=context,
-            system_instruction=BULLET_SYSTEM,
-            response_schema=BULLET_SCHEMA,
-            temperature=0.2,
-            max_output_tokens=8192,   # prose sections run ~3x longer than the old bullets
-            thinking_budget=2048,
+            thinking_budget=4096,
         )
     else:
+        # thinking_budget=0 fully disables thinking on Flash (not possible on
+        # Pro, min 128). Omitting it would leave Flash's dynamic thinking ON
+        # and bill those tokens as output — so it is set explicitly.
         result = llm.flash_json(
             contents=context,
             system_instruction=BULLET_SYSTEM,
             response_schema=BULLET_SCHEMA,
             temperature=0.2,
             max_output_tokens=8192,   # prose sections run ~3x longer than the old bullets
+            thinking_budget=0,
         )
 
     if not result:

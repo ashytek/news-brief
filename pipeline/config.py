@@ -57,10 +57,19 @@ MAX_BULLETS_PROPHETIC = 25
 # scales with video length and the model can't front-load only the first section.
 PROPHETIC_BULLETS_PER_SECONDS = 300  # 1 bullet per 5 min minimum
 
-# Gemini models — primary LLM, free tier, zero cost at current volumes
+# Gemini models — paid tier (Google's ToS requires Paid Services for UK
+# users; the free tier is not an option). All summarisation runs on Flash
+# since 14 Sep 2026 — Pro is defined only so llm.pro_json stays available
+# for rollback. Newer 3.x Flash models are 2.5-6x pricier than 2.5: re-price
+# before switching if 2.5 is ever retired.
 # Check https://ai.google.dev/gemini-api/docs/models for latest stable model strings
-GEMINI_FLASH_MODEL = "gemini-2.5-flash"  # general news summarisation
-GEMINI_PRO_MODEL   = "gemini-2.5-pro"   # prophetic extraction (1M context + thinking mode)
+GEMINI_FLASH_MODEL = "gemini-2.5-flash"  # everything (thinking off for news, 4096 for prophetic)
+GEMINI_PRO_MODEL   = "gemini-2.5-pro"   # unused by default — rollback only
+
+# Caption segments are merged into windows of this many seconds before
+# being sent to the model (see summarise.merge_segments). Cuts input tokens
+# ~15%; section timestamps resolve to the window start.
+TRANSCRIPT_WINDOW_SECONDS = 30
 
 # Optional: Healthchecks.io ping URL for dead-man's switch monitoring
 # Get a free URL at https://healthchecks.io → New Check → paste URL into .env

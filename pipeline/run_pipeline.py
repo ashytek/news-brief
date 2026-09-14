@@ -576,11 +576,17 @@ def run_once():
 
         # ── Token usage summary ───────────────────────────────────────────
         usage = llm.get_usage()
-        flash_tok = usage["flash_input_tokens"] + usage["flash_output_tokens"]
-        pro_tok   = usage["pro_input_tokens"] + usage["pro_output_tokens"]
+        # Thinking tokens are included in the per-model totals persisted
+        # below — they bill at the output rate, so a total that excluded
+        # them under-reported spend (which is exactly what happened before
+        # 14 Sep 2026).
+        flash_tok = usage["flash_input_tokens"] + usage["flash_output_tokens"] + usage["flash_thinking_tokens"]
+        pro_tok   = usage["pro_input_tokens"] + usage["pro_output_tokens"] + usage["pro_thinking_tokens"]
         print(f"\n{'='*60}")
         print(f"✅ Done! {stats['stories_created']} stories created")
-        print(f"   LLM: {usage['calls']} calls · Flash {flash_tok:,} tokens · Pro {pro_tok:,} tokens · {usage['failures']} failures")
+        print(f"   LLM: {usage['calls']} calls · Flash {flash_tok:,} tokens "
+              f"(in {usage['flash_input_tokens']:,} / out {usage['flash_output_tokens']:,} / thinking {usage['flash_thinking_tokens']:,}) "
+              f"· Pro {pro_tok:,} tokens (thinking {usage['pro_thinking_tokens']:,}) · {usage['failures']} failures")
         print(f"{'='*60}\n")
 
         # Persist token usage to pipeline_runs (columns may not exist yet — ignore errors)
