@@ -42,6 +42,13 @@ export default function ReaderClient({ userId }: { userId: string }) {
   const [soloStories, setSoloStories] = useState<StoryWithRelations[]>([])
   const [todayStories, setTodayStories] = useState<StoryWithRelations[]>([])
   const [readIds, setReadIds] = useState<Set<string>>(new Set())
+  // Stories the dwell timer auto-marked read while they were on screen.
+  // They count as read (card greys out, unread count drops) but are held in
+  // place — not filtered out or re-sorted to the bottom — until the next
+  // content load or Unread/All toggle. Without this, a card being read
+  // past the dwell threshold was unmounted the moment it scrolled below
+  // half-visible, pulling everything under it up (Ash, 3 & 14 Sep 2026).
+  const [heldIds, setHeldIds] = useState<Set<string>>(new Set())
   const [mutedKeywords, setMutedKeywords] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
@@ -276,6 +283,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
 
   // Load content when active tab changes
   const loadContent = useCallback(async () => {
+    setHeldIds(new Set())   // a fresh load is the moment held cards may drop off
     if (activeTab === 'topics') {
       setLoading(false)
       return
@@ -460,12 +468,13 @@ export default function ReaderClient({ userId }: { userId: string }) {
     }
   }, [loadContent, loadReadIds, loading, pullRefreshing])
 
-  const markRead = useCallback(async (storyId?: string) => {
+  const markRead = useCallback(async (storyId?: string, opts?: { hold?: boolean }) => {
     if (!storyId) return
     if (readIds.has(storyId)) return
 
     // Optimistic update first so the UI reacts even if the network is slow
     setReadIds(prev => new Set(prev).add(storyId))
+    if (opts?.hold) setHeldIds(prev => new Set(prev).add(storyId))
 
     // Plain insert — Postgres unique index (user_id,story_id) prevents real
     // duplicates. PostgREST's `upsert(... onConflict)` was failing silently
@@ -546,11 +555,11 @@ export default function ReaderClient({ userId }: { userId: string }) {
     if (!start) return
     const elapsed = (Date.now() - start) / 1000
     dwellTimers.current.delete(id)
-    // Measured as time on screen, not time reading — a card crossing this
-    // threshold is dropped from the unread feed even if it's still being read.
+    // Measured as time on screen, not time reading — so the card is held in
+    // place (see heldIds) rather than dropped from under the reader.
     if (elapsed > 120) {
       sendEngagement('dwell_long', storyId)
-      markRead(storyId) // auto-mark-read after sufficient reading time
+      markRead(storyId, { hold: true }) // auto-mark-read after sufficient reading time
     } else if (elapsed < 3) {
       sendEngagement('dwell_short', storyId)
     }
@@ -581,9 +590,19 @@ export default function ReaderClient({ userId }: { userId: string }) {
     [soloStories, hasMutedTopic, isActiveSource]
   )
 
+  // Read set for layout decisions only (filtering, sorting). Held cards are
+  // treated as unread here so they stay put; `readIds` remains the truth for
+  // isRead styling and counts.
+  const layoutReadIds = useMemo(() => {
+    if (heldIds.size === 0) return readIds
+    const next = new Set(readIds)
+    heldIds.forEach(id => next.delete(id))
+    return next
+  }, [readIds, heldIds])
+
   const visibleSolos = useMemo(
-    () => mutedAndActiveSolos.filter(s => showUnreadOnly ? !readIds.has(s.id) : true),
-    [mutedAndActiveSolos, readIds, showUnreadOnly]
+    () => mutedAndActiveSolos.filter(s => showUnreadOnly ? !layoutReadIds.has(s.id) : true),
+    [mutedAndActiveSolos, layoutReadIds, showUnreadOnly]
   )
 
   const unreadCount = useMemo(
@@ -635,14 +654,14 @@ export default function ReaderClient({ userId }: { userId: string }) {
     () => visibleSolos
       .filter(s => !isVantage(s))
       .sort((a, b) => {
-        const aRead = readIds.has(a.id)
-        const bRead = readIds.has(b.id)
+        const aRead = layoutReadIds.has(a.id)
+        const bRead = layoutReadIds.has(b.id)
         if (aRead !== bRead) return aRead ? 1 : -1
         const da = new Date(a.videos?.published_at ?? a.created_at).getTime()
         const db = new Date(b.videos?.published_at ?? b.created_at).getTime()
         return db - da
       }),
-    [visibleSolos, isVantage, readIds]
+    [visibleSolos, isVantage, layoutReadIds]
   )
 
   return (
@@ -756,7 +775,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
           <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide min-w-0">
             {activeTab !== 'topics' && activeTab !== 'today' && (
               <button
-                onClick={() => setShowUnreadOnly(v => !v)}
+                onClick={() => { setHeldIds(new Set()); setShowUnreadOnly(v => !v) }}
                 className={`flex items-center gap-1.5 px-3 py-2 min-h-[44px] md:min-h-0 rounded-lg text-xs font-semibold transition-all active:scale-95 shrink-0 ${
                   showUnreadOnly
                     ? 'bg-violet-500/25 text-violet-200 ring-1 ring-violet-500/40'
@@ -944,6 +963,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
               stories={activeTodayStories}
               sources={sources}
               readIds={readIds}
+              layoutReadIds={layoutReadIds}
               sourceWeights={sourceWeights}
               topicWeights={topicWeights}
               onMarkRead={markRead}
@@ -963,7 +983,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
           <TopicsPanel
             userId={userId}
             readIds={readIds}
-            onMarkRead={markRead}
+            onMarkRead={(storyId) => markRead(storyId)}
             onEngagement={sendEngagement}
           />
         )}

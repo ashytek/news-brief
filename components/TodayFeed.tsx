@@ -11,6 +11,9 @@ interface Props {
   stories: StoryWithRelations[]
   sources: Record<string, Source>
   readIds: Set<string>
+  // Read set used for ranking only — lets the reader hold dwell-auto-read
+  // cards in place instead of sinking them mid-read. Defaults to readIds.
+  layoutReadIds?: Set<string>
   sourceWeights?: Record<string, number>
   topicWeights?: Record<string, number>
   onMarkRead: (storyId?: string) => void
@@ -27,6 +30,7 @@ export function TodayFeed({
   stories,
   sources,
   readIds,
+  layoutReadIds,
   sourceWeights = {},
   topicWeights = {},
   onMarkRead,
@@ -38,9 +42,10 @@ export function TodayFeed({
   error = false,
   onRetry,
 }: Props) {
+  const rankReadIds = layoutReadIds ?? readIds
   const ranked = useMemo(
-    () => rankItems(stories, readIds, sourceWeights, topicWeights),
-    [stories, readIds, sourceWeights, topicWeights],
+    () => rankItems(stories, rankReadIds, sourceWeights, topicWeights),
+    [stories, rankReadIds, sourceWeights, topicWeights],
   )
 
   const unreadCount = ranked.filter(item => !readIds.has(item.data.id)).length
