@@ -90,6 +90,15 @@ Per Ash's explicit request, a scheduled cron run now skips real work entirely (n
 - Run `supabase/migrations/disable_clustering_wipe.sql` **only after explicitly confirming** — it permanently deletes existing `clusters` rows and their consensus/perspectives text (the underlying `stories` rows and their own summaries/embeddings are untouched).
 - After deploying, do **one real deliberate trigger** (this costs real Apify/Gemini money) to verify the full path end-to-end, watching the GitHub Actions tab and the reader header simultaneously. Then at the *next* scheduled cron slot, check the Actions tab — the run should still appear but complete in seconds with a "Skipping scheduled run" log line, confirming the skip logic worked.
 
+## Dwell auto-read timer raised 20s → 120s (3 September 2026)
+Ash reported stories disappearing from the feed while he was still reading them. Root cause is a four-step chain, not a single bug: `useDwellVisibility` (threshold 0.5) fires `onDwellEnd` as soon as a card drops below half-visible → `endDwell` (`ReaderClient.tsx`) auto-marks it read if it was on screen past the dwell threshold → `markRead` updates `readIds` optimistically, before the network round-trip → `visibleSolos` filters `readIds` out of the feed, and `showUnreadOnly` defaults to **true**. Net effect: read a card for longer than the threshold, scroll down slightly to continue it, and the card is unmounted under you while everything below jumps up. On the Today tab the card isn't removed but is re-sorted to the bottom by `rankItems` (`ranking.ts`), which looks the same from the reader's seat.
+
+**Changed:** the threshold only, 20 → 120 seconds (`ReaderClient.tsx`, the sole place it's defined). `npm run build` clean; confirmed `a>120` in the emitted chunk.
+
+**Deliberately NOT changed — the root cause is still live.** Ash was offered a ~10-line fix (freeze cards already on screen; let them grey out in place and only drop off on the next explicit refresh, the Feedly/Reeder pattern) and declined it twice in favour of the timer alone. So a story held on screen past 120s still vanishes mid-read, by decision, not oversight — don't "fix" this silently in a later session, and don't re-diagnose it from scratch. Raising the number also inverts which stories break: quick skims are now safe, long-form pieces are the ones still at risk.
+
+**Unconfirmed, worth checking if this resurfaces:** with `threshold: 0.5`, a card taller than ~2× the viewport can never reach a 0.5 intersection ratio, so no threshold crossing ever fires and `onDwellStart` may never run for it — meaning the longest stories might never auto-mark-read at all. Reasoned from the IntersectionObserver spec, not observed in the running app.
+
 ## Rules for this folder
 - Read the relevant component only before changing code — not the whole repo. Use a subagent for repo-wide reviews.
 - Verify changes with `npm run build` / local preview and show evidence before deploying.

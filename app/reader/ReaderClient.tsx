@@ -536,7 +536,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
     }
   }, [userId, storyById])
 
-  // Dwell time tracking — auto-mark-read when user dwells >20s
+  // Dwell time tracking — auto-mark-read when user dwells >120s
   const startDwell = useCallback((id: string) => {
     dwellTimers.current.set(id, Date.now())
   }, [])
@@ -546,7 +546,9 @@ export default function ReaderClient({ userId }: { userId: string }) {
     if (!start) return
     const elapsed = (Date.now() - start) / 1000
     dwellTimers.current.delete(id)
-    if (elapsed > 20) {
+    // Measured as time on screen, not time reading — a card crossing this
+    // threshold is dropped from the unread feed even if it's still being read.
+    if (elapsed > 120) {
       sendEngagement('dwell_long', storyId)
       markRead(storyId) // auto-mark-read after sufficient reading time
     } else if (elapsed < 3) {
