@@ -1,7 +1,7 @@
 @AGENTS.md
 
 # NewsBrief — Real Project Home
-**Last updated:** 25 July 2026
+**Last updated:** 14 September 2026
 
 ## What this is
 NewsBrief: Ash's personal news briefing app. Next.js, deployed to Netlify (`netlify.toml` in this folder). Git remote: `ashytek/news-brief`.
@@ -10,7 +10,8 @@ This is the live project folder — a separate copy at `~/Desktop/Claude/News Ap
 ## Architecture (v2, since July 2026)
 - **Transcripts**: Apify actor `codepoetry~youtube-transcript-ai-scraper` is primary (~$0.001/video). Language codes must be bare ISO (`en`, `hi`) — the actor rejects `en-GB`/`en-US`. Local fallback chain (yt-dlp → timedtext → capped AssemblyAI) retained for resilience.
 - **Scheduling**: GitHub Actions cron, `.github/workflows/news-pipeline.yml`, 4×/day (03:17/09:17/15:17/21:17 UTC). Ash's Mac is retired from pipeline duty (launchd plist disabled, reversible).
-- **Sources**: Supabase `sources` table — not a static config file.
+- **Sources**: Supabase `sources` table — not a static config file. `career247official` is deactivated (`is_active=false`) — it was the same channel as `Career 247` registered twice; don't re-enable it.
+- **LLM**: everything on `gemini-2.5-flash` (paid tier) since 14 Sep 2026 — thinking off for news, 4096 budget for prophetic. `gemini-2.5-pro` is defined but unused (rollback only). Captions are merged into 30 s windows before prompting (`summarise.merge_segments`). Thinking tokens are counted in `pipeline_runs.gemini_*_tokens`. See "Gemini cost cut" section below before touching model choice.
 - **Trust layer**: reader header shows pipeline health ("Checked Xh ago" / stale / "Pipeline down"). GitHub emails on workflow failure.
 - Full history and rationale: `memory/news-app-v2-architecture.md` in the News-App project memory.
 
@@ -95,9 +96,20 @@ Ash reported stories disappearing from the feed while he was still reading them.
 
 **Changed:** the threshold only, 20 → 120 seconds (`ReaderClient.tsx`, the sole place it's defined). `npm run build` clean; confirmed `a>120` in the emitted chunk.
 
-**Deliberately NOT changed — the root cause is still live.** Ash was offered a ~10-line fix (freeze cards already on screen; let them grey out in place and only drop off on the next explicit refresh, the Feedly/Reeder pattern) and declined it twice in favour of the timer alone. So a story held on screen past 120s still vanishes mid-read, by decision, not oversight — don't "fix" this silently in a later session, and don't re-diagnose it from scratch. Raising the number also inverts which stories break: quick skims are now safe, long-form pieces are the ones still at risk.
+**Root cause fixed 14 September 2026** (Ash asked for it after the timer alone didn't stop cards vanishing mid-read): dwell-triggered reads go into `heldIds` in `ReaderClient.tsx`. A held card still counts as read (greys out, unread count drops) but is excluded from `layoutReadIds`, the read set used by `visibleSolos`, `mergedFeed` and `TodayFeed`/`rankItems` for filtering and sorting — so it stays put. Held ids are cleared at the top of `loadContent` (tab switch, pull-to-refresh, pipeline trigger) and when the Unread/All toggle is flipped. An explicit "mark read" tap is not held and removes the card immediately. Threshold stays 120 s. Deployed to Netlify same day (`npm run build` clean, `hold:!0` confirmed in chunk).
 
 **Unconfirmed, worth checking if this resurfaces:** with `threshold: 0.5`, a card taller than ~2× the viewport can never reach a 0.5 intersection ratio, so no threshold crossing ever fires and `onDwellStart` may never run for it — meaning the longest stories might never auto-mark-read at all. Reasoned from the IntersectionObserver spec, not observed in the running app.
+
+## Gemini cost cut: Pro → Flash, 30 s caption windows, duplicate source (14 September 2026)
+Bill was >£10/month. Every story (783/month) was on `gemini-2.5-pro` with thinking on — Pro output bills $10/MTok and thinking bills at that rate, so ~75% of spend was Pro output+thinking; `llm.py` never read `thoughts_token_count`, so in-app usage under-reported it. IGR (added late July, ~40 videos/day, 331 summarised/month) doubled the volume going through that path.
+
+**What changed (commit `04f08eb`):** `summarise.py` routes all news to Flash with `thinking_budget=0` (explicit — omitting it leaves Flash's dynamic thinking on) and prophetic to Flash with 4096; `merge_segments` coalesces 2–6 s captions into 30 s windows (words preserved exactly; measured 35–42% fewer prompt tokens because `[Ns]` prefixes tokenise expensively); `llm.py` tracks thinking tokens per model and the run summary / `pipeline_runs` totals include them. DB: `career247official` set inactive. Expected ~£2.50/month at current volume.
+
+**Evidence:** live A/B on 2 IGR segments + a 58-min Troy Black sermon (Pro vs Flash vs Flash-Lite, same prompts/schema): Flash matched Pro's coverage and kept every hard figure (once kept more than Pro). **Flash-Lite is deliberately not used** — it dropped "6M bpd", "70 airstrikes in 48h" and half an oil-price move on one video, and inverted two sections' order on the sermon. Post-change local run: IGR 2,343 in / 1,025 out / 0 thinking; sermon 17,166 in / 2,201 out / 4,095 thinking; 93% runtime coverage both.
+
+**Don't revisit these:** (1) Gemini free tier — Google's Gemini API ToS requires Paid Services for API clients serving UK users, and Flash's free RPD was cut to ~20/day (Dec 2025), below the pipeline's median. A second unbilled project is not an option. (2) Groq free tier — 200K tokens/day ≈ 34 calls (p95 is 61) and 8K TPM blocks prophetic prompts. (3) Batch API — 50% off but needs a two-phase cron for ~£1/month. (4) Fewer cron runs — cost is per video, not per run; no saving. Viable-but-not-chosen: OpenRouter `nvidia/nemotron-3-super-120b-a12b:free` (needs one-time $10 credit for 1000 RPD and an `llm.py` rewrite), GPT-5-nano (~£0.41/mo), Groq paid gpt-oss-120b (~£0.92/mo). Newer Gemini 3.x Flash models are 2.5–6× pricier than 2.5 — re-price before switching if 2.5 is retired. Full detail: `memory/gemini-cost-findings-sep-2026.md` in the News-App project memory.
+
+**Verify next:** the first scheduled run after 10:55 UTC 14 Sep (16:17 UK) should log `Flash N tokens (in/out/thinking) · Pro 0 tokens`. Check Google Cloud billing in ~2 weeks to confirm the drop.
 
 ## Rules for this folder
 - Read the relevant component only before changing code — not the whole repo. Use a subagent for repo-wide reviews.
