@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo, Fragment } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import type { Category, Source } from '@/lib/types'
 import type { StoryWithRelations } from '@/lib/types'
@@ -19,6 +19,13 @@ const CATEGORIES: { key: Category; label: string; color: string }[] = [
   { key: 'india_global', label: 'India & Global',  color: 'amber'  },
   { key: 'tech_ai',      label: 'Tech & AI',       color: 'emerald'},
 ]
+
+function formatSince(t: number): string {
+  const mins = Math.round((Date.now() - t) / 60000)
+  if (mins < 60) return `${mins} min ago`
+  const hrs = Math.round(mins / 60)
+  return hrs < 48 ? `${hrs}h ago` : `${Math.round(hrs / 24)}d ago`
+}
 
 export default function ReaderClient({ userId }: { userId: string }) {
   const supabase = createClient()
@@ -85,6 +92,14 @@ export default function ReaderClient({ userId }: { userId: string }) {
   // let an older, slower response land after a newer one and show the wrong
   // category's stories.
   const loadReqId = useRef(0)
+
+  // Previous visit, read before the mount effect below overwrites it — drives
+  // the "N new since you left" banner and divider (F012).
+  const [prevVisit] = useState<number | null>(() => {
+    if (typeof window === 'undefined') return null
+    const t = Date.parse(localStorage.getItem('newsbrief_lastVisit') ?? '')
+    return Number.isNaN(t) ? null : t
+  })
 
   // Record last-visit timestamp on mount
   useEffect(() => {
@@ -682,6 +697,24 @@ export default function ReaderClient({ userId }: { userId: string }) {
     [visibleSolos, isVantage, layoutReadIds]
   )
 
+  // "Since you left": stories that arrived (created_at) after the previous
+  // visit and are still unread, in whichever tab is showing.
+  const isNewSinceVisit = useCallback(
+    (s: StoryWithRelations) => prevVisit !== null && new Date(s.created_at).getTime() > prevVisit,
+    [prevVisit]
+  )
+  const newSinceVisit = useMemo(() => {
+    const pool = activeTab === 'today' ? activeTodayStories : visibleSolos
+    return pool.filter(s => isNewSinceVisit(s) && !readIds.has(s.id)).length
+  }, [activeTab, activeTodayStories, visibleSolos, isNewSinceVisit, readIds])
+  // Divider goes after the leading run of new stories only — mergedFeed is
+  // ordered by publish time, so a late-summarised old video can be "new"
+  // further down; splitting there would mislabel the cards above it.
+  const newLeadCount = useMemo(() => {
+    const i = mergedFeed.findIndex(s => !isNewSinceVisit(s))
+    return i === -1 ? mergedFeed.length : i
+  }, [mergedFeed, isNewSinceVisit])
+
   return (
     <div className="min-h-screen text-slate-100">
       {/* Top bar */}
@@ -974,6 +1007,11 @@ export default function ReaderClient({ userId }: { userId: string }) {
       )}
 
       <main className="max-w-2xl mx-auto px-4 py-4 space-y-3 pb-24 md:pb-6">
+        {!loading && !loadError && newSinceVisit > 0 && prevVisit !== null && (
+          <p className="text-xs font-semibold text-violet-300 bg-violet-500/10 ring-1 ring-violet-500/25 rounded-xl px-3 py-2">
+            {newSinceVisit} new since you left · {formatSince(prevVisit)}
+          </p>
+        )}
         {/* Today tab */}
         {activeTab === 'today' && (
           <ErrorBoundary>
@@ -1106,9 +1144,15 @@ export default function ReaderClient({ userId }: { userId: string }) {
 
             {/* Unified merged feed — non-Vantage solos sorted latest→oldest */}
             <ErrorBoundary>
-              {!loading && mergedFeed.map(story => (
+              {!loading && mergedFeed.map((story, i) => (
+                <Fragment key={story.id}>
+                {i === newLeadCount && i > 0 && (
+                  <div className="flex items-center gap-3 pt-3 pb-1">
+                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Before you left</span>
+                    <div className="flex-1 h-px bg-slate-800" />
+                  </div>
+                )}
                 <SoloCard
-                  key={story.id}
                   story={story}
                   source={sources[story.source_id]}
                   isRead={readIds.has(story.id)}
@@ -1118,6 +1162,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
                   onDwellEnd={() => endDwell(story.id, story.id)}
                   onMuteTopic={() => muteTopics(story.matched_topics ?? [])}
                 />
+                </Fragment>
               ))}
             </ErrorBoundary>
           </>
