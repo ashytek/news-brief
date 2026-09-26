@@ -43,7 +43,13 @@ COVERAGE RULES
 
 HEADLINE
 - Max 12 words, punchy, factual.
-- MUST include at least one proper noun (person, place, or organisation) unless the event is truly abstract."""
+- MUST include at least one proper noun (person, place, or organisation) unless the event is truly abstract.
+
+LANGUAGE
+- Always write the headline, summary, and every section in English, whatever language the transcript is in (e.g. Hindi). Translate faithfully; keep names and figures exact.
+
+CONTENT CHECK
+- Set has_content to false ONLY if the transcript has no usable material to summarise (e.g. silence, music only, a bare scripture reading with no commentary). Otherwise true."""
 
 PROPHETIC_BULLET_SYSTEM = """You are extracting prophetic content from a ministry video for a discerning Christian leader who wants COMPREHENSIVE coverage of every prophetic element across the entire broadcast.
 
@@ -86,7 +92,13 @@ Each extracted item is a SECTION of a chronological walkthrough, in video order:
 - The overview ("summary" field): 2-4 sentences of prose capturing the broadcast's overall thrust and its weightiest declarations.
 
 ═══ OUTPUT VERIFICATION ═══
-Before submitting, count your sections. Check timestamps span from early in the video to near the end. If your latest timestamp is less than 50% through the video duration, you have under-covered — go back and add more from the latter half."""
+Before submitting, count your sections. Check timestamps span from early in the video to near the end. If your latest timestamp is less than 50% through the video duration, you have under-covered — go back and add more from the latter half.
+
+LANGUAGE
+- Always write the headline, summary, and every section in English, whatever language the transcript is in (e.g. Hindi). Translate faithfully; keep names and figures exact.
+
+CONTENT CHECK
+- Set has_content to false ONLY if the transcript has no prophetic or ministry content (e.g. silence, music only, a bare scripture reading with no commentary). Otherwise true."""
 
 # ---------------------------------------------------------------------------
 # Native JSON schemas — Gemini enforces these natively; no markdown stripping needed
@@ -95,6 +107,10 @@ Before submitting, count your sections. Check timestamps span from early in the 
 BULLET_SCHEMA = {
     "type": "object",
     "properties": {
+        # Explicit no-content flag — replaces the old headline substring
+        # check, which silently dropped real stories like "Govt says no new
+        # lockdown".
+        "has_content": {"type": "boolean"},
         "headline": {"type": "string"},
         "summary":  {"type": "string"},
         "bullets": {
@@ -113,7 +129,7 @@ BULLET_SCHEMA = {
             },
         },
     },
-    "required": ["headline", "summary", "bullets"],
+    "required": ["has_content", "headline", "summary", "bullets"],
 }
 
 # ---------------------------------------------------------------------------
@@ -223,12 +239,10 @@ def summarise_video(
         print(f"    ✗ Summarisation failed (Gemini returned None)")
         return None
 
-    # Reject no-content sentinels Gemini sometimes returns when a video has
-    # no usable material (scripture readings, silent videos, etc.)
-    headline = result.get("headline", "")
-    NO_CONTENT_PHRASES = ("no new", "no prophetic", "no content", "no information", "scripture reading", "no news")
-    if any(p in headline.lower() for p in NO_CONTENT_PHRASES):
-        print(f"    · Skipped — Gemini reported no usable content: {headline[:60]}")
+    # Reject videos Gemini flags as having no usable material (scripture
+    # readings, silent videos, etc.). Missing key → treat as content.
+    if result.pop("has_content", True) is False:
+        print(f"    · Skipped — Gemini reported no usable content: {result.get('headline', '')[:60]}")
         return None
 
     # Category-specific bullet cap.
