@@ -117,7 +117,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
           setTopicWeights(map)
         }
       })
-  }, [userId]) // eslint-disable-line react-hooks/exhaustive-deps — load once on mount
+  }, [userId]) // eslint-disable-line react-hooks/exhaustive-deps -- load once on mount
 
   // Pipeline health — last completed run of ANY status (a success-only
   // query hides outages: the dot stayed green while runs were failing).
@@ -178,7 +178,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
     })
 
     refreshPipelineHealth()
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps — load once on mount
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps -- load once on mount
 
   // Close the header "More" menu on an outside tap. Deliberately NOT using a
   // fixed inset-0 catcher element: backdrop-filter/filter/transform on any
@@ -237,7 +237,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
 
   useEffect(() => {
     loadReadIds()
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps — intentionally load once
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps -- intentionally load once
 
   // Load active muted topics (expires_at > now)
   useEffect(() => {

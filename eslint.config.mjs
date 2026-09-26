@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Netlify build output and the Python pipeline (incl. its venv) —
+    // thousands of generated-file problems that buried the real ones.
+    ".netlify/**",
+    "pipeline/**",
   ]),
 ]);
 
