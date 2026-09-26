@@ -30,8 +30,12 @@ export async function proxy(request: NextRequest) {
   } = await supabase.auth.getUser()
 
   // /dev-ui is an auth-free layout fixture (mock data only) used to
-  // reproduce and measure UI issues in a plain browser.
-  if (request.nextUrl.pathname.startsWith('/dev-ui')) {
+  // reproduce and measure UI issues in a plain browser. Dev only — in
+  // production it falls through to the normal auth gate.
+  if (
+    process.env.NODE_ENV !== 'production' &&
+    request.nextUrl.pathname === '/dev-ui'
+  ) {
     return supabaseResponse
   }
 
@@ -62,6 +66,6 @@ export const config = {
   // gets an HTML login page where it expects JSON/PNG and fails PWA
   // installability entirely. Exclude static/manifest assets from the gate.
   matcher: [
-    '/((?!_next/static|_next/image|favicon\\.ico|api|manifest\\.json|icons/|.*\\.(?:png|svg|ico|webmanifest)$).*)',
+    '/((?!_next/static|_next/image|favicon\\.ico|api/|manifest\\.json|icons/|.*\\.(?:png|svg|ico|webmanifest)$).*)',
   ],
 }
