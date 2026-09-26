@@ -487,6 +487,9 @@ export default function ReaderClient({ userId }: { userId: string }) {
     })
     if (error && error.code !== '23505') {
       console.error('markRead failed', { storyId, error })
+      // Roll back so the card isn't shown as read when the DB disagrees.
+      setReadIds(prev => { const n = new Set(prev); n.delete(storyId); return n })
+      if (opts?.hold) setHeldIds(prev => { const n = new Set(prev); n.delete(storyId); return n })
     }
   }, [userId, readIds])
 
@@ -505,7 +508,14 @@ export default function ReaderClient({ userId }: { userId: string }) {
     const rows = newStoryIds.map(id => ({ user_id: userId, story_id: id }))
     const { error } = await supabase.from('read_items').insert(rows)
     if (error) {
+      // A multi-row insert is all-or-nothing, so any error means none of
+      // these were saved — roll all of them back.
       console.error('markManyRead failed', { count: rows.length, error })
+      setReadIds(prev => {
+        const next = new Set(prev)
+        newStoryIds.forEach(id => next.delete(id))
+        return next
+      })
     }
   }, [userId, readIds])
 
@@ -519,22 +529,30 @@ export default function ReaderClient({ userId }: { userId: string }) {
   }, [soloStories, todayStories])
 
   const sendEngagement = useCallback(async (signal: string, storyId?: string) => {
-    await supabase.from('engagement').insert({
+    const { error } = await supabase.from('engagement').insert({
       user_id: userId,
       story_id: storyId ?? null,
       signal,
     })
+    if (error) {
+      console.error('sendEngagement failed', { storyId, signal, error })
+    }
     if (storyId) {
       const story = storyById.get(storyId)
       if (story) {
         const delta = signal === 'like' ? 0.1 : signal === 'dislike' ? -0.15 : 0
         if (delta !== 0) {
-          await supabase.rpc('adjust_source_weight', {
+          const { error: rpcError } = await supabase.rpc('adjust_source_weight', {
             p_user_id: userId,
             p_source_id: story.source_id,
             p_delta: delta
           }).maybeSingle()
-          // Optimistic update: reflect new weight immediately in ranking
+          if (rpcError) {
+            // Don't nudge local ranking for a weight the DB never stored.
+            console.error('adjust_source_weight failed', { storyId, delta, error: rpcError })
+            return
+          }
+          // Reflect the saved weight immediately in ranking
           setSourceWeights(prev => {
             const current = prev[story.source_id] ?? 1.0
             const next = Math.min(1.5, Math.max(0.5, current + delta))
