@@ -52,6 +52,7 @@ export default function ArchiveClient({ userId }: Props) {
   const [sources, setSources] = useState<Record<string, Source>>({})
   const [readIds, setReadIds] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState(false)
   const [filterCategory, setFilterCategory] = useState<string>('all')
 
   // Load sources
@@ -78,7 +79,8 @@ export default function ArchiveClient({ userId }: Props) {
 
   const loadStories = useCallback(async (date: string) => {
     setLoading(true)
-    const { data } = await supabase
+    setLoadError(false)
+    const { data, error } = await supabase
       .from('stories')
       .select(STORY_SELECT)
       .gte('created_at', toDateStart(date))
@@ -86,7 +88,15 @@ export default function ArchiveClient({ userId }: Props) {
       .order('created_at', { ascending: false })
       .limit(100)
 
-    setStories((data as unknown as StoryWithRelations[]) ?? [])
+    if (error) {
+      // Distinct from an empty day — otherwise a failed fetch reads as
+      // "No stories on this date".
+      console.error('archive loadStories failed', { date, error })
+      setStories([])
+      setLoadError(true)
+    } else {
+      setStories((data as unknown as StoryWithRelations[]) ?? [])
+    }
     setLoading(false)
   }, [])
 
@@ -105,6 +115,16 @@ export default function ArchiveClient({ userId }: Props) {
     })
     if (error && error.code !== '23505') {
       console.error('archive markRead failed', { storyId, error })
+    }
+  }
+
+  const sendEngagement = async (storyId: string, signal: string) => {
+    // Same table ReaderClient/update_weights.py read — see SearchClient.
+    const { error } = await supabase.from('engagement').insert({
+      user_id: userId, story_id: storyId, signal,
+    })
+    if (error) {
+      console.error('archive sendEngagement failed', { storyId, signal, error })
     }
   }
 
@@ -220,6 +240,24 @@ export default function ArchiveClient({ userId }: Props) {
           <div className="flex justify-center py-16">
             <div className="w-6 h-6 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
           </div>
+        ) : loadError ? (
+          <div className="text-center py-20 px-6">
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-rose-500/10 ring-1 ring-rose-500/30 mb-4">
+              <svg className="w-8 h-8 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+              </svg>
+            </div>
+            <p className="text-base font-semibold text-rose-200">Couldn't load this date</p>
+            <p className="text-sm text-slate-400 mt-1.5 max-w-xs mx-auto">
+              Something went wrong fetching stories — check your connection and try again.
+            </p>
+            <button
+              onClick={() => loadStories(selectedDate)}
+              className="mt-5 text-sm font-semibold text-violet-300 hover:text-violet-200 transition-colors inline-flex items-center gap-1"
+            >
+              Try again
+            </button>
+          </div>
         ) : filtered.length === 0 ? (
           <div className="text-center py-20">
             <div className="text-4xl mb-3">📭</div>
@@ -237,7 +275,7 @@ export default function ArchiveClient({ userId }: Props) {
                 source={sources[story.source_id]}
                 isRead={readIds.has(story.id)}
                 onRead={() => markRead(story.id)}
-                onEngagement={() => {}}
+                onEngagement={(sig) => sendEngagement(story.id, sig)}
                 onDwellStart={() => {}}
                 onDwellEnd={() => {}}
               />
