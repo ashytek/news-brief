@@ -1,7 +1,7 @@
 @AGENTS.md
 
 # NewsBrief — Real Project Home
-**Last updated:** 14 September 2026
+**Last updated:** 2 October 2026
 
 ## What this is
 NewsBrief: Ash's personal news briefing app. Next.js, deployed to Netlify (`netlify.toml` in this folder). Git remote: `ashytek/news-brief`.
@@ -110,6 +110,23 @@ Bill was >£10/month. Every story (783/month) was on `gemini-2.5-pro` with think
 **Don't revisit these:** (1) Gemini free tier — Google's Gemini API ToS requires Paid Services for API clients serving UK users, and Flash's free RPD was cut to ~20/day (Dec 2025), below the pipeline's median. A second unbilled project is not an option. (2) Groq free tier — 200K tokens/day ≈ 34 calls (p95 is 61) and 8K TPM blocks prophetic prompts. (3) Batch API — 50% off but needs a two-phase cron for ~£1/month. (4) Fewer cron runs — cost is per video, not per run; no saving. Viable-but-not-chosen: OpenRouter `nvidia/nemotron-3-super-120b-a12b:free` (needs one-time $10 credit for 1000 RPD and an `llm.py` rewrite), GPT-5-nano (~£0.41/mo), Groq paid gpt-oss-120b (~£0.92/mo). Newer Gemini 3.x Flash models are 2.5–6× pricier than 2.5 — re-price before switching if 2.5 is retired. Full detail: `memory/gemini-cost-findings-sep-2026.md` in the News-App project memory.
 
 **Verify next:** the first scheduled run after 10:55 UTC 14 Sep (16:17 UK) should log `Flash N tokens (in/out/thinking) · Pro 0 tokens`. Check Google Cloud billing in ~2 weeks to confirm the drop.
+
+## Audit fix batch (26 September – 2 October 2026)
+Worked through the "Suggested first session" of `~/Desktop/Claude/News App/IMPROVEMENT_AUDIT_2026-09-26.md` (F-numbers below refer to it). Six commits on branch `audit-fixes-2026-09-26` on top of `4dd6ef4`, made 26 Sep; re-reviewed and re-verified 2 Oct.
+
+**Fixed:**
+1. **F009, F032, F055, F096** (`f684f59`) — `next` + `eslint-config-next` 16.2.3 → 16.3.6, `npm audit fix`; `/dev-ui` bypass only when `NODE_ENV !== 'production'` and only for exact `/dev-ui`; proxy matcher excludes `api/` not `api`. Evidence (2 Oct): `npm audit` 0 vulnerabilities (prod and dev), build clean; signed-out on `next start`: `/reader`, `/archive`, `/dev-ui`, `/apix` → 307 `/auth`; `/manifest.json`, favicon, icons → 200 no redirect. Both `/api/*` routes still self-check auth (unauthenticated POST → 401).
+2. **F011, F054** (`a8f6f3b`) — `summarise.py`: explicit `has_content` boolean in `BULLET_SCHEMA` (required; popped before return; missing → treated as content) replaces the headline substring filter, so "Govt says no new lockdown" is no longer dropped. Both system prompts now say "always write in English". Tested 26 Sep on one IGR (English) and one Career 247 (Hindi) transcript: both English, `has_content` true, $0.0055 total. **Only reaches the cron once merged + pushed to `main`** — `npm run deploy` doesn't ship the pipeline.
+3. **F003, F004** (`6ce8870`) — Archive: fetch error shows "Couldn't load this date" + Try again (not "No stories"); like/dislike insert into `engagement` (Search's pattern).
+4. **F005, F006** (`38b6f02`) — Reader: `markRead` / `markManyRead` roll back optimistic read (and held) state on a failed insert; `sendEngagement` checks both writes and skips the local source-weight nudge if `adjust_source_weight` fails.
+5. **F021, F027** (`ddaab8f`) — three em-dash `eslint-disable-line` comments fixed; `.netlify/**` and `pipeline/**` ignored. Real lint count: **23 problems (9 errors, 14 warnings)**, all predating this batch.
+6. **F012** (`c13da18`, Ash's pick over F014) — "N new since you left · Xh ago" banner (unread stories created after the previous visit) and a "Before you left" divider in category feeds.
+
+**Still open from the audit:** F017 healthchecks.io + `HEALTHCHECK_URL` secret (**Ash**); F018 rotate credentials exposed 19 Jul (**Ash**); F002/F010/F046 transcript fallback dead weight on Actions; F029 dwell threshold on tall cards; cleanup batch F019/F035/F036/F037/F085/F051/F073/F076/F081; product ideas F014, F060, F063, F013/F102, F061, F058, F057, F015, F064.
+
+**Noticed, not fixed (out of scope):** bulk mark-read is all-or-nothing, so one row already read elsewhere (23505) fails and now visibly rolls back the whole batch — should skip duplicates; the installed PWA doesn't refresh on resume, and "since you left" only updates on a full reload; the `/auth` checks in `proxy.ts` are still unanchored `startsWith` (low risk: no other route starts with `/auth`).
+
+**Deploy status:** not yet deployed; branch not yet merged to `main`.
 
 ## Rules for this folder
 - Read the relevant component only before changing code — not the whole repo. Use a subagent for repo-wide reviews.
