@@ -135,6 +135,9 @@ Worked through the "Suggested first session" of `~/Desktop/Claude/News App/IMPRO
 
 **Verify next:** the next runs should log "Skipped long Vantage recap" or "Deferred live Vantage stream" for full episodes, and `videos.duration_seconds` should start filling in.
 
+## Next build: catch-up view + storylines + short cards (spec'd 3 October 2026)
+Designed with Ash, not built. Full spec, decisions and evidence: **`SPEC.md`** (repo root). Build it in a fresh session on Sonnet, phase by phase.
+
 ## Rules for this folder
 - Read the relevant component only before changing code — not the whole repo. Use a subagent for repo-wide reviews.
 - Verify changes with `npm run build` / local preview and show evidence before deploying.
