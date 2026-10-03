@@ -5,7 +5,7 @@ import type { StoryWithRelations, Source } from '@/lib/types'
 import { SoloCard } from './SoloCard'
 import { SkeletonCard } from './SkeletonCard'
 import { CATEGORY_LABELS, CATEGORY_PILL_COLORS } from '@/lib/constants'
-import { rankItems } from '@/lib/ranking'
+import { rankItems, isIGRSource } from '@/lib/ranking'
 
 interface Props {
   stories: StoryWithRelations[]
@@ -44,8 +44,9 @@ export function TodayFeed({
 }: Props) {
   const rankReadIds = layoutReadIds ?? readIds
   const ranked = useMemo(
-    () => rankItems(stories, rankReadIds, sourceWeights, topicWeights),
-    [stories, rankReadIds, sourceWeights, topicWeights],
+    () => rankItems(stories, rankReadIds, sourceWeights, topicWeights, 12,
+      s => isIGRSource(sources[s.source_id])),
+    [stories, rankReadIds, sourceWeights, topicWeights, sources],
   )
 
   const unreadCount = ranked.filter(item => !readIds.has(item.data.id)).length

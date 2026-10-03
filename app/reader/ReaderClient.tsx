@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef, useMemo, Fragment } from 'react'
+import { isIGRSource, interleaveLead } from '@/lib/ranking'
 import { createClient } from '@/lib/supabase/client'
 import type { Category, Source } from '@/lib/types'
 import type { StoryWithRelations } from '@/lib/types'
@@ -671,21 +672,28 @@ export default function ReaderClient({ userId }: { userId: string }) {
     return name.includes('vantage') || name.includes('firstpost')
   }, [sources])
 
-  const vantagePinned = useMemo(
-    () => visibleSolos
-      .filter(isVantage)
-      .sort((a, b) => {
-        const da = new Date(a.videos?.published_at ?? a.created_at)
-        const db = new Date(b.videos?.published_at ?? b.created_at)
-        return db.getTime() - da.getTime()
-      }),
-    [visibleSolos, isVantage]
+  const isIGR = useCallback(
+    (story: StoryWithRelations) => isIGRSource(sources[story.source_id]),
+    [sources]
   )
+
+  // IGR + Vantage pinned to the top, IGR-led: two IGR per Vantage, each
+  // newest first (Ash, Oct 2026). A time-based head start for IGR was tried
+  // on real data and came out as solid blocks, since both post in bursts.
+  const pinnedMix = useMemo(() => {
+    const newestFirst = (a: StoryWithRelations, b: StoryWithRelations) =>
+      new Date(b.videos?.published_at ?? b.created_at).getTime() -
+      new Date(a.videos?.published_at ?? a.created_at).getTime()
+    return interleaveLead(
+      visibleSolos.filter(isIGR).sort(newestFirst),
+      visibleSolos.filter(isVantage).sort(newestFirst),
+    )
+  }, [visibleSolos, isIGR, isVantage])
 
   // Feed sorted latest→oldest, with read items sunk below unread in "Show All" mode
   const mergedFeed = useMemo(
     () => visibleSolos
-      .filter(s => !isVantage(s))
+      .filter(s => !isVantage(s) && !isIGR(s))
       .sort((a, b) => {
         const aRead = layoutReadIds.has(a.id)
         const bRead = layoutReadIds.has(b.id)
@@ -694,7 +702,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
         const db = new Date(b.videos?.published_at ?? b.created_at).getTime()
         return db - da
       }),
-    [visibleSolos, isVantage, layoutReadIds]
+    [visibleSolos, isVantage, isIGR, layoutReadIds]
   )
 
   // "Since you left": stories that arrived (created_at) after the previous
@@ -1108,19 +1116,19 @@ export default function ReaderClient({ userId }: { userId: string }) {
               </div>
             )}
 
-            {/* Vantage segments pinned to top */}
-            {!loading && vantagePinned.length > 0 && (
+            {/* IGR + Vantage pinned to top (IGR-led mix) */}
+            {!loading && pinnedMix.length > 0 && (
               <>
                 <div className="flex items-center gap-3 pt-1 pb-1">
                   <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-amber-300 bg-amber-500/15 ring-1 ring-amber-500/30 px-2.5 py-1 rounded-full uppercase tracking-wider">
                     <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                       <path d="M13 10V3L4 14h7v7l9-11h-7z" />
                     </svg>
-                    Vantage · Latest
+                    IGR + Vantage · Latest
                   </span>
                   <div className="flex-1 h-px bg-gradient-to-r from-amber-500/30 to-transparent" />
                 </div>
-                {vantagePinned.map(story => (
+                {pinnedMix.map(story => (
                   <SoloCard
                     key={story.id}
                     story={story}

@@ -12,6 +12,11 @@
  *   Updated nightly by update_weights.py from dwell/like/dislike/mute signals.
  *
  * Read items always sink to the bottom regardless of score.
+ *
+ * Priority source (IGR, per Ash Oct 2026): unread items are then mixed two
+ * priority per one other (interleaveLead), each side keeping its score order.
+ * A plain score multiplier was tried first on real data — even ×1.15 pushed
+ * every other source out of the top 12, because base scores sit close together.
  */
 import type { StoryWithRelations } from '@/lib/types'
 
@@ -28,6 +33,26 @@ export interface RankedItem {
 function recencyScore(date: Date): number {
   const hoursAgo = (Date.now() - date.getTime()) / (1000 * 3600)
   return 1 / Math.max(0.25, hoursAgo)
+}
+
+/** India Global Review — matched by source name, like isVantage in ReaderClient. */
+export function isIGRSource(source?: { name?: string | null }): boolean {
+  return (source?.name ?? '').toLowerCase().includes('india global review')
+}
+
+/**
+ * Two (`ratio`) from `lead`, then one from `rest`, repeating. Each list keeps
+ * its own order; whichever runs out first, the other fills the remainder.
+ */
+export function interleaveLead<T>(lead: T[], rest: T[], ratio = 2): T[] {
+  const out: T[] = []
+  let i = 0
+  let j = 0
+  while (i < lead.length || j < rest.length) {
+    for (let k = 0; k < ratio && i < lead.length; k++) out.push(lead[i++])
+    if (j < rest.length) out.push(rest[j++])
+  }
+  return out
 }
 
 function getSourceWeight(sourceId: string, weights: Record<string, number>): number {
@@ -58,6 +83,7 @@ function getTopicBoost(
  * @param sourceWeights - map of source_id → weight (empty = all neutral)
  * @param topicWeights  - map of keyword → weight  (empty = all neutral)
  * @param limit      - max items to return (default 12)
+ * @param isPriority - optional; unread priority items lead 2:1 (see top)
  */
 export function rankItems(
   solos: StoryWithRelations[],
@@ -65,6 +91,7 @@ export function rankItems(
   sourceWeights: Record<string, number> = {},
   topicWeights: Record<string, number> = {},
   limit = 12,
+  isPriority?: (s: StoryWithRelations) => boolean,
 ): RankedItem[] {
   const items: RankedItem[] = solos.map(s => {
     const base = recencyScore(new Date(s.videos?.published_at ?? s.created_at)) + 1
@@ -75,13 +102,20 @@ export function rankItems(
     }
   })
 
-  return items
-    .sort((a, b) => {
-      // Read items always sink to the bottom
-      const aRead = readIds.has(a.data.id)
-      const bRead = readIds.has(b.data.id)
-      if (aRead !== bRead) return aRead ? 1 : -1
-      return b.score - a.score
-    })
-    .slice(0, limit)
+  const sorted = items.sort((a, b) => {
+    // Read items always sink to the bottom
+    const aRead = readIds.has(a.data.id)
+    const bRead = readIds.has(b.data.id)
+    if (aRead !== bRead) return aRead ? 1 : -1
+    return b.score - a.score
+  })
+  if (!isPriority) return sorted.slice(0, limit)
+
+  const unread = sorted.filter(i => !readIds.has(i.data.id))
+  const read = sorted.filter(i => readIds.has(i.data.id))
+  const mixed = interleaveLead(
+    unread.filter(i => isPriority(i.data)),
+    unread.filter(i => !isPriority(i.data)),
+  )
+  return [...mixed, ...read].slice(0, limit)
 }
