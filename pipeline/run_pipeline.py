@@ -90,18 +90,34 @@ def process_transcripts_and_summarise(items, stats, source_map, retry_delay_rang
     consecutive_failures = 0
     MAX_CONSECUTIVE_FAILURES = 3  # abort early if YouTube is 429-ing everything
 
+    # The long-recap skip below needs a real duration. Retry items come from
+    # DB rows without one, and a stream that was still live at discovery had
+    # none either — both slipped past the skip (three ~1 h Vantage episodes
+    # summarised 23 Sep–2 Oct). Look up any missing ones now (1 quota unit
+    # per 50 ids; non-fatal on error).
+    fetch_sources.annotate_durations([
+        i for i in items
+        if not i.get("duration_seconds")
+        and _is_vantage_source(source_map.get(i["source_id"], {}))
+    ])
+
     for idx, item in enumerate(items):
         print(f"  → {item['title'][:60]}…")
 
-        # Vantage/Firstpost videos over ~20min are usually recap/rehash
+        # Vantage/Firstpost videos over 20 min are usually recap/rehash
         # content, not worth Gemini tokens — skip before any network call.
-        # duration_seconds is only reliably populated for fresh discovery
-        # items (see fetch_sources.annotate_durations), so this can't catch
-        # a long recap re-entering via the retry/recovery queues — accepted,
-        # low-cost gap (see Feature 2 plan notes).
+        # Durations for Vantage items are looked up above, retries included.
         source = source_map.get(item["source_id"], {})
         dur = item.get("duration_seconds")
-        if dur and dur > MAX_VANTAGE_RECAP_SECONDS and _is_vantage_source(source):
+        deferred = False
+        if dur == 0 and _is_vantage_source(source):
+            # Still live (YouTube reports 'P0D'), so its length is unknown.
+            # Park it as 'failed' — the retry pass re-checks the duration
+            # once the stream has ended, and skips it if it's a long recap.
+            print("    · Deferred live Vantage stream (length unknown until it ends)")
+            transcript_text, status, segments = None, "failed", []
+            deferred = True
+        elif dur and dur > MAX_VANTAGE_RECAP_SECONDS and _is_vantage_source(source):
             print(f"    · Skipped long Vantage recap ({int(dur)}s > {MAX_VANTAGE_RECAP_SECONDS}s)")
             # 'skipped_filter' — NOT a new status. videos.transcript_status has
             # a DB-level CHECK constraint (no local migration source — created
@@ -117,7 +133,7 @@ def process_transcripts_and_summarise(items, stats, source_map, retry_delay_rang
         else:
             transcript_text, status, segments = get_transcripts.fetch_transcript(item, retry_delay_range)
 
-        if status == "failed":
+        if status == "failed" and not deferred:
             # Only true fetch failures (IP block, network) count toward abort.
             # skipped_short and no_transcript are intentional outcomes, not errors.
             consecutive_failures += 1
@@ -161,6 +177,7 @@ def process_transcripts_and_summarise(items, stats, source_map, retry_delay_rang
             "transcript_status": status,
             "fetched_at": "now()",
             "thumbnail_url": item.get("thumbnail_url"),  # persist thumbnail from fetch phase
+            "duration_seconds": item.get("duration_seconds"),
         }
         video_id = item.get("video_id") or db.upsert_video(video_record)
 
@@ -175,6 +192,7 @@ def process_transcripts_and_summarise(items, stats, source_map, retry_delay_rang
                 "transcript_text": transcript_text,
                 "transcript_status": status,
                 "fetched_at": "now()",
+                **({"duration_seconds": item["duration_seconds"]} if item.get("duration_seconds") is not None else {}),
             }).eq("id", item["video_id"]).execute()
 
         if transcript_text:

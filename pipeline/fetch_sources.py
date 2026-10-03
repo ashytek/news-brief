@@ -177,7 +177,14 @@ _ISO8601_DUR = re.compile(
 
 
 def _parse_iso8601_duration(dur: str) -> int | None:
-    """'PT1H2M3S' → 3723 seconds. Returns None if unparseable."""
+    """'PT1H2M3S' → 3723 seconds. Returns None if unparseable.
+
+    'P0D' (what YouTube reports for a stream that is still live or not yet
+    started) → 0, so callers can tell "length not known yet" apart from a
+    failed lookup.
+    """
+    if dur == "P0D":
+        return 0
     m = _ISO8601_DUR.fullmatch(dur or "")
     if not m:
         return None
@@ -195,9 +202,10 @@ def annotate_durations(items: list[dict]) -> None:
     Lets the pipeline skip shorts BEFORE spending a transcript fetch —
     previously ~130 videos/month were fetched and then discarded as
     skipped_short. Non-fatal on error: items just stay un-annotated and
-    the old post-fetch duration check still applies.
+    the old post-fetch duration check still applies. Also used on retry
+    items ('failed'), whose DB rows may never have had a duration.
     """
-    yt_items = [i for i in items if i.get("transcript_status") == "pending"]
+    yt_items = [i for i in items if i.get("transcript_status") in ("pending", "failed")]
     if not yt_items:
         return
     yt = get_youtube()
