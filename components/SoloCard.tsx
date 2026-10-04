@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useMemo, useState } from 'react'
-import type { Source } from '@/lib/types'
+import type { ShortVersion, Source } from '@/lib/types'
 import type { StoryWithRelations } from '@/lib/types'
 import { TsLink } from './TsLink'
 import { EngagementBar } from './EngagementBar'
@@ -27,11 +27,19 @@ interface Props {
 const SIXTY_MINUTES = 60 * 60 * 1000
 
 /** Rough words-per-minute reading estimate (250 wpm = average adult). */
-function estimateReadMinutes(summary: string, bullets: { text: string }[]): number {
-  const words =
-    (summary?.split(/\s+/).length ?? 0) +
-    bullets.reduce((sum, b) => sum + (b.text?.split(/\s+/).length ?? 0), 0)
+function estimateReadMinutes(texts: string[]): number {
+  const words = texts.reduce((sum, t) => sum + (t?.split(/\s+/).length ?? 0), 0)
   return Math.max(1, Math.round(words / 250))
+}
+
+/** The story's short version, or null when absent or malformed — the card then
+ *  falls back to the long summary. `short` is untyped jsonb in the database. */
+function readShort(s: ShortVersion | null | undefined): { lead: string; keyPoints: string[] } | null {
+  if (!s || typeof s.lead !== 'string' || !s.lead.trim()) return null
+  const keyPoints = Array.isArray(s.key_points)
+    ? s.key_points.filter(p => typeof p === 'string' && p.trim().length > 0)
+    : []
+  return { lead: s.lead.trim(), keyPoints }
 }
 
 /** Friendly relative-time string: "2h ago", "Yesterday", "3 May". */
@@ -55,6 +63,8 @@ export function SoloCard({ story, source, isRead, onRead, onEngagement, onDwellS
   const videoUrl = video?.url ?? null
   const thumbnail = video?.thumbnail_url ?? null
 
+  // Walkthrough stories: "More" reveals the timestamped sections. Legacy
+  // dot-bullet stories: expands past BULLET_PREVIEW_COUNT, as before.
   const [showAllBullets, setShowAllBullets] = useState(false)
 
   // Native Android/iOS share sheet; clipboard fallback on desktop
@@ -72,9 +82,19 @@ export function SoloCard({ story, source, isRead, onRead, onEngagement, onDwellS
     ? Date.now() - new Date(video.published_at).getTime() < SIXTY_MINUTES
     : false
 
+  const short = useMemo(() => readShort(story.short), [story.short])
+  // Titled sections are the post-July-2026 walkthrough format; they stay behind
+  // "More" so the default card is the short version only.
+  const isWalkthrough = !!story.bullets?.[0]?.title
+
+  // Read time reflects what is shown: the short version (or the long summary
+  // when there isn't one), plus the sections once revealed.
   const readMins = useMemo(
-    () => estimateReadMinutes(story.summary, story.bullets ?? []),
-    [story.summary, story.bullets],
+    () => estimateReadMinutes([
+      ...(short ? [short.lead, ...short.keyPoints] : [story.summary]),
+      ...(!isWalkthrough || showAllBullets ? (story.bullets ?? []).map(b => b.text) : []),
+    ]),
+    [short, story.summary, story.bullets, isWalkthrough, showAllBullets],
   )
 
   const dwellRef = useDwellVisibility<HTMLElement>(onDwellStart, onDwellEnd)
@@ -174,64 +194,95 @@ export function SoloCard({ story, source, isRead, onRead, onEngagement, onDwellS
           ) : story.headline}
         </h2>
 
-        {/* Summary */}
-        <p className={`text-sm leading-relaxed mb-4 ${isRead ? 'text-slate-500' : 'text-slate-300'}`}>
-          {story.summary}
-        </p>
+        {/* Short version — the default card. Stories without one yet (older
+            than the backfill window) fall back to the long overview. */}
+        {short ? (
+          <>
+            <p className={`text-sm leading-relaxed ${short.keyPoints.length > 0 ? 'mb-3' : 'mb-4'} ${isRead ? 'text-slate-500' : 'text-slate-200'}`}>
+              {short.lead}
+            </p>
+            {short.keyPoints.length > 0 && (
+              <ul className="space-y-2 mb-4">
+                {short.keyPoints.map((point, i) => (
+                  <li key={i} className="flex items-start gap-2.5 text-sm">
+                    <span
+                      className={`mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${bulletColor} ${isRead ? 'opacity-40' : ''}`}
+                      aria-hidden="true"
+                    />
+                    <span className={`leading-relaxed ${isRead ? 'text-slate-500' : 'text-slate-300'}`}>
+                      {point}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
+        ) : (
+          <p className={`text-sm leading-relaxed mb-4 ${isRead ? 'text-slate-500' : 'text-slate-300'}`}>
+            {story.summary}
+          </p>
+        )}
 
-        {/* Bullet points with category-coloured markers.
-            Collapsed past BULLET_PREVIEW_COUNT — prophetic stories carry
-            15-25 bullets and were producing endless cards on mobile. */}
+        {/* Sections. Walkthrough stories keep them behind "More · N timestamped
+            sections". Legacy dot-bullet stories (before July 2026) keep the old
+            preview, collapsed past BULLET_PREVIEW_COUNT — prophetic carried
+            15-25 bullets and made endless cards on mobile. */}
         {story.bullets && story.bullets.length > 0 && (() => {
-          const needsCollapse = story.bullets.length > BULLET_PREVIEW_COUNT + 1
-          const visibleBullets = needsCollapse && !showAllBullets
-            ? story.bullets.slice(0, BULLET_PREVIEW_COUNT)
-            : story.bullets
+          const needsCollapse = isWalkthrough || story.bullets.length > BULLET_PREVIEW_COUNT + 1
+          const visibleBullets = !needsCollapse || showAllBullets
+            ? story.bullets
+            : story.bullets.slice(0, isWalkthrough ? 0 : BULLET_PREVIEW_COUNT)
+          // Article-sourced stories carry no timestamps.
+          const sectionNoun =
+            (story.bullets.some(b => b.timestamp_seconds !== null) ? 'timestamped section' : 'section') +
+            (story.bullets.length === 1 ? '' : 's')
           return (
             <>
-              <ul className={`${visibleBullets[0]?.title ? 'space-y-3.5' : 'space-y-2'} mb-1`}>
-                {visibleBullets.map((bullet, i) =>
-                  bullet.title ? (
-                    /* Walkthrough section: [MM:SS] — Title, prose beneath */
-                    <li key={i} className="text-sm">
-                      <p className="leading-snug mb-1">
-                        {bullet.timestamp_seconds !== null && videoUrl && (
-                          <>
-                            <TsLink videoUrl={videoUrl} timestampSeconds={bullet.timestamp_seconds}>
-                              [{formatTime(bullet.timestamp_seconds)}]
-                            </TsLink>
-                            <span className={isRead ? 'text-slate-600' : 'text-slate-500'}>{' — '}</span>
-                          </>
-                        )}
-                        <span className={`font-semibold ${isRead ? 'text-slate-400' : 'text-white'}`}>
-                          {bullet.title}
+              {visibleBullets.length > 0 && (
+                <ul className={`${visibleBullets[0]?.title ? 'space-y-3.5' : 'space-y-2'} mb-1`}>
+                  {visibleBullets.map((bullet, i) =>
+                    bullet.title ? (
+                      /* Walkthrough section: [MM:SS] — Title, prose beneath */
+                      <li key={i} className="text-sm">
+                        <p className="leading-snug mb-1">
+                          {bullet.timestamp_seconds !== null && videoUrl && (
+                            <>
+                              <TsLink videoUrl={videoUrl} timestampSeconds={bullet.timestamp_seconds}>
+                                [{formatTime(bullet.timestamp_seconds)}]
+                              </TsLink>
+                              <span className={isRead ? 'text-slate-600' : 'text-slate-500'}>{' — '}</span>
+                            </>
+                          )}
+                          <span className={`font-semibold ${isRead ? 'text-slate-400' : 'text-white'}`}>
+                            {bullet.title}
+                          </span>
+                        </p>
+                        <p className={`leading-relaxed ${isRead ? 'text-slate-500' : 'text-slate-300'}`}>
+                          {bullet.text}
+                        </p>
+                      </li>
+                    ) : (
+                      /* Legacy dot bullet (stories summarised before July 2026) */
+                      <li key={i} className="flex items-start gap-2.5 text-sm">
+                        <span
+                          className={`mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${bulletColor} ${isRead ? 'opacity-40' : ''}`}
+                          aria-hidden="true"
+                        />
+                        <span className={`leading-relaxed ${isRead ? 'text-slate-500' : 'text-slate-200'}`}>
+                          {bullet.text}
+                          {bullet.timestamp_seconds !== null && videoUrl && (
+                            <>{' '}
+                              <TsLink videoUrl={videoUrl} timestampSeconds={bullet.timestamp_seconds}>
+                                [{formatTime(bullet.timestamp_seconds)}]
+                              </TsLink>
+                            </>
+                          )}
                         </span>
-                      </p>
-                      <p className={`leading-relaxed ${isRead ? 'text-slate-500' : 'text-slate-300'}`}>
-                        {bullet.text}
-                      </p>
-                    </li>
-                  ) : (
-                    /* Legacy dot bullet (stories summarised before July 2026) */
-                    <li key={i} className="flex items-start gap-2.5 text-sm">
-                      <span
-                        className={`mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${bulletColor} ${isRead ? 'opacity-40' : ''}`}
-                        aria-hidden="true"
-                      />
-                      <span className={`leading-relaxed ${isRead ? 'text-slate-500' : 'text-slate-200'}`}>
-                        {bullet.text}
-                        {bullet.timestamp_seconds !== null && videoUrl && (
-                          <>{' '}
-                            <TsLink videoUrl={videoUrl} timestampSeconds={bullet.timestamp_seconds}>
-                              [{formatTime(bullet.timestamp_seconds)}]
-                            </TsLink>
-                          </>
-                        )}
-                      </span>
-                    </li>
-                  )
-                )}
-              </ul>
+                      </li>
+                    )
+                  )}
+                </ul>
+              )}
               {needsCollapse && (
                 <button
                   onClick={() => setShowAllBullets(v => !v)}
@@ -245,8 +296,10 @@ export function SoloCard({ story, source, isRead, onRead, onEngagement, onDwellS
                     <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
                   </svg>
                   {showAllBullets
-                    ? 'Show fewer'
-                    : `Show all ${story.bullets.length} ${story.bullets[0]?.title ? 'sections' : 'bullets'}`}
+                    ? 'Show less'
+                    : isWalkthrough
+                      ? `More · ${story.bullets.length} ${sectionNoun}`
+                      : `Show all ${story.bullets.length} bullets`}
                 </button>
               )}
             </>

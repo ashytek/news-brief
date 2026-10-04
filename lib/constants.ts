@@ -65,7 +65,7 @@ export const CATEGORY_BULLET_COLOR: Record<Category, string> = {
 // Supabase select strings — keep in sync with lib/types.
 // Explicitly omits transcript_text/embedding blobs so payloads stay slim.
 export const STORY_SELECT =
-  'id, source_id, video_id, category, headline, summary, bullets, cluster_id, matched_topics, created_at, ' +
+  'id, source_id, video_id, category, headline, summary, bullets, short, cluster_id, matched_topics, created_at, ' +
   'videos(id, url, published_at, thumbnail_url), sources(id, name)'
 
 /** mm:ss formatting for video timestamps */

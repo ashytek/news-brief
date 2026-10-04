@@ -73,6 +73,7 @@ def recover():
             "headline": summary_data["headline"],
             "summary": summary_data["summary"],
             "bullets": summary_data["bullets"],
+            "short": summary_data.get("short"),
         }
         story_id = db.insert_story(story_record)
         story_ids.append((story_id, summary_data["headline"], summary_data["summary"], category))

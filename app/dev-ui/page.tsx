@@ -31,7 +31,7 @@ const mkBullet = (i: number) => ({
   timestamp_seconds: i * 95,
 })
 
-const solo = {
+const soloBase = {
   id: 'dev-solo-1',
   source_id: 'dev-src-1',
   category: 'india_global' as Category,
@@ -46,7 +46,25 @@ const solo = {
     thumbnail_url: 'https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg',
     published_at: new Date(Date.now() - 1800e3).toISOString(),
   },
+}
+
+// Short card — the default once a story has `short`. The lead carries a
+// hostile unbroken token to probe wrapping.
+const solo = {
+  ...soloBase,
+  short: {
+    lead:
+      'A two-sentence lead that gives the outcome, not just the topic. It includes WWW.SOMEEXTREMELYLONGDOMAINNAMETHATWILLNOTWRAP.COM/PATH_SEGMENT to probe wrapping.',
+    key_points: [
+      'First key point: a hard figure (14,000 ft) kept exactly as stated, in one sentence.',
+      'Second key point naming a person and an organisation, with a date (2 October).',
+      'Third key point with a currency amount (£2.5m) and a percentage (38%).',
+    ],
+  },
 } as unknown as StoryWithRelations
+
+// The same story before it is backfilled: falls back to the long summary.
+const soloNoShort = { ...soloBase, id: 'dev-solo-2', short: null } as unknown as StoryWithRelations
 
 const CATS = [
   { key: 'prophetic' as Category, label: 'Prophetic Word', color: 'violet' },
@@ -96,6 +114,17 @@ export default function DevUiPage() {
 
         <SoloCard
           story={solo}
+          source={{ id: 'dev-src-1', name: 'Firstpost Vantage Extended Name' } as never}
+          isRead={false}
+          onRead={noop}
+          onEngagement={noop}
+          onDwellStart={noop}
+          onDwellEnd={noop}
+          onMuteTopic={noop}
+        />
+
+        <SoloCard
+          story={soloNoShort}
           source={{ id: 'dev-src-1', name: 'Firstpost Vantage Extended Name' } as never}
           isRead={false}
           onRead={noop}

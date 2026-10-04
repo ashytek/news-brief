@@ -16,7 +16,29 @@ from config import MAX_BULLETS, MAX_BULLETS_PROPHETIC, PROPHETIC_BULLETS_PER_SEC
 # Prompts
 # ---------------------------------------------------------------------------
 
-BULLET_SYSTEM = """You are writing a chronological video walkthrough for a busy emergency medicine doctor. He reads instead of watching — your job is to let him experience the video's full arc in two minutes, in order, with nothing important missing.
+# Wording for the short card, shared by the two main prompts and the backfill
+# prompts so "short" means the same thing however it is generated (SPEC.md).
+# The word caps are parameters because condensing a finished walkthrough
+# overshoots them (live test, 4 Oct: 139-153 words at 35/20 against a 100-120
+# target), so the backfill asks for less.
+def _short_rules_news(lead_words: int, point_words: int) -> str:
+    return f"""- lead — 1-2 sentences, at most {lead_words} words: what happened or what the video argues, and where it lands (the outcome or the twist). Do not just repeat the headline.
+- key_points — 3-5 bullets, each ONE sentence of at most {point_words} words, each carrying a distinct, important specific. Keep every name, number, date, percentage and currency amount exactly as stated. No section titles, no timestamps, no "the video says".
+- Total length 100-120 words. It must stand alone: a reader who sees only this should still know the story.
+- Stay faithful. Keep attributions and hedges ("according to CNN", "alleged", "reportedly", "I think"). Never state as fact what is attributed to a source, never strengthen a claim ("raised questions" is not "exposed failures"), never merge facts from different sources into one claim, and add nothing that is not in the source."""
+
+
+def _short_rules_prophetic(lead_words: int, point_words: int) -> str:
+    return f"""- lead — 1-2 sentences, at most {lead_words} words: the broadcast's overall thrust and its weightiest declaration.
+- key_points — 3-5 bullets, each ONE sentence of at most {point_words} words, naming the most significant declarations, visions or warnings. Quote nations, dates, numbers and names exactly as declared. Use the speaker's own terms and keep their force, but do not add labels, characterisations or doctrine the speaker did not state. Leave out [CONTEXT] items, scripture scaffolding and promotion.
+- Total length 100-120 words. It must stand alone: a reader who sees only this should still know what was declared.
+- Stay faithful. Attribute declarations to the speaker, keep their hedges, and add nothing that is not in the source."""
+
+
+_SHORT_RULES_NEWS = _short_rules_news(35, 20)
+_SHORT_RULES_PROPHETIC = _short_rules_prophetic(35, 20)
+
+BULLET_SYSTEM = f"""You are writing a chronological video walkthrough for a busy emergency medicine doctor. He reads instead of watching — your job is to let him experience the video's full arc in two minutes, in order, with nothing important missing.
 
 OVERVIEW (the "summary" field)
 - 2-4 sentences of flowing prose capturing the video's THESIS, not merely its topic: what question it explores, what it argues, and where it lands.
@@ -45,13 +67,17 @@ HEADLINE
 - Max 12 words, punchy, factual.
 - MUST include at least one proper noun (person, place, or organisation) unless the event is truly abstract.
 
+SHORT VERSION (the "short" field)
+A skim card of about 120 words in total. Write it LAST, condensing the sections above, so it never contradicts them. ("The source" below is the transcript.)
+{_SHORT_RULES_NEWS}
+
 LANGUAGE
-- Always write the headline, summary, and every section in English, whatever language the transcript is in (e.g. Hindi). Translate faithfully; keep names and figures exact.
+- Always write the headline, summary, short version, and every section in English, whatever language the transcript is in (e.g. Hindi). Translate faithfully; keep names and figures exact.
 
 CONTENT CHECK
 - Set has_content to false ONLY if the transcript has no usable material to summarise (e.g. silence, music only, a bare scripture reading with no commentary). Otherwise true."""
 
-PROPHETIC_BULLET_SYSTEM = """You are extracting prophetic content from a ministry video for a discerning Christian leader who wants COMPREHENSIVE coverage of every prophetic element across the entire broadcast.
+PROPHETIC_BULLET_SYSTEM = f"""You are extracting prophetic content from a ministry video for a discerning Christian leader who wants COMPREHENSIVE coverage of every prophetic element across the entire broadcast.
 
 ═══ COVERAGE — NON-NEGOTIABLE ═══
 1. The transcript may be 30 minutes, 1 hour, or 2+ hours. You MUST cover the ENTIRE video — NOT just the opening section.
@@ -94,8 +120,12 @@ Each extracted item is a SECTION of a chronological walkthrough, in video order:
 ═══ OUTPUT VERIFICATION ═══
 Before submitting, count your sections. Check timestamps span from early in the video to near the end. If your latest timestamp is less than 50% through the video duration, you have under-covered — go back and add more from the latter half.
 
+SHORT VERSION (the "short" field)
+A skim card of about 120 words in total. Write it LAST, condensing the sections above, so it never contradicts them. It is separate from the section list — the section-count targets above do not apply to it. ("The source" below is the transcript.)
+{_SHORT_RULES_PROPHETIC}
+
 LANGUAGE
-- Always write the headline, summary, and every section in English, whatever language the transcript is in (e.g. Hindi). Translate faithfully; keep names and figures exact.
+- Always write the headline, summary, short version, and every section in English, whatever language the transcript is in (e.g. Hindi). Translate faithfully; keep names and figures exact.
 
 CONTENT CHECK
 - Set has_content to false ONLY if the transcript has no prophetic or ministry content (e.g. silence, music only, a bare scripture reading with no commentary). Otherwise true."""
@@ -128,9 +158,28 @@ BULLET_SCHEMA = {
                 "required": ["title", "text"],
             },
         },
+        # Skim card (~120 words). Declared AFTER bullets on purpose: the SDK
+        # keeps this dict's key order as the generation order, so the model
+        # condenses sections it has already written instead of guessing ahead.
+        "short": {
+            "type": "object",
+            "properties": {
+                "lead":       {"type": "string"},
+                "key_points": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["lead", "key_points"],
+        },
     },
-    "required": ["has_content", "headline", "summary", "bullets"],
+    "required": ["has_content", "headline", "summary", "bullets", "short"],
 }
+
+# Same shape on its own — used when a short version is generated from an
+# already-written story (backfill) rather than alongside the summary.
+SHORT_SCHEMA = BULLET_SCHEMA["properties"]["short"]
+
+MAX_SHORT_POINTS = 5
+MIN_SHORT_POINTS = 3     # trimming never goes below this
+MAX_SHORT_WORDS = 140    # ceiling for lead + points together (target 100-120)
 
 # ---------------------------------------------------------------------------
 # Transcript builder
@@ -184,6 +233,88 @@ def build_transcript_context(title: str, transcript: str, segments: list[dict]) 
 
 
 # ---------------------------------------------------------------------------
+# Short version (skim card)
+# ---------------------------------------------------------------------------
+
+_SHORT_FROM_SECTIONS_NEWS = f"""You condense an existing video walkthrough into a skim card for a busy emergency medicine doctor who reads instead of watching.
+
+You are given the headline, overview and sections of a walkthrough that has already been written. Use ONLY what they say — add no facts, causes or interpretation, and keep sharp or provocative framing as it is. The overview summarises the sections: where its wording is stronger than the sections support, follow the sections. When unsure who said or found something, leave that detail out. ("The source" below is that walkthrough.)
+
+SHORT VERSION
+A skim card of about 120 words in total.
+{_short_rules_news(30, 15)}
+
+LANGUAGE
+- Write in English. Keep names and figures exact."""
+
+_SHORT_FROM_SECTIONS_PROPHETIC = f"""You condense an existing prophetic broadcast walkthrough into a skim card for a discerning Christian leader.
+
+You are given the headline, overview and sections of a walkthrough that has already been written. Use ONLY what they say — add nothing, and do not soften the declarations. Open the lead with the speaker's name (or "the speaker") and a verb of speech such as declares, says or warns, and phrase each key point as the speaker's claim, never as established fact. The overview summarises the sections: where its wording is stronger than the sections support, follow the sections. When unsure who said something, leave that detail out. ("The source" below is that walkthrough.)
+
+SHORT VERSION
+A skim card of about 120 words in total.
+{_short_rules_prophetic(30, 15)}
+
+LANGUAGE
+- Write in English. Keep names and figures exact."""
+
+
+def clean_short(raw) -> dict | None:
+    """
+    Normalise the model's `short` block to {"lead": str, "key_points": [str]},
+    or None when it is unusable. None is safe: the UI falls back to the long
+    summary, whereas a card with an empty lead or no points would show a hole.
+    """
+    if not isinstance(raw, dict):
+        return None
+    lead = raw.get("lead")
+    lead = lead.strip() if isinstance(lead, str) else ""
+    points = raw.get("key_points")
+    points = [
+        p.strip() for p in points if isinstance(p, str) and p.strip()
+    ] if isinstance(points, list) else []
+    if not lead or not points:
+        return None
+    points = points[:MAX_SHORT_POINTS]
+    # The prompts ask for 100-120 words; models overshoot. Trailing points are
+    # the least important, so an over-long card loses its last bullet(s) — the
+    # full sections stay one tap away.
+    words = lambda s: len(s.split())
+    while len(points) > MIN_SHORT_POINTS and words(lead) + sum(words(p) for p in points) > MAX_SHORT_WORDS:
+        points.pop()
+    return {"lead": lead, "key_points": points}
+
+
+def short_prompt(headline: str, summary: str, bullets: list[dict], category: str) -> tuple[str, str]:
+    """(system_instruction, contents) for generating a short version from an
+    already-written story. Split out so the backfill's dry-run estimates cost
+    from the exact text that would be sent."""
+    lines = []
+    for i, b in enumerate(bullets or [], 1):
+        title = (b.get("title") or "").strip()
+        text = (b.get("text") or "").strip()
+        lines.append(f"{i}. {title} — {text}" if title else f"{i}. {text}")
+    contents = f"Headline: {headline}\n\nOverview: {summary}\n\nSections:\n" + "\n".join(lines)
+    system = _SHORT_FROM_SECTIONS_PROPHETIC if category == "prophetic" else _SHORT_FROM_SECTIONS_NEWS
+    return system, contents
+
+
+def generate_short(headline: str, summary: str, bullets: list[dict], category: str) -> dict | None:
+    """Short version for a story that already exists — no transcript needed.
+    Returns the cleaned {"lead", "key_points"} or None on failure."""
+    system, contents = short_prompt(headline, summary, bullets, category)
+    result = llm.flash_json(
+        contents=contents,
+        system_instruction=system,
+        response_schema=SHORT_SCHEMA,
+        temperature=0.2,
+        max_output_tokens=1024,
+        thinking_budget=0,   # explicit: omitting it leaves Flash's dynamic thinking on
+    )
+    return clean_short(result)
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -194,8 +325,9 @@ def summarise_video(
     category: str,
 ) -> dict | None:
     """
-    Returns {"headline", "summary", "bullets": [{"text", "timestamp_seconds"}]}
-    or None on failure.
+    Returns {"headline", "summary", "bullets": [{"text", "timestamp_seconds"}],
+    "short": {"lead", "key_points"} | None} or None on failure. A missing or
+    malformed short version is None, never a reason to drop the story.
 
     Prophetic     → Gemini 2.5 Flash with a 4096 thinking budget
     Everything else → Gemini 2.5 Flash with thinking OFF
@@ -251,4 +383,5 @@ def summarise_video(
     # of ~1 bullet per 5 min of video so coverage scales with duration.
     cap = MAX_BULLETS_PROPHETIC if category == "prophetic" else MAX_BULLETS
     result["bullets"] = result.get("bullets", [])[:cap]
+    result["short"] = clean_short(result.get("short"))
     return result

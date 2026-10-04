@@ -24,6 +24,13 @@ export interface Bullet {
   timestamp_seconds: number | null
 }
 
+/** Skim-card version of a story (~120 words), shown by default in place of
+ *  the long overview. Null/absent on stories that haven't been backfilled. */
+export interface ShortVersion {
+  lead: string
+  key_points: string[]
+}
+
 export interface Story {
   id: string
   video_id: string
@@ -32,6 +39,7 @@ export interface Story {
   headline: string
   summary: string
   bullets: Bullet[]
+  short?: ShortVersion | null
   cluster_id: string | null
   matched_topics: string[] | null
   created_at: string

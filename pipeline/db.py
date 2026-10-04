@@ -132,9 +132,31 @@ def update_video_transcript(video_id: str, transcript: str, status: str):
     }).eq("id", video_id).execute()
 
 
+def _is_missing_short_column(exc: Exception) -> bool:
+    """True when an insert failed because stories.short doesn't exist yet
+    (PGRST204 'not found in the schema cache', or SQL 42703)."""
+    code = getattr(exc, "code", None)
+    return code in ("PGRST204", "42703") and "short" in str(exc)
+
+
 def insert_story(record: dict) -> str:
     db = get_db()
-    res = db.table("stories").insert(record).execute()
+    try:
+        res = db.table("stories").insert(record).execute()
+    except Exception as e:
+        # `short` is optional/cosmetic — the UI falls back to `summary` without
+        # it. If its migration (supabase/migrations/stories_short.sql) hasn't
+        # been run, save the story without it rather than raising: an insert
+        # failure here loses a story that already cost a Gemini call, and the
+        # next run's recovery pass would pay for it again. Same approach as
+        # start_pipeline_run's trigger_source.
+        if "short" in record and _is_missing_short_column(e):
+            print("    ⚠ stories.short column missing — saving without it (run supabase/migrations/stories_short.sql)")
+            res = db.table("stories").insert(
+                {k: v for k, v in record.items() if k != "short"}
+            ).execute()
+        else:
+            raise
     return res.data[0]["id"]
 
 

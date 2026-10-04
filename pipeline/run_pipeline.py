@@ -236,6 +236,7 @@ def process_transcripts_and_summarise(items, stats, source_map, retry_delay_rang
             "headline": summary_data["headline"],
             "summary": summary_data["summary"],
             "bullets": summary_data["bullets"],
+            "short": summary_data.get("short"),
         }
         story_id = db.insert_story(story_record)
         stats["stories_created"] += 1
@@ -336,6 +337,7 @@ def recover_missing_stories(stats, source_map):
                 "headline": summary_data["headline"],
                 "summary": summary_data["summary"],
                 "bullets": summary_data["bullets"],
+                "short": summary_data.get("short"),
             })
             stats["stories_created"] += 1
             print(f"    ✓ Recovered: {summary_data['headline'][:50]}")
