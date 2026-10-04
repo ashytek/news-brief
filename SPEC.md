@@ -1,6 +1,6 @@
 # SPEC — Catch-up view, storylines and short cards
 **Written:** 3 October 2026, from an interview with Ash (two interactive mockups using real Flydubai data).
-**Status:** approved design, not built. Build in a fresh session: "Read CLAUDE.md and SPEC.md, then build phase 1."
+**Status:** approved design. **Phase 1 (short cards) built 4 Oct 2026** on branch `catchup-phase1` — see CLAUDE.md "Catch-up build — phase 1" for the step order, evidence and prompt lessons. Phases 2–4 not started; build them in a fresh session: "Read CLAUDE.md and SPEC.md, then build phase 2."
 
 ## Problem
 When Ash skips a day or more, 100–160 stories pile up (160 in the 5 days to 3 Oct). Cards are long (overview + 5 timestamped sections), and one event arrives as many near-duplicate cards: the Flydubai pilot attack produced **15+ reports from IGR and Vantage in 3 days** (three were near-identical interviews with Israel's ambassador). Clearing the backlog is impractical.
@@ -53,10 +53,10 @@ When Ash skips a day or more, 100–160 stories pile up (160 in the 5 days to 3 
 - Short version: +~180 output tokens per story, ~30 stories/day → **~£0.30/month**.
 - Assignment: ~1.2k in / 60 out per news story → **~£0.35/month**.
 - Recaps: ~2k in / 350 out each, ~8/day → **~£0.30/month**.
-- **Ongoing ≈ +£1/month** on top of ~£2.50. **Backfill one-off ≈ £0.25–0.35** (I told Ash ~£0.10 in the interview; this is the corrected figure).
+- **Ongoing ≈ +£1/month** on top of ~£2.50. **Backfill one-off ≈ £0.25–0.35** (I told Ash ~£0.10 in the interview; this is the corrected figure). *4 Oct, measured:* the 14-day window holds 326 stories (not ~420), so the short-version backfill is ≈ $0.28 / £0.21; the short version alone adds ≈ £0.30–0.35/month.
 
 ## Build plan (each phase shippable; commit per phase; deploy only with Ash's approval)
-1. **Short cards** — schema + prompts + `SoloCard` + backfill (a). Test on one IGR, one Career 247 (Hindi) and one prophetic transcript, cost stated first.
+1. **Short cards** — schema + prompts + `SoloCard` + backfill (a). Test on one IGR, one Career 247 (Hindi) and one prophetic transcript, cost stated first. **Built 4 Oct** (branch `catchup-phase1`); the backfill is written but not run — it needs Ash to apply `supabase/migrations/stories_short.sql` first. The prompt ended up with hard word caps (35/20) and a 140-word ceiling in code, not just "~120 words": the first wording overshot and slipped on attributions.
 2. **Storylines pipeline** — migration + RPC + assignment + recap + backfill (b, c), with `--dry-run` printing proposed groupings for the last 7 days. Ash eyeballs: all Flydubai reports (incl. "9/11-style" headlines) should be one storyline; round-ups should stay out.
 3. **Catch-up UI** — trigger, banner, button, storyline card, headline list, read rules.
 4. **Verify + deploy.** Localhost can't be signed into (Supabase redirect allowlist sends magic links to the live URL) — either Ash adds `http://localhost:3001/**` to Supabase Auth → URL Configuration → Redirect URLs, or verify on live after deploy. Simulate a gap by setting `localStorage.newsbrief_lastVisit` 3 days back; simulate failed writes with the in-page `fetch` wrapper used on 2 Oct (see CLAUDE.md "Audit fix batch").

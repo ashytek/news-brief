@@ -1,7 +1,7 @@
 @AGENTS.md
 
 # NewsBrief — Real Project Home
-**Last updated:** 3 October 2026
+**Last updated:** 4 October 2026
 
 ## What this is
 NewsBrief: Ash's personal news briefing app. Next.js, deployed to Netlify (`netlify.toml` in this folder). Git remote: `ashytek/news-brief`.
@@ -135,8 +135,33 @@ Worked through the "Suggested first session" of `~/Desktop/Claude/News App/IMPRO
 
 **Verify next:** the next runs should log "Skipped long Vantage recap" or "Deferred live Vantage stream" for full episodes, and `videos.duration_seconds` should start filling in.
 
-## Next build: catch-up view + storylines + short cards (spec'd 3 October 2026)
-Designed with Ash, not built. Full spec, decisions and evidence: **`SPEC.md`** (repo root). Build it in a fresh session on Sonnet, phase by phase.
+## Catch-up build — phase 1 (short cards) BUILT 4 October 2026 · branch `catchup-phase1`, not merged, not deployed
+Spec, decisions and evidence: **`SPEC.md`** (repo root). Phases 2 (storylines pipeline), 3 (catch-up UI) and 4 (verify + deploy) are not started. Built on Sonnet, no subagents.
+
+**Do these in this order or things break:**
+1. **Ash runs `supabase/migrations/stories_short.sql`** (nullable `stories.short jsonb`). Not run as of 4 Oct (`select short` → 42703).
+2. **Backfill** (needs the column): `cd pipeline && ./venv/bin/python backfill_catchup.py` is a dry run (count + cost, no Gemini, no writes); then `--apply --limit 5` and eyeball; then `--apply` (326 stories from the last 14 days, est. ~$0.28 / £0.21, `--max-usd` guard, resumable).
+3. **Merge to `main`** (the cron then starts writing `short`) and, with Ash's approval, `npm run deploy`.
+
+Deploying the web app before step 1 breaks every feed: `STORY_SELECT` (`lib/constants.ts`) selects `short`. The pipeline is safe either way: `db.insert_story` drops `short` and retries if the column is missing (PGRST204/42703), the same approach as `start_pipeline_run`'s `trigger_source`, so a story is never lost (and re-billed by the recovery pass) over it.
+
+**What changed**
+- `pipeline/summarise.py`: required `short {lead, key_points}` in `BULLET_SCHEMA`, declared last so it is generated after `bullets` (the SDK keeps dict key order as `propertyOrdering`; wire schema checked identical on google-genai 1.47.0 — the cron pin — and 1.74.0, the local venv). SHORT VERSION block in both prompts, wording shared via `_short_rules_news/_prophetic(lead_words, point_words)`. `clean_short()` normalises (None when there is no lead or no points, so the UI falls back to `summary`) and trims trailing points above 140 words (never below 3). `short_prompt()` / `generate_short()` condense an existing story, for the backfill.
+- Every insert site writes `short`: `run_pipeline.py` (main loop and `recover_missing_stories`) and `recover_unsummarised.py`.
+- `pipeline/backfill_catchup.py`: step (a) only (steps (b)/(c) arrive with phase 2). Dry run by default.
+- Frontend: `SoloCard` shows `short` (lead + dot points), else `summary`; sections sit behind **More · N timestamped sections** (`aria-expanded`; "sections" when none are timestamped); legacy dot-bullet stories keep the old preview; read time follows what is shown. `ShortVersion` type, `short` in `STORY_SELECT`, and `/dev-ui` now has a short card and a no-short card.
+
+**Evidence (4 Oct)**
+- `tsc` clean; lint unchanged at 23 problems (9 errors, 14 warnings); `npm run build` clean; 59 offline checks (stubbed LLM, schema, `clean_short`, insert fallback incl. the real PostgREST error shape).
+- `/dev-ui` at 390 px in headless Chrome with real clicks: collapsed → `aria-expanded=false`, 3 points, no sections; click → 18 timestamp links and "Show less"; collapses back; no horizontal overflow.
+- Live Gemini tests (read-only; fresh Apify transcripts of one IGR, one Career 247 in Hindi, one Jonathan Cahn sermon): English throughout, 3–5 points, 97–120 words, section counts and coverage in line with the existing stories. Every claim in the shorts was checked against the transcripts. Test spend ≈ $0.055 Gemini (+ ~$0.006 Apify).
+
+**Prompt lessons: read before touching the short prompt**
+- The first wording gave 138–158 words and three real slips: a lead saying "exposed significant failures" (source: "raised questions about gaps"), "8 months at Fly Dubai" pinned on a LinkedIn profile (source: an Israeli official via CNN), and an invented "counterfeit faith … lacks the true fatherhood of God" for the sermon. Fixed with hard caps (lead ≤ 35 words, points ≤ 20) and "stay faithful" rules (keep hedges and attributions, never strengthen, never merge sources, add nothing).
+- The backfill prompt still overshot (139–153 words), so it asks for 30/15 and says to follow the sections over the overview; the prophetic one must also be told to open with the speaker's name, or it states the preacher's claims as fact.
+- **Known limit:** the backfill condenses the stored overview + sections, so it inherits slips already in them (IGR Flydubai: the stored text says "exposed significant gaps"). Only new stories get a short written from the transcript. Career 247 names are caption-garbled ("Captain Smith Mac" = Smit Machchhar): source quality, not fixed.
+
+**Numbers:** 326 stories in the 14-day window (the spec guessed ~420). Ongoing cost ≈ +£0.30–0.35/month (~+200 in and +200 out tokens per story).
 
 ## Rules for this folder
 - Read the relevant component only before changing code — not the whole repo. Use a subagent for repo-wide reviews.
