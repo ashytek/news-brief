@@ -22,6 +22,7 @@ import fetch_sources
 import get_transcripts
 import summarise
 import cluster
+import storylines
 import llm
 import archive_transcripts
 import update_weights
@@ -524,10 +525,16 @@ def run_once():
         except Exception as e:
             print(f"  ⚠ Recovery pass error (non-fatal): {e}")
 
+        # ── Step 7: Refresh storyline recaps (SPEC.md, catch-up phase 2) ──
+        # Stories were already assigned as they were embedded. Done once, here,
+        # so a storyline that gained three reports this run is recapped once,
+        # not three times. Fail-soft (never raises).
+        storylines.refresh_recaps_live()
+
         if not new_items and not failed:
             print("  Nothing new. Run complete.")
 
-        status_str = "success" if stats["stories_created"] > 0 else "partial"
+        status_str ="success" if stats["stories_created"] > 0 else "partial"
         db.finish_pipeline_run(run_id, status_str, stats)
 
         # ── Zero-story streak alert ──────────────────────────────────────

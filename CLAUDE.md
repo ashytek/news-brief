@@ -136,7 +136,7 @@ Worked through the "Suggested first session" of `~/Desktop/Claude/News App/IMPRO
 **Verify next:** the next runs should log "Skipped long Vantage recap" or "Deferred live Vantage stream" for full episodes, and `videos.duration_seconds` should start filling in.
 
 ## Catch-up build — phase 1 (short cards) + UI audit step A: SHIPPED 9 October 2026 (roadmap session 1)
-Built 4 Oct on `catchup-phase1`, finished and shipped 9 Oct on `session1-ship-short`, fast-forwarded into `main` (`59857bf`), pushed, deployed to Netlify the same day. Spec, decisions and evidence: **`SPEC.md`**. Phase 2 (storylines pipeline) lives on branch `catchup-phase2`, which is stacked on the old phase-1 head `98fe5d0` and must be rebased onto `main` (roadmap session 2; its `CLAUDE.md` will conflict with this file, keep both sections). Phases 3–4 (catch-up UI, verify + deploy) not started.
+Built 4 Oct on `catchup-phase1`, finished and shipped 9 Oct on `session1-ship-short`, fast-forwarded into `main` (`59857bf`), pushed, deployed to Netlify the same day. Spec, decisions and evidence: **`SPEC.md`**. Phase 2 (storylines pipeline) is in the section below. Phases 3–4 (catch-up UI, verify + deploy) not started.
 
 **Done 9 Oct:** both migrations run by Ash (`stories.short`, `storylines` tables are live); backfill (a) run: **all 335 stories in the 14-day window have `short`** (0 missing; 3–5 points, 58–137 words, median 104, no newlines; actual ≈ $0.26 + $0.004 for the first 5 + $0.0016 round-up test ≈ $0.27 against a $0.30 estimate); `main` pushed so the cron writes `short` from the next run (03/09/15/21:17 UTC) with the new `clean_short` and round-up prompt. **Verify next:** the first cron run after 9 Oct ~05:30 UTC should insert stories with `short` set and no "El Ni ño"-style gaps.
 Deploy order lesson (still true if the column ever has to be re-created): the web app's `STORY_SELECT` selects `short`, so deploying before the migration breaks every feed; the pipeline is safe either way (`db.insert_story` drops `short` and retries on PGRST204/42703).
@@ -152,7 +152,7 @@ Deploy order lesson (still true if the column ever has to be re-created): the we
 **What changed**
 - `pipeline/summarise.py`: required `short {lead, key_points}` in `BULLET_SCHEMA`, declared last so it is generated after `bullets` (the SDK keeps dict key order as `propertyOrdering`; wire schema checked identical on google-genai 1.47.0 — the cron pin — and 1.74.0, the local venv). SHORT VERSION block in both prompts, wording shared via `_short_rules_news/_prophetic(lead_words, point_words)`. `clean_short()` normalises (None when there is no lead or no points, so the UI falls back to `summary`) and trims trailing points above 140 words (never below 3). `short_prompt()` / `generate_short()` condense an existing story, for the backfill.
 - Every insert site writes `short`: `run_pipeline.py` (main loop and `recover_missing_stories`) and `recover_unsummarised.py`.
-- `pipeline/backfill_catchup.py`: step (a) only (steps (b)/(c) arrive with phase 2). Dry run by default.
+- `pipeline/backfill_catchup.py`: step (a) here; (b) and (c) added in phase 2. Dry run by default.
 - Frontend: `SoloCard` shows `short` (lead + dot points), else `summary`; sections sit behind **More · N timestamped sections** (`aria-expanded`; "sections" when none are timestamped); legacy dot-bullet stories keep the old preview; read time follows what is shown. `ShortVersion` type, `short` in `STORY_SELECT`, and `/dev-ui` now has a short card and a no-short card.
 
 **Evidence (4 Oct)**
@@ -166,6 +166,33 @@ Deploy order lesson (still true if the column ever has to be re-created): the we
 - **Known limit:** the backfill condenses the stored overview + sections, so it inherits slips already in them (IGR Flydubai: the stored text says "exposed significant gaps"). Only new stories get a short written from the transcript. Career 247 names are caption-garbled ("Captain Smith Mac" = Smit Machchhar): source quality, not fixed.
 
 **Numbers:** 326 stories in the 14-day window on 4 Oct, 335 by 9 Oct (the spec guessed ~420). Ongoing cost ≈ +£0.30–0.35/month (~+200 in and +200 out tokens per story).
+
+## Catch-up build — phase 2 (storylines pipeline) BUILT 5 October 2026 · branch `catchup-phase2` (on top of `catchup-phase1`), not merged, nothing written to the DB, no Gemini spent yet
+Spec: `SPEC.md`. Built on Sonnet, no subagents. **Phase 3 (catch-up UI) and 4 (verify + deploy) not started.**
+
+**Ash's steps, in order**
+1. Run `supabase/migrations/stories_short.sql` (phase 1; **still not run as of 5 Oct**: `select short` → 42703), then `storylines.sql` (new: `storylines` table, `stories.storyline_id`, RLS read, `match_recent_stories` RPC). Not applied yet either.
+2. Backfill (see the script's docstring): `cd pipeline && ./venv/bin/python backfill_catchup.py` (free dry run: (a) cost + (b) call count/cost) → `--storylines-preview --find "fly ?dubai"` (Gemini, **no DB writes**, saves `storylines_preview.json`, prints groupings + near misses) → Ash eyeballs → `--storylines-apply storylines_preview.json` (writes those exact groupings, no Gemini) → `--recaps` (list + cost) / `--recaps --apply`. The preview runs before either migration.
+3. Merge to `main`: the cron then assigns storylines and writes recaps. Safe even before step 1 (below).
+
+**How it works** (`pipeline/storylines.py`)
+- **Assignment** happens in `cluster.embed_and_cluster_story` (right after the embedding is stored): the single choke point of all five embed paths, so each story is assigned exactly once. News categories only. Shortlist = same category, last 7 days, cosine ≥ 0.70, best 8 → one Flash call (thinking 0, temp 0) picks the candidate that is the same *specific event*, or null. A storyline candidate = join; a lone earlier report = a new storyline holding both. Candidates from one storyline collapse into one entry.
+- **Recaps**: `run_once` step 7 (`refresh_recaps_live`). Targets = storylines with `story_count ≥ 3`, last report within 7 days, and `recap_story_count != story_count` (so a failed refresh heals on the next run; a storyline that gained three reports in one run is recapped once). `clean_recap` forces `latest.date` to the newest real day and drops `so_far` entries with unknown or non-earlier dates. Dates are Europe/London days.
+- **Two backends, one engine**: `DbBackend` (live; shortlist via the `match_recent_stories` RPC) and `MemoryBackend` (backfill/tests; shortlist in Python over a pool loaded once). The live path uses the RPC because pulling the 7-day embedding pool (~10 MB: ~55 KB of JSON per row) every cron run is ~1 GB/month of the free-tier egress.
+- **Fail-soft** (verified against the real DB with the migration absent): a missing table/column/RPC switches storylines off for the process with one hint line; 3 Gemini failures in a row switch them off for the run (the retry backoff would otherwise add ~1 min per story against a 45-min workflow timeout); every hook catches everything. A story is never lost or delayed by a storyline.
+- Gemini calls all go through `llm.flash_json`, so they appear in `pipeline_runs` totals.
+
+**Deviations from SPEC.md (deliberate)**
+- `match_recent_stories` gains an optional 6th arg `p_exclude_id` (the new story is already embedded and would match itself). The backfill/preview does not use the RPC.
+- The assignment prompt uses a *generic* example (no Flydubai wording), so the preview is a fair test of the eyeball criteria. If the groupings are wrong, tune `ASSIGN_SYSTEM`, not the threshold.
+- Backfill apply replays the preview's saved decisions in order (not a second Gemini pass), refuses an incomplete preview, and skips stories that have since been assigned.
+
+**Known limits**
+- The model picks one candidate, so a story bridging two storylines joins only one; storylines are never merged afterwards.
+- A story already in a storyline that is not in the candidate window's storylines is never stolen.
+- Backfilled stories have no `short` until step (a) runs, so the assignment gist falls back to the overview's first ~450 characters.
+
+**Evidence (5 Oct)**: 85 offline checks pass (stubbed Gemini, fake DB: engine, grouping, odd model answers, failure circuit breaker, recap validation, optional-column fallback, hooks never raising). Real data (read-only, no Gemini): 168 news stories in the 7-day window, **91 have ≥ 1 candidate → 91 Flash calls**, estimated ~81k in / ~5.5k out ≈ **$0.04 (£0.03)** for the preview. Shortlist recall on the Flydubai set: 23/25 regex hits (the other two: the first report, and a false positive of my loose regex) have a Flydubai peer in their shortlist; pairwise cosine median 0.76, max 0.96 (matches the SPEC's evidence). Flash pricing re-checked 5 Oct: $0.30 / $2.50 per 1M, unchanged.
 
 ## Rules for this folder
 - Read the relevant component only before changing code — not the whole repo. Use a subagent for repo-wide reviews.

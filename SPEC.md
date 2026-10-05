@@ -1,6 +1,6 @@
 # SPEC — Catch-up view, storylines and short cards
 **Written:** 3 October 2026, from an interview with Ash (two interactive mockups using real Flydubai data).
-**Status:** approved design. **Phase 1 (short cards) built 4 Oct 2026** on branch `catchup-phase1` — see CLAUDE.md "Catch-up build — phase 1" for the step order, evidence and prompt lessons. Phases 2–4 not started; build them in a fresh session: "Read CLAUDE.md and SPEC.md, then build phase 2."
+**Status:** approved design. **Phase 1 (short cards) built 4 Oct 2026** on branch `catchup-phase1` — see CLAUDE.md "Catch-up build — phase 1" for the step order, evidence and prompt lessons. **Phase 2 (storylines pipeline) built 5 Oct 2026** on branch `catchup-phase2`: see CLAUDE.md "Catch-up build — phase 2" for the step order, the deliberate deviations from this spec (RPC gets `p_exclude_id`; the backfill preview shortlists in Python) and the evidence. Phases 3–4 not started; build them in a fresh session: "Read CLAUDE.md and SPEC.md, then build phase 3."
 
 ## Problem
 When Ash skips a day or more, 100–160 stories pile up (160 in the 5 days to 3 Oct). Cards are long (overview + 5 timestamped sections), and one event arrives as many near-duplicate cards: the Flydubai pilot attack produced **15+ reports from IGR and Vantage in 3 days** (three were near-identical interviews with Israel's ambassador). Clearing the backlog is impractical.

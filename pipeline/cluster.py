@@ -9,6 +9,9 @@ disabled — it crammed each source's coverage into a small, heavily-truncated
 card and cost an extra Gemini call per multi-source event. Every story now
 renders as its own full card. Do not reintroduce cluster_id assignment here
 without discussing it first.
+
+Storylines (storylines.py, SPEC.md — approved 3 Oct 2026) are a different
+thing: stories stay separate cards, and are only grouped in the catch-up view.
 """
 from __future__ import annotations
 
@@ -18,6 +21,7 @@ import time
 
 import requests
 import db
+import storylines
 from config import GOOGLE_API_KEY
 
 _log = logging.getLogger(__name__)
@@ -66,8 +70,8 @@ def embed_and_cluster_story(
     category: str,
 ) -> None:
     """Generate an embedding for a story and store it — used by
-    semantic/hybrid search. Clustering assignment was removed (see module
-    docstring); category is accepted for call-site compatibility but unused."""
+    semantic/hybrid search — then assign it to a storyline (news only).
+    Clustering assignment was removed (see module docstring)."""
     text_to_embed = f"{headline}. {summary}"
     print(f"    Embedding: {text_to_embed[:60]}…")
 
@@ -76,3 +80,8 @@ def embed_and_cluster_story(
     db.get_db().table("stories").update({
         "embedding": embedding
     }).eq("id", story_id).execute()
+
+    # Storylines (SPEC.md, catch-up phase 2): every embed path ends here, so a
+    # story is assigned exactly once, when it is embedded. Not cluster_id
+    # assignment. Never raises — a storyline must not lose or delay a story.
+    storylines.assign_after_embed(story_id, category, embedding)

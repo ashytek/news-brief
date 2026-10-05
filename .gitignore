@@ -57,3 +57,4 @@ pipeline/.last_daily_jobs
 
 # Local Netlify folder
 .netlify
+pipeline/storylines_preview.json
