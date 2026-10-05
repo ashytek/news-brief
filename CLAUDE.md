@@ -167,7 +167,7 @@ Deploy order lesson (still true if the column ever has to be re-created): the we
 
 **Numbers:** 326 stories in the 14-day window on 4 Oct, 335 by 9 Oct (the spec guessed ~420). Ongoing cost ≈ +£0.30–0.35/month (~+200 in and +200 out tokens per story).
 
-## Catch-up build — phase 2 (storylines pipeline) BUILT 5 October 2026 · branch `catchup-phase2` (on top of `catchup-phase1`), not merged, nothing written to the DB, no Gemini spent yet
+## Catch-up build — phase 2 (storylines pipeline) BUILT 5 October 2026 · branch `catchup-phase2` (on top of `catchup-phase1`), not merged, nothing written to the DB. **Preview run 5 Oct (see "Preview result" below); awaiting Ash's call on it.**
 Spec: `SPEC.md`. Built on Sonnet, no subagents. **Phase 3 (catch-up UI) and 4 (verify + deploy) not started.**
 
 **Ash's steps, in order**
@@ -193,6 +193,10 @@ Spec: `SPEC.md`. Built on Sonnet, no subagents. **Phase 3 (catch-up UI) and 4 (v
 - Backfilled stories have no `short` until step (a) runs, so the assignment gist falls back to the overview's first ~450 characters.
 
 **Evidence (5 Oct)**: 85 offline checks pass (stubbed Gemini, fake DB: engine, grouping, odd model answers, failure circuit breaker, recap validation, optional-column fallback, hooks never raising). Real data (read-only, no Gemini): 168 news stories in the 7-day window, **91 have ≥ 1 candidate → 91 Flash calls**, estimated ~81k in / ~5.5k out ≈ **$0.04 (£0.03)** for the preview. Shortlist recall on the Flydubai set: 23/25 regex hits (the other two: the first report, and a false positive of my loose regex) have a Flydubai peer in their shortlist; pairwise cosine median 0.76, max 0.96 (matches the SPEC's evidence). Flash pricing re-checked 5 Oct: $0.30 / $2.50 per 1M, unchanged.
+
+**Preview result (5 Oct, `--storylines-preview`, no DB writes; `pipeline/storylines_preview.json` is gitignored)**: 91 calls, 0 failures, 58.8k in / 1.1k out = **$0.02 actual vs $0.04 estimated** (output was ~12 tokens/call, not 60: `EST_ASSIGN_OUT` now 15). 28 storylines holding 89 of 168 reports; 8 have 3+ reports and would get a recap.
+- **Flydubai criterion met**: all 21 regex hits, the "9/11-style" headline included, plus the Career 247 "PM Modi Praises Captain Smith" one that the regex missed, are one 22-report storyline (S16, 30 Sep to 4 Oct). The Modi–Trump trade round-up and the markets round-up did not join it.
+- **Not perfect**: (1) one clear wrong merge, S24: "India Maps 28 Ladakh Sites…; US-Iran War Looms" is a multi-topic round-up (its summary covers Ladakh, West Asia and "various global flashpoints") but was paired with the third-aircraft-carrier story, which is the failure SPEC.md warned about; (2) theme-level merges that are arguable rather than one event: S6 Indian stock-market slump (24 Sep to 1 Oct, 5 reports, includes the 1 Oct markets round-up), S10 Trump midterms (4), S19 Pakistan strikes on Afghanistan (24 Sep + 1 Oct), S7 Zelensky UNGA + a 30 Sep drones story; (3) one near miss: Tue 22 Sep "Trump's UNGA Address…" scored 0.87 against the 23 Sep UNGA pair and was left out. If tightening, edit `ASSIGN_SYSTEM` (stronger round-up and "ongoing theme" rules), not the 0.70 threshold, and re-run the preview (~$0.02).
 
 ## Rules for this folder
 - Read the relevant component only before changing code — not the whole repo. Use a subagent for repo-wide reviews.

@@ -56,7 +56,7 @@ PRICE_OUT_PER_M = 2.50
 USD_TO_GBP      = 0.75   # rough — only used for the headline figure
 CHARS_PER_TOKEN = 4      # English prose; errs slightly high
 EST_OUT_TOKENS  = 200    # lead + 3-5 one-sentence points + JSON overhead (measured ~198 on 4 Oct)
-EST_ASSIGN_OUT  = 60     # {"match": "B", "title": "…"} (SPEC.md's figure; re-measure on the preview)
+EST_ASSIGN_OUT  = 15     # {"match": "B", "title": "…"}; measured 12.4 avg on the 5 Oct preview (SPEC guessed 60)
 EST_RECAP_OUT   = 400    # title + so_far lines + latest (SPEC.md says ~350)
 
 PAGE = 500
