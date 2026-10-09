@@ -24,9 +24,11 @@ export function TopicsPanel({ userId, readIds, onMarkRead, onEngagement }: Props
   const [newKeyword, setNewKeyword] = useState('')
   const [adding, setAdding] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState(false)
 
   const loadData = useCallback(async () => {
     setLoading(true)
+    setLoadError(false)
 
     const [kwRes, storyRes, sourceRes] = await Promise.all([
       supabase.from('topic_keywords').select('*').order('keyword'),
@@ -38,6 +40,13 @@ export function TopicsPanel({ userId, readIds, onMarkRead, onEngagement }: Props
         .limit(60),
       supabase.from('sources').select('*'),
     ])
+
+    // A failed query used to fall through to "No topic matches yet", which
+    // reads as a quiet week rather than a broken load.
+    if (kwRes.error || storyRes.error || sourceRes.error) {
+      console.error('TopicsPanel load failed', { kw: kwRes.error, stories: storyRes.error, sources: sourceRes.error })
+      setLoadError(true)
+    }
 
     if (kwRes.data) setKeywords(kwRes.data)
 
@@ -110,7 +119,7 @@ export function TopicsPanel({ userId, readIds, onMarkRead, onEngagement }: Props
       <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
         <div className="px-4 py-3 border-b border-slate-800/60">
           <h2 className="text-sm font-semibold text-white">Topic Watchlist</h2>
-          <p className="text-xs text-slate-500 mt-0.5">Keywords flagged across all sources</p>
+          <p className="text-xs text-slate-400 mt-0.5">Keywords flagged across all sources</p>
         </div>
 
         {/* Add keyword */}
@@ -122,12 +131,12 @@ export function TopicsPanel({ userId, readIds, onMarkRead, onEngagement }: Props
               onChange={e => setNewKeyword(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && addKeyword()}
               placeholder="Add keyword… e.g. Gaza, GPT-5, RFK"
-              className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-rose-500 focus:border-rose-500"
+              className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-rose-500 focus:border-rose-500"
             />
             <button
               onClick={addKeyword}
               disabled={adding || !newKeyword.trim()}
-              className="px-3 py-2 bg-rose-600 hover:bg-rose-500 disabled:bg-slate-700 disabled:text-slate-500 text-white text-sm font-medium rounded-lg transition-colors"
+              className="px-4 min-h-11 bg-rose-600 hover:bg-rose-500 active:bg-rose-500 disabled:bg-slate-700 disabled:text-slate-400 text-white text-sm font-medium rounded-lg transition-colors"
             >
               {adding ? '…' : 'Add'}
             </button>
@@ -141,19 +150,21 @@ export function TopicsPanel({ userId, readIds, onMarkRead, onEngagement }: Props
         {activeKeywords.length > 0 && (
           <div className="px-4 py-3 flex flex-wrap gap-2">
             {activeKeywords.map(kw => (
-              <span key={kw.id} className="flex items-center gap-1 bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs rounded-full px-2.5 py-1">
+              <span key={kw.id} className="flex items-center bg-rose-500/15 border border-rose-500/30 text-rose-300 text-sm rounded-full pl-3 min-h-11">
                 {kw.keyword}
                 <button
                   onClick={() => toggleKeyword(kw.id, kw.is_active)}
-                  className="ml-0.5 text-rose-400 hover:text-rose-200 transition-colors"
+                  className="ml-0.5 min-w-11 min-h-11 flex items-center justify-center text-rose-300 hover:text-rose-100 active:opacity-70 transition-colors"
                   title="Pause"
+                  aria-label={`Pause ${kw.keyword}`}
                 >
                   ⏸
                 </button>
                 <button
                   onClick={() => deleteKeyword(kw.id)}
-                  className="text-rose-500/60 hover:text-rose-400 transition-colors"
+                  className="min-w-11 min-h-11 -ml-2 flex items-center justify-center text-rose-300 hover:text-rose-100 active:opacity-70 transition-colors"
                   title="Remove"
+                  aria-label={`Remove ${kw.keyword}`}
                 >
                   ×
                 </button>
@@ -165,21 +176,23 @@ export function TopicsPanel({ userId, readIds, onMarkRead, onEngagement }: Props
         {/* Paused keywords */}
         {inactiveKeywords.length > 0 && (
           <div className="px-4 pb-3 flex flex-wrap gap-2">
-            <span className="text-xs text-slate-600 w-full">Paused:</span>
+            <span className="text-xs text-slate-400 w-full">Paused:</span>
             {inactiveKeywords.map(kw => (
-              <span key={kw.id} className="flex items-center gap-1 bg-slate-800 border border-slate-700 text-slate-500 text-xs rounded-full px-2.5 py-1">
+              <span key={kw.id} className="flex items-center bg-slate-800 border border-slate-700 text-slate-400 text-sm rounded-full pl-3 min-h-11">
                 {kw.keyword}
                 <button
                   onClick={() => toggleKeyword(kw.id, kw.is_active)}
-                  className="ml-0.5 text-slate-500 hover:text-slate-300 transition-colors"
+                  className="ml-0.5 min-w-11 min-h-11 flex items-center justify-center text-slate-400 hover:text-slate-200 active:opacity-70 transition-colors"
                   title="Resume"
+                  aria-label={`Resume ${kw.keyword}`}
                 >
                   ▶
                 </button>
                 <button
                   onClick={() => deleteKeyword(kw.id)}
-                  className="text-slate-600 hover:text-slate-400 transition-colors"
+                  className="min-w-11 min-h-11 -ml-2 flex items-center justify-center text-slate-400 hover:text-slate-200 active:opacity-70 transition-colors"
                   title="Remove"
+                  aria-label={`Remove ${kw.keyword}`}
                 >
                   ×
                 </button>
@@ -189,7 +202,7 @@ export function TopicsPanel({ userId, readIds, onMarkRead, onEngagement }: Props
         )}
 
         {keywords.length === 0 && (
-          <div className="px-4 pb-4 pt-1 text-xs text-slate-600">
+          <div className="px-4 pb-4 pt-1 text-xs text-slate-400">
             No keywords yet. Add one above to start tracking topics across all your sources.
           </div>
         )}
@@ -200,23 +213,34 @@ export function TopicsPanel({ userId, readIds, onMarkRead, onEngagement }: Props
         <div className="flex justify-center py-10">
           <div className="w-5 h-5 border-2 border-rose-500 border-t-transparent rounded-full animate-spin" />
         </div>
+      ) : loadError ? (
+        <div className="text-center py-12 px-6" role="alert">
+          <p className="text-base font-semibold text-rose-200">Couldn&apos;t load topics</p>
+          <p className="text-sm text-slate-400 mt-1.5">Something went wrong fetching your watchlist and matches.</p>
+          <button
+            onClick={loadData}
+            className="mt-4 min-h-11 px-4 text-sm font-semibold text-violet-300 hover:text-violet-200 active:opacity-70 transition-colors"
+          >
+            Try again
+          </button>
+        </div>
       ) : stories.length === 0 ? (
         <div className="text-center py-12">
           <div className="text-3xl mb-3">🔍</div>
           <p className="text-slate-400 font-medium text-sm">No topic matches yet</p>
-          <p className="text-slate-600 text-xs mt-1">
+          <p className="text-slate-400 text-xs mt-1">
             Stories matching your keywords will appear here after the next pipeline run
           </p>
         </div>
       ) : (
         <div className="space-y-3">
-          <p className="text-xs text-slate-600 px-1">{stories.length} matched stories</p>
+          <p className="text-xs text-slate-400 px-1">{stories.length} matched stories</p>
           {stories.map(story => (
             <div key={story.id}>
               {/* Topic badges */}
               {story.matched_topics && story.matched_topics.length > 0 && (
                 <div className="flex flex-wrap gap-1 mb-1 px-1">
-                  <span className="text-xs text-slate-600">
+                  <span className="text-xs text-slate-400">
                     {CATEGORY_LABELS[story.category] ?? story.category} ·
                   </span>
                   {story.matched_topics.map(t => (
@@ -229,6 +253,7 @@ export function TopicsPanel({ userId, readIds, onMarkRead, onEngagement }: Props
               <SoloCard
                 story={story}
                 source={sources[story.source_id]}
+                showCategory
                 isRead={readIds.has(story.id)}
                 onRead={() => onMarkRead(story.id)}
                 onEngagement={(signal) => onEngagement(signal, story.id)}

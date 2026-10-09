@@ -4,7 +4,6 @@ import { useMemo } from 'react'
 import type { StoryWithRelations, Source } from '@/lib/types'
 import { SoloCard } from './SoloCard'
 import { SkeletonCard } from './SkeletonCard'
-import { CATEGORY_LABELS, CATEGORY_PILL_COLORS } from '@/lib/constants'
 import { rankItems, isIGRSource } from '@/lib/ranking'
 
 interface Props {
@@ -19,7 +18,7 @@ interface Props {
   onMarkRead: (storyId?: string) => void
   onEngagement: (signal: string, storyId?: string) => void
   onDwellStart: (id: string) => void
-  onDwellEnd: (id: string, storyId?: string) => void
+  onDwellEnd: (id: string, storyId?: string, longForm?: boolean) => void
   onMuteTopic?: (keywords: string[]) => void
   loading: boolean
   error?: boolean
@@ -103,10 +102,17 @@ export function TodayFeed({
           <h2 className="text-xl font-bold text-white tracking-tight">Today&apos;s Brief</h2>
           <p className="text-xs text-slate-400 mt-1 inline-flex items-center gap-2">
             <span>Top {ranked.length} across all categories</span>
-            {unreadCount > 0 && (
+            {unreadCount > 0 ? (
               <span className="inline-flex items-center gap-1 text-violet-300">
-                <span className="w-1 h-1 rounded-full bg-violet-400" />
+                <span className="w-1 h-1 rounded-full bg-violet-400" aria-hidden="true" />
                 {unreadCount} unread
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 text-emerald-300">
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3} aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+                All read
               </span>
             )}
           </p>
@@ -115,25 +121,38 @@ export function TodayFeed({
 
       {/* Ranked feed */}
       {ranked.map(({ data: story }) => (
-        <div key={story.id} className="relative">
-          {/* Category chip overlay */}
-          <div className="absolute top-3 right-3 z-10">
-            <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${CATEGORY_PILL_COLORS[story.category]}`}>
-              {CATEGORY_LABELS[story.category]}
-            </span>
-          </div>
-          <SoloCard
-            story={story}
-            source={sources[story.source_id]}
-            isRead={readIds.has(story.id)}
-            onRead={() => onMarkRead(story.id)}
-            onEngagement={(signal) => onEngagement(signal, story.id)}
-            onDwellStart={() => onDwellStart(story.id)}
-            onDwellEnd={() => onDwellEnd(story.id, story.id)}
-            onMuteTopic={onMuteTopic ? () => onMuteTopic(story.matched_topics ?? []) : undefined}
-          />
-        </div>
+        <SoloCard
+          key={story.id}
+          story={story}
+          source={sources[story.source_id]}
+          showCategory
+          isRead={readIds.has(story.id)}
+          onRead={() => onMarkRead(story.id)}
+          onEngagement={(signal) => onEngagement(signal, story.id)}
+          onDwellStart={() => onDwellStart(story.id)}
+          onDwellEnd={({ longForm }) => onDwellEnd(story.id, story.id, longForm)}
+          onMuteTopic={onMuteTopic ? () => onMuteTopic(story.matched_topics ?? []) : undefined}
+        />
       ))}
+
+      {/* End of the brief — a real stopping point, not just a list that stops */}
+      <div className="text-center pt-6 pb-2" role="status">
+        <div className={`inline-flex items-center justify-center w-12 h-12 rounded-2xl ring-1 mb-3 ${
+          unreadCount === 0 ? 'bg-emerald-500/15 ring-emerald-500/30' : 'bg-slate-800/60 ring-slate-700/60'
+        }`}>
+          <svg className={`w-6 h-6 ${unreadCount === 0 ? 'text-emerald-300' : 'text-slate-400'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+          </svg>
+        </div>
+        <p className="text-base font-semibold text-slate-200">
+          {unreadCount === 0 ? "You're all caught up" : "That's today's brief"}
+        </p>
+        <p className="text-sm text-slate-400 mt-1">
+          {unreadCount === 0
+            ? `You've read all ${ranked.length} stories in today's brief.`
+            : `That's all ${ranked.length} stories in today's brief. ${unreadCount} still unread.`}
+        </p>
+      </div>
     </div>
   )
 }

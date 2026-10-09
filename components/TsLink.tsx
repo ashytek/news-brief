@@ -16,7 +16,7 @@ export function TsLink({ videoUrl, timestampSeconds, children }: Props) {
       href={url}
       target="_blank"
       rel="noopener noreferrer"
-      className="text-blue-400 hover:text-blue-300 hover:underline transition-colors"
+      className="text-blue-400 hover:text-blue-300 hover:underline active:opacity-70 transition-colors"
     >
       {children}
     </a>

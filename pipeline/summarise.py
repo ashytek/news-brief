@@ -9,6 +9,8 @@ _claude_fallback() below if you ever need it again.
 """
 from __future__ import annotations
 
+import re
+
 import llm
 from config import MAX_BULLETS, MAX_BULLETS_PROPHETIC, PROPHETIC_BULLETS_PER_SECONDS, TRANSCRIPT_WINDOW_SECONDS
 
@@ -25,7 +27,8 @@ def _short_rules_news(lead_words: int, point_words: int) -> str:
     return f"""- lead — 1-2 sentences, at most {lead_words} words: what happened or what the video argues, and where it lands (the outcome or the twist). Do not just repeat the headline.
 - key_points — 3-5 bullets, each ONE sentence of at most {point_words} words, each carrying a distinct, important specific. Keep every name, number, date, percentage and currency amount exactly as stated. No section titles, no timestamps, no "the video says".
 - Total length 100-120 words. It must stand alone: a reader who sees only this should still know the story.
-- Stay faithful. Keep attributions and hedges ("according to CNN", "alleged", "reportedly", "I think"). Never state as fact what is attributed to a source, never strengthen a claim ("raised questions" is not "exposed failures"), never merge facts from different sources into one claim, and add nothing that is not in the source."""
+- Stay faithful. Keep attributions and hedges ("according to CNN", "alleged", "reportedly", "I think"). Never state as fact what is attributed to a source, never strengthen a claim ("raised questions" is not "exposed failures"), never merge facts from different sources into one claim, and add nothing that is not in the source.
+- Round-ups. If the source covers several unrelated topics (a news round-up or bulletin) rather than one story, begin the lead with "Round-up:" and name the main topics in it. Then give each key point its own topic ("On <topic>: …"). Never write points about other topics as if they belonged to the lead topic."""
 
 
 def _short_rules_prophetic(lead_words: int, point_words: int) -> str:
@@ -259,6 +262,24 @@ LANGUAGE
 - Write in English. Keep names and figures exact."""
 
 
+def tidy_text(s: str) -> str:
+    """
+    Collapse whitespace in model prose. Flash occasionally emits a newline in
+    the middle of a word ("El Ni", two newlines, "ño"), which a page renders as "El Ni ño".
+    A newline with no whitespace beside it, between a letter and a lowercase
+    letter, is such a break and is removed; any other run of whitespace becomes
+    one space. (A genuine line break between two lowercase words with no
+    space around it would be glued too; the models write sentences, not
+    verse, so that is the lesser risk.)
+    """
+    s = re.sub(
+        r"(?<=[^\W\d_])[\r\n]+(?=[^\W\d_])",
+        lambda m: "" if s[m.end()].islower() else " ",
+        s,
+    )
+    return " ".join(s.split())
+
+
 def clean_short(raw) -> dict | None:
     """
     Normalise the model's `short` block to {"lead": str, "key_points": [str]},
@@ -268,10 +289,10 @@ def clean_short(raw) -> dict | None:
     if not isinstance(raw, dict):
         return None
     lead = raw.get("lead")
-    lead = lead.strip() if isinstance(lead, str) else ""
+    lead = tidy_text(lead) if isinstance(lead, str) else ""
     points = raw.get("key_points")
     points = [
-        p.strip() for p in points if isinstance(p, str) and p.strip()
+        t for t in (tidy_text(p) for p in points if isinstance(p, str)) if t
     ] if isinstance(points, list) else []
     if not lead or not points:
         return None

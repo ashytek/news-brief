@@ -12,7 +12,7 @@ import { TodayFeed } from '@/components/TodayFeed'
 import { SkeletonCard } from '@/components/SkeletonCard'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { InstallPrompt } from '@/components/InstallPrompt'
-import { STORY_SELECT } from '@/lib/constants'
+import { STORY_SELECT, DWELL_SHORT_SECONDS, DWELL_LONG_SECONDS } from '@/lib/constants'
 
 const CATEGORIES: { key: Category; label: string; color: string }[] = [
   { key: 'prophetic',    label: 'Prophetic',      color: 'violet' },
@@ -31,13 +31,19 @@ function formatSince(t: number): string {
 export default function ReaderClient({ userId }: { userId: string }) {
   const supabase = createClient()
 
-  // Persist last-used tab; default to 'today'
-  const [activeTab, setActiveTab] = useState<ActiveTab>(() => {
-    if (typeof window !== 'undefined') {
-      return (localStorage.getItem('newsbrief_activeTab') as ActiveTab) || 'today'
-    }
-    return 'today'
-  })
+  // Persist last-used tab; default to 'today'. localStorage is read in an
+  // effect, not in the initialiser: the server render can't see it, and a
+  // different first client render is a hydration mismatch (UI-041). Nothing
+  // loads until the saved tab is known, so there is no wasted Today fetch.
+  const [activeTab, setActiveTab] = useState<ActiveTab>('today')
+  const [tabReady, setTabReady] = useState(false)
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('newsbrief_activeTab') as ActiveTab | null
+      if (saved) setActiveTab(saved)
+    } catch { /* storage blocked: stay on Today */ }
+    setTabReady(true)
+  }, [])
 
   const handleTabChange = useCallback((tab: ActiveTab) => {
     setActiveTab(tab)
@@ -96,17 +102,21 @@ export default function ReaderClient({ userId }: { userId: string }) {
 
   // Previous visit, read before the mount effect below overwrites it — drives
   // the "N new since you left" banner and divider (F012).
-  const [prevVisit] = useState<number | null>(() => {
-    if (typeof window === 'undefined') return null
-    const t = Date.parse(localStorage.getItem('newsbrief_lastVisit') ?? '')
-    return Number.isNaN(t) ? null : t
-  })
+  // Read in an effect for the same hydration reason as the tab above.
+  const [prevVisit, setPrevVisit] = useState<number | null>(null)
+  const [dismissedSinceNotice, setDismissedSinceNotice] = useState(false)
 
-  // Record last-visit timestamp on mount
+  // Read the previous visit, then record this one. Guarded so a re-run of the
+  // effect (React strict mode in dev) can't read the timestamp it just wrote.
+  const visitRecorded = useRef(false)
   useEffect(() => {
-    if (typeof window !== 'undefined') {
+    if (visitRecorded.current) return
+    visitRecorded.current = true
+    try {
+      const t = Date.parse(localStorage.getItem('newsbrief_lastVisit') ?? '')
+      setPrevVisit(Number.isNaN(t) ? null : t)
       localStorage.setItem('newsbrief_lastVisit', new Date().toISOString())
-    }
+    } catch { /* storage blocked: no banner */ }
   }, [])
 
   // Load personal ranking weights on mount
@@ -354,8 +364,8 @@ export default function ReaderClient({ userId }: { userId: string }) {
   }, [activeTab])
 
   useEffect(() => {
-    loadContent()
-  }, [activeTab, loadContent])
+    if (tabReady) loadContent()
+  }, [tabReady, activeTab, loadContent])
 
   // ── Manual pipeline trigger ────────────────────────────────────────────
   // workflow_dispatch returns no run ID, so there's no way to directly
@@ -579,19 +589,21 @@ export default function ReaderClient({ userId }: { userId: string }) {
     }
   }, [userId, storyById])
 
-  // Dwell time tracking — auto-mark-read when user dwells >120s
+  // Dwell time tracking — auto-mark-read after 40 s on screen for a short
+  // card, 120 s once its sections were opened (or when only the long summary
+  // is shown).
   const startDwell = useCallback((id: string) => {
     dwellTimers.current.set(id, Date.now())
   }, [])
 
-  const endDwell = useCallback((id: string, storyId?: string) => {
+  const endDwell = useCallback((id: string, storyId?: string, longForm = false) => {
     const start = dwellTimers.current.get(id)
     if (!start) return
     const elapsed = (Date.now() - start) / 1000
     dwellTimers.current.delete(id)
     // Measured as time on screen, not time reading — so the card is held in
     // place (see heldIds) rather than dropped from under the reader.
-    if (elapsed > 120) {
+    if (elapsed > (longForm ? DWELL_LONG_SECONDS : DWELL_SHORT_SECONDS)) {
       sendEngagement('dwell_long', storyId)
       markRead(storyId, { hold: true }) // auto-mark-read after sufficient reading time
     } else if (elapsed < 3) {
@@ -731,14 +743,14 @@ export default function ReaderClient({ userId }: { userId: string }) {
           remaining per-frame costs on mid-range Android GPUs. Near-opaque
           solid is visually equivalent on this dark theme. */}
       <header className="sticky top-0 z-50 bg-slate-950/95 border-b border-slate-800/60">
-        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500 to-violet-700 flex items-center justify-center shadow-[0_0_16px_rgba(139,92,246,0.35)]">
+        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-9 h-9 shrink-0 rounded-xl bg-gradient-to-br from-violet-500 to-violet-700 flex items-center justify-center shadow-[0_0_16px_rgba(139,92,246,0.35)]">
               <svg className="w-4 h-4 text-white" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 12h6m-6-4h2" />
               </svg>
             </div>
-            <div>
+            <div className="min-w-0">
               <h1 className="text-sm font-bold text-white leading-none tracking-tight">News Brief</h1>
               {lastPipelineRun ? (
                 (() => {
@@ -765,12 +777,8 @@ export default function ReaderClient({ userId }: { userId: string }) {
                     <p className={`text-xs mt-1 inline-flex items-center gap-1 ${
                       down || pipelineStruggling ? 'text-rose-300' : 'text-slate-400'
                     }`}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${dot}`} />
+                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dot}`} aria-hidden="true" />
                       {label}
-                      {/* Build stamp — confirms which deploy this instance runs */}
-                      <span className="text-[9px] text-slate-600 font-mono ml-0.5">
-                        {process.env.NEXT_PUBLIC_BUILD_SHA}
-                      </span>
                     </p>
                   )
                 })()
@@ -781,21 +789,19 @@ export default function ReaderClient({ userId }: { userId: string }) {
               ) : null}
 
               {/* Manual pipeline trigger — deliberately a labelled text
-                  pill, not another icon in the crowded action row, so it
-                  can't be confused with the cosmetic "Refresh feed" button
-                  (which only re-fetches already-loaded data) and doesn't
-                  reintroduce the overflow issues that row has a documented
-                  history of on narrow Android widths. */}
+                  pill, not another icon in the action row, so it can't be
+                  confused with the cosmetic "Refresh feed" button (which only
+                  re-fetches already-loaded data). */}
               {triggerState === 'idle' && !triggerMessage && !triggerError && (
                 <button
                   onClick={handleTriggerPipeline}
-                  className="mt-1 text-[11px] font-semibold text-violet-300 hover:text-violet-200 transition-colors inline-flex items-center gap-1"
+                  className="min-h-11 -my-3 pr-3 text-xs font-semibold text-violet-300 hover:text-violet-200 active:opacity-70 transition-colors inline-flex items-center gap-1"
                 >
                   ⚡ Run now
                 </button>
               )}
               {(triggerState !== 'idle' || triggerMessage || triggerError) && (
-                <p className={`mt-1 text-[11px] font-semibold inline-flex items-center gap-1 ${
+                <p role="status" className={`mt-1 text-xs font-semibold inline-flex items-center gap-1 ${
                   triggerError ? 'text-rose-300' : 'text-violet-300'
                 }`}>
                   {triggerState === 'triggering' && 'Triggering…'}
@@ -805,8 +811,8 @@ export default function ReaderClient({ userId }: { userId: string }) {
                   {triggerState === 'idle' && (triggerError || triggerMessage) && (
                     <button
                       onClick={() => { setTriggerError(null); setTriggerMessage(null) }}
-                      className="text-slate-500 hover:text-slate-300"
-                      aria-label="Dismiss"
+                      className="min-w-11 min-h-11 -my-3 flex items-center justify-center text-slate-400 hover:text-slate-200"
+                      aria-label="Dismiss message"
                     >
                       ×
                     </button>
@@ -816,52 +822,16 @@ export default function ReaderClient({ userId }: { userId: string }) {
             </div>
           </div>
 
-          {/* Outer wrapper: the More button + its dropdown live OUTSIDE the
-              overflow-x-auto row below on purpose. Per the CSS overflow
-              spec, setting overflow-x to anything but visible forces the
-              computed overflow-y to 'auto' too (same trap documented in
-              globals.css for html/body) — the dropdown opens *downward*
-              below the row's own bounds, so nesting it inside that row
-              silently clipped it to nothing. Confirmed live: the button
-              worked, the menu was just invisible. */}
-          <div className="flex items-center gap-1.5 min-w-0">
-          {/* overflow-x-auto: final defensive layer. The "More" menu below
-              already keeps this row well within mobile widths in practice,
-              but this guarantees that even in an edge case (very narrow
-              device, browser zoom, extra-long "Unread · N" count) the row
-              scrolls internally instead of ever forcing the page to pan
-              sideways — same fix pattern as CategoryNav's bottom bar. */}
-          <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide min-w-0">
-            {activeTab !== 'topics' && activeTab !== 'today' && (
-              <button
-                onClick={() => { setHeldIds(new Set()); setShowUnreadOnly(v => !v) }}
-                className={`flex items-center gap-1.5 px-3 py-2 min-h-[44px] md:min-h-0 rounded-lg text-xs font-semibold transition-all active:scale-95 shrink-0 ${
-                  showUnreadOnly
-                    ? 'bg-violet-500/25 text-violet-200 ring-1 ring-violet-500/40'
-                    : 'bg-slate-800/60 text-slate-300 ring-1 ring-slate-700/60 hover:bg-slate-800 hover:text-white'
-                }`}
-              >
-                {showUnreadOnly ? `Unread${unreadCount > 0 ? ` · ${unreadCount}` : ''}` : 'All'}
-              </button>
-            )}
-
-            {activeTab !== 'topics' && activeTab !== 'today' && unreadCount > 0 && (
-              <button
-                onClick={markAllVisibleRead}
-                className="w-11 h-11 md:w-9 md:h-9 shrink-0 rounded-lg bg-slate-800/60 hover:bg-emerald-500/20 ring-1 ring-slate-700/60 hover:ring-emerald-500/40 flex items-center justify-center transition-all active:scale-95 group/mar"
-                title="Mark everything here as read"
-                aria-label="Mark all as read"
-              >
-                <svg className="w-4 h-4 text-slate-300 group-hover/mar:text-emerald-300" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M2 13l4 4L14 9m-3 4l4 4L23 7" />
-                </svg>
-              </button>
-            )}
-
+          {/* Three controls at every width: Search, Refresh, More. (Seven
+              fixed-width controls used to be squeezed into a hidden horizontal
+              scroller, which pushed Search and Refresh off-screen at 412 px.)
+              The More menu is a sibling of nothing scrollable on purpose: any
+              overflow-x ancestor would clip its dropdown. */}
+          <div className="flex items-center gap-1.5 shrink-0">
             {activeTab !== 'topics' && (
               <button
                 onClick={() => { if (!loading) { loadContent(); loadReadIds() } }}
-                className="w-11 h-11 md:w-9 md:h-9 shrink-0 rounded-lg bg-slate-800/60 hover:bg-slate-800 ring-1 ring-slate-700/60 hover:ring-slate-600 flex items-center justify-center transition-all active:scale-95"
+                className="w-11 h-11 shrink-0 rounded-lg bg-slate-800/60 hover:bg-slate-800 ring-1 ring-slate-700/60 hover:ring-slate-600 flex items-center justify-center transition-all active:scale-95"
                 title="Refresh"
                 aria-label="Refresh feed"
               >
@@ -876,58 +846,18 @@ export default function ReaderClient({ userId }: { userId: string }) {
 
             <a
               href="/search"
-              className="w-11 h-11 md:w-9 md:h-9 shrink-0 rounded-lg bg-slate-800/60 hover:bg-slate-800 ring-1 ring-slate-700/60 hover:ring-slate-600 flex items-center justify-center transition-all"
+              className="w-11 h-11 shrink-0 rounded-lg bg-slate-800/60 hover:bg-slate-800 ring-1 ring-slate-700/60 hover:ring-slate-600 flex items-center justify-center transition-all active:scale-95"
               title="Search"
+              aria-label="Search"
             >
               <svg className="w-4 h-4 text-slate-300" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M17 11A6 6 0 115 11a6 6 0 0112 0z" />
               </svg>
             </a>
 
-            {/* Archive / Sources / Sign out — plenty of room on desktop, so
-                they stay as individual icons there. On mobile they're the
-                least-frequently-used actions in this row, so they're folded
-                into one "More" button below — that's what actually fixed the
-                header overflowing past the screen edge on narrow Android
-                widths (was 7 fixed-width controls competing for ~330px). */}
-            <a
-              href="/archive"
-              className="hidden md:flex w-9 h-9 rounded-lg bg-slate-800/60 hover:bg-slate-800 ring-1 ring-slate-700/60 hover:ring-slate-600 items-center justify-center transition-all"
-              title="Archive"
-            >
-              <svg className="w-4 h-4 text-slate-300" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-              </svg>
-            </a>
-
-            <a
-              href="/sources"
-              className="hidden md:flex w-9 h-9 rounded-lg bg-slate-800/60 hover:bg-slate-800 ring-1 ring-slate-700/60 hover:ring-slate-600 items-center justify-center transition-all"
-              title="Sources"
-            >
-              <svg className="w-4 h-4 text-slate-300" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h7" />
-              </svg>
-            </a>
-
-            <button
-              onClick={handleSignOut}
-              className="hidden md:flex w-9 h-9 rounded-lg bg-slate-800/60 hover:bg-slate-800 ring-1 ring-slate-700/60 hover:ring-slate-600 items-center justify-center transition-all"
-              title="Sign out"
-            >
-              <svg className="w-4 h-4 text-slate-300" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-              </svg>
-            </button>
-          </div>
-
-            {/* Mobile-only: Archive/Sources/Sign out collapse behind here.
-                A bare ⋮ icon doesn't read as "Sources lives here" to anyone
-                who isn't already familiar with the app — labelled so the
-                place to add a YouTube channel is actually findable.
-                Deliberately a sibling of the overflow-x-auto row above, not
-                nested inside it — see the wrapper comment. */}
-            <div ref={moreMenuRef} className="relative md:hidden shrink-0">
+            {/* Archive / Sources / Sign out, labelled so the place to add a
+                YouTube channel is findable. */}
+            <div ref={moreMenuRef} className="relative shrink-0">
               <button
                 onClick={() => setShowMoreMenu(v => !v)}
                 className="flex items-center gap-1 px-2.5 h-11 rounded-lg bg-slate-800/60 hover:bg-slate-800 ring-1 ring-slate-700/60 hover:ring-slate-600 transition-all active:scale-95"
@@ -942,41 +872,59 @@ export default function ReaderClient({ userId }: { userId: string }) {
               </button>
 
               {showMoreMenu && (
-                  <div className="absolute right-0 top-full mt-2 z-50 w-44 rounded-xl bg-slate-900 ring-1 ring-slate-700 shadow-[0_8px_30px_rgba(0,0,0,0.5)] overflow-hidden animate-fade-in-up">
-                    <a
-                      href="/archive"
-                      className="flex items-center gap-2.5 px-4 min-h-[44px] text-sm text-slate-200 hover:bg-slate-800 active:bg-slate-800"
-                      onClick={() => setShowMoreMenu(false)}
-                    >
-                      <svg className="w-4 h-4 text-slate-400" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                      </svg>
-                      Archive
-                    </a>
-                    <a
-                      href="/sources"
-                      className="flex items-center gap-2.5 px-4 min-h-[44px] text-sm text-slate-200 hover:bg-slate-800 active:bg-slate-800"
-                      onClick={() => setShowMoreMenu(false)}
-                    >
-                      <svg className="w-4 h-4 text-slate-400" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h7" />
-                      </svg>
-                      Sources
-                    </a>
-                    <button
-                      onClick={() => { setShowMoreMenu(false); handleSignOut() }}
-                      className="w-full flex items-center gap-2.5 px-4 min-h-[44px] text-sm text-slate-200 hover:bg-slate-800 active:bg-slate-800 border-t border-slate-800"
-                    >
-                      <svg className="w-4 h-4 text-slate-400" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                      </svg>
-                      Sign out
-                    </button>
-                  </div>
+                <div className="absolute right-0 top-full mt-2 z-50 w-48 rounded-xl bg-slate-900 ring-1 ring-slate-700 shadow-[0_8px_30px_rgba(0,0,0,0.5)] overflow-hidden animate-fade-in-up">
+                  <a
+                    href="/archive"
+                    className="flex items-center gap-2.5 px-4 min-h-[44px] text-sm text-slate-200 hover:bg-slate-800 active:bg-slate-800"
+                    onClick={() => setShowMoreMenu(false)}
+                  >
+                    <svg className="w-4 h-4 text-slate-400" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                    Archive
+                  </a>
+                  <a
+                    href="/sources"
+                    className="flex items-center gap-2.5 px-4 min-h-[44px] text-sm text-slate-200 hover:bg-slate-800 active:bg-slate-800"
+                    onClick={() => setShowMoreMenu(false)}
+                  >
+                    <svg className="w-4 h-4 text-slate-400" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h7" />
+                    </svg>
+                    Sources
+                  </a>
+                  <button
+                    onClick={() => { setShowMoreMenu(false); handleSignOut() }}
+                    className="w-full flex items-center gap-2.5 px-4 min-h-[44px] text-sm text-slate-200 hover:bg-slate-800 active:bg-slate-800 border-t border-slate-800"
+                  >
+                    <svg className="w-4 h-4 text-slate-400" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                    </svg>
+                    Sign out
+                  </button>
+                  {/* Build stamp — confirms which deploy this instance runs */}
+                  <p className="px-4 py-2 text-xs text-slate-400 font-mono border-t border-slate-800">
+                    Build {process.env.NEXT_PUBLIC_BUILD_SHA}
+                  </p>
+                </div>
               )}
             </div>
           </div>
         </div>
+
+        {/* Offline banner — inside the sticky header so it sits below the bar
+            and moves with it (it used to be its own sticky top-0 element, which
+            slid underneath the header). Stories on screen stay readable. */}
+        {isOffline && (
+          <div role="status" className="bg-slate-900 border-t border-amber-500/30 px-4 py-2 text-center">
+            <p className="text-xs font-semibold text-amber-200 inline-flex items-center gap-1.5">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 5.636a9 9 0 010 12.728m-12.728 0a9 9 0 010-12.728m2.828 9.9a5 5 0 010-7.072m7.072 0a5 5 0 010 7.072M12 12h.01" />
+              </svg>
+              Offline — showing last loaded stories
+            </p>
+          </div>
+        )}
 
         {/* Category + Today + Topics tabs — only show categories with recent content */}
         <CategoryNav
@@ -989,18 +937,6 @@ export default function ReaderClient({ userId }: { userId: string }) {
       </header>
 
       {/* Feed */}
-      {/* Offline banner — stories already on screen stay readable */}
-      {isOffline && (
-        <div className="sticky top-0 z-40 bg-slate-900 border-b border-amber-500/30 px-4 py-2 text-center">
-          <p className="text-xs font-semibold text-amber-200 inline-flex items-center gap-1.5">
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 5.636a9 9 0 010 12.728m-12.728 0a9 9 0 010-12.728m2.828 9.9a5 5 0 010-7.072m7.072 0a5 5 0 010 7.072M12 12h.01" />
-            </svg>
-            Offline — showing last loaded stories
-          </p>
-        </div>
-      )}
-
       {/* Scroll-to-top FAB — sits above the bottom nav, safe-area aware */}
       {showScrollTop && (
         <button
@@ -1015,10 +951,52 @@ export default function ReaderClient({ userId }: { userId: string }) {
       )}
 
       <main className="max-w-2xl mx-auto px-4 py-4 space-y-3 pb-24 md:pb-6">
-        {!loading && !loadError && newSinceVisit > 0 && prevVisit !== null && (
-          <p className="text-xs font-semibold text-violet-300 bg-violet-500/10 ring-1 ring-violet-500/25 rounded-xl px-3 py-2">
-            {newSinceVisit} new since you left · {formatSince(prevVisit)}
-          </p>
+        {/* Unread / All and Mark all read live in a toolbar under the header,
+            not in it (UI-023). */}
+        {activeTab !== 'topics' && activeTab !== 'today' && (
+          <div className="flex items-center justify-between gap-2">
+            <button
+              onClick={() => { setHeldIds(new Set()); setShowUnreadOnly(v => !v) }}
+              aria-pressed={showUnreadOnly}
+              className={`flex items-center gap-1.5 px-3 min-h-11 rounded-lg text-sm font-semibold transition-all active:scale-95 ${
+                showUnreadOnly
+                  ? 'bg-violet-500/25 text-violet-200 ring-1 ring-violet-500/40'
+                  : 'bg-slate-800/60 text-slate-300 ring-1 ring-slate-700/60 hover:bg-slate-800 hover:text-white'
+              }`}
+            >
+              {showUnreadOnly ? `Unread${unreadCount > 0 ? ` · ${unreadCount}` : ''}` : 'All stories'}
+            </button>
+
+            {unreadCount > 0 && (
+              <button
+                onClick={markAllVisibleRead}
+                className="flex items-center gap-1.5 px-3 min-h-11 rounded-lg text-sm font-semibold bg-slate-800/60 text-slate-300 ring-1 ring-slate-700/60 hover:bg-emerald-500/20 hover:text-emerald-200 hover:ring-emerald-500/40 active:scale-95 transition-all"
+                title="Mark everything here as read"
+              >
+                <svg className="w-4 h-4" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M2 13l4 4L14 9m-3 4l4 4L23 7" />
+                </svg>
+                Mark all read
+              </button>
+            )}
+          </div>
+        )}
+        {!loading && !loadError && newSinceVisit > 0 && prevVisit !== null && !dismissedSinceNotice && (
+          <div
+            role="status"
+            className="flex items-center justify-between gap-2 text-sm font-semibold text-violet-200 bg-violet-500/10 ring-1 ring-violet-500/25 rounded-xl pl-3 pr-1"
+          >
+            <span className="py-2">{newSinceVisit} new since you left · {formatSince(prevVisit)}</span>
+            <button
+              onClick={() => setDismissedSinceNotice(true)}
+              className="shrink-0 min-w-11 min-h-11 flex items-center justify-center rounded-lg text-violet-200 hover:bg-violet-500/20 active:bg-violet-500/20"
+              aria-label="Dismiss"
+            >
+              <svg className="w-4 h-4" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
         )}
         {/* Today tab */}
         {activeTab === 'today' && (
@@ -1089,7 +1067,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
                       <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                     </svg>
                   ) : (
-                    <svg className="w-8 h-8 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <svg className="w-8 h-8 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                     </svg>
                   )}
@@ -1120,7 +1098,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
             {!loading && pinnedMix.length > 0 && (
               <>
                 <div className="flex items-center gap-3 pt-1 pb-1">
-                  <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-amber-300 bg-amber-500/15 ring-1 ring-amber-500/30 px-2.5 py-1 rounded-full uppercase tracking-wider">
+                  <span className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-300 bg-amber-500/15 ring-1 ring-amber-500/30 px-2.5 py-1 rounded-full uppercase tracking-wider">
                     <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                       <path d="M13 10V3L4 14h7v7l9-11h-7z" />
                     </svg>
@@ -1137,13 +1115,13 @@ export default function ReaderClient({ userId }: { userId: string }) {
                     onRead={() => markRead(story.id)}
                     onEngagement={(signal) => sendEngagement(signal, story.id)}
                     onDwellStart={() => startDwell(story.id)}
-                    onDwellEnd={() => endDwell(story.id, story.id)}
+                    onDwellEnd={({ longForm }) => endDwell(story.id, story.id, longForm)}
                     onMuteTopic={() => muteTopics(story.matched_topics ?? [])}
                   />
                 ))}
                 {mergedFeed.length > 0 && (
                   <div className="flex items-center gap-3 pt-3 pb-1">
-                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">More stories</span>
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">More stories</span>
                     <div className="flex-1 h-px bg-slate-800" />
                   </div>
                 )}
@@ -1156,7 +1134,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
                 <Fragment key={story.id}>
                 {i === newLeadCount && i > 0 && (
                   <div className="flex items-center gap-3 pt-3 pb-1">
-                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Before you left</span>
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Before you left</span>
                     <div className="flex-1 h-px bg-slate-800" />
                   </div>
                 )}
@@ -1167,7 +1145,7 @@ export default function ReaderClient({ userId }: { userId: string }) {
                   onRead={() => markRead(story.id)}
                   onEngagement={(signal) => sendEngagement(signal, story.id)}
                   onDwellStart={() => startDwell(story.id)}
-                  onDwellEnd={() => endDwell(story.id, story.id)}
+                  onDwellEnd={({ longForm }) => endDwell(story.id, story.id, longForm)}
                   onMuteTopic={() => muteTopics(story.matched_topics ?? [])}
                 />
                 </Fragment>

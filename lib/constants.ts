@@ -66,7 +66,24 @@ export const CATEGORY_BULLET_COLOR: Record<Category, string> = {
 // Explicitly omits transcript_text/embedding blobs so payloads stay slim.
 export const STORY_SELECT =
   'id, source_id, video_id, category, headline, summary, bullets, short, cluster_id, matched_topics, created_at, ' +
-  'videos(id, url, published_at, thumbnail_url), sources(id, name)'
+  'videos(id, url, published_at, thumbnail_url, duration_seconds), sources(id, name)'
+
+/** Dwell auto-read thresholds, seconds on screen (Ash, 9 Oct 2026): a short
+ *  card is read in about 40 s; once its sections are expanded (or when there
+ *  is no short version and the long summary shows) it takes 120 s. */
+export const DWELL_SHORT_SECONDS = 40
+export const DWELL_LONG_SECONDS = 120
+
+/** Video length for the thumbnail badge: "7:05" or "1:02:03". */
+export function formatDuration(seconds: number): string {
+  const total = Math.max(0, Math.floor(seconds))
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = total % 60
+  return h > 0
+    ? `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
+    : `${m}:${s.toString().padStart(2, '0')}`
+}
 
 /** mm:ss formatting for video timestamps */
 export function formatTime(seconds: number): string {

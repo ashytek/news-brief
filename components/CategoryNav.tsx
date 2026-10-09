@@ -54,18 +54,20 @@ function NavButton({ id, label, icon, isActive, color, badge, onClick }: {
   return (
     <button
       onClick={onClick}
-      className={`relative flex flex-col items-center justify-center gap-0.5 flex-1 min-w-[44px] py-2 px-1 transition-all active:scale-90`}
+      aria-current={isActive ? 'page' : undefined}
+      aria-label={badge != null && badge > 0 ? `${label}, ${badge} ${id === 'topics' ? 'matches' : 'unread'}` : label}
+      className={`relative flex flex-col items-center justify-center gap-0.5 flex-1 min-w-[44px] min-h-[56px] py-1.5 px-0.5 transition-all active:scale-90`}
     >
-      <div className={`flex flex-col items-center justify-center gap-0.5 px-3 py-1.5 rounded-xl transition-all ${
+      <div className={`flex flex-col items-center justify-center gap-0.5 px-2 py-1.5 rounded-xl transition-all ${
         isActive ? `${palette.bg} ${palette.text} ring-1 ${palette.ring}` : 'text-slate-400 hover:text-slate-200'
       }`}>
         <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={isActive ? 2 : 1.6} aria-hidden="true">
           <path strokeLinecap="round" strokeLinejoin="round" d={icon} />
         </svg>
-        <span className="text-[10px] font-semibold leading-none">{SHORT_LABELS[id] ?? label}</span>
+        <span className="text-xs font-semibold leading-none">{SHORT_LABELS[id] ?? label}</span>
       </div>
       {badge != null && badge > 0 && (
-        <span className="absolute top-1 right-[calc(50%-22px)] min-w-[16px] h-4 text-[9px] font-bold bg-rose-500 text-white rounded-full flex items-center justify-center px-1 ring-2 ring-slate-950">
+        <span className="absolute top-1 right-[calc(50%-26px)] min-w-5 h-5 text-xs font-bold bg-rose-500 text-white rounded-full flex items-center justify-center px-1 ring-2 ring-slate-950">
           {badge > 99 ? '99+' : badge}
         </span>
       )}
@@ -89,7 +91,7 @@ export function CategoryNav({ categories, active, onChange, topicCount, todayUnr
       {/* No backdrop-blur: fixed-position blur re-filters on every scroll
           frame under it — meaningful jank on mid-range Android. Near-opaque
           solid reads identically on the dark theme. */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-slate-950/95 border-t border-slate-800/80 flex overflow-x-auto scrollbar-hide safe-area-inset-bottom shadow-[0_-4px_20px_-4px_rgba(0,0,0,0.6)]">
+      <nav aria-label="Primary" className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-slate-950/95 border-t border-slate-800/80 flex overflow-x-auto scrollbar-hide safe-area-inset-bottom shadow-[0_-4px_20px_-4px_rgba(0,0,0,0.6)]">
         {allTabs.map(tab => (
           <NavButton
             key={tab.id}
@@ -105,9 +107,10 @@ export function CategoryNav({ categories, active, onChange, topicCount, todayUnr
       </nav>
 
       {/* ── Desktop: horizontal tabs ─────────────────────────────── */}
-      <div className="hidden md:flex overflow-x-auto scrollbar-hide border-t border-slate-800/40">
+      <div className="hidden md:flex overflow-x-auto scrollbar-hide border-t border-slate-800/40" role="navigation" aria-label="Sections">
         <button
           onClick={() => onChange('today')}
+          aria-current={active === 'today' ? 'page' : undefined}
           className={`flex-shrink-0 px-5 py-3 text-sm font-semibold transition-all border-b-2 flex items-center gap-1.5 ${
             active === 'today' ? 'text-white border-white' : 'text-slate-400 border-transparent hover:text-slate-200'
           }`}
@@ -125,6 +128,7 @@ export function CategoryNav({ categories, active, onChange, topicCount, todayUnr
             <button
               key={cat.key}
               onClick={() => onChange(cat.key)}
+              aria-current={isActive ? 'page' : undefined}
               className={`flex-shrink-0 px-5 py-3 text-sm font-semibold transition-all border-b-2 ${
                 isActive ? `${palette.text} ${palette.border}` : 'text-slate-400 border-transparent hover:text-slate-200'
               }`}
@@ -136,6 +140,7 @@ export function CategoryNav({ categories, active, onChange, topicCount, todayUnr
 
         <button
           onClick={() => onChange('topics')}
+          aria-current={active === 'topics' ? 'page' : undefined}
           className={`flex-shrink-0 px-5 py-3 text-sm font-semibold transition-all border-b-2 flex items-center gap-1.5 ${
             active === 'topics' ? 'text-rose-200 border-rose-500' : 'text-slate-400 border-transparent hover:text-slate-200'
           }`}

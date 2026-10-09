@@ -61,7 +61,7 @@ export default function AuthPage() {
             </p>
             <button
               onClick={() => setSent(false)}
-              className="mt-4 text-xs text-slate-500 hover:text-slate-300 transition-colors"
+              className="mt-4 text-xs text-slate-400 hover:text-slate-300 transition-colors"
             >
               Try a different email
             </button>
@@ -79,7 +79,7 @@ export default function AuthPage() {
                 onChange={e => setEmail(e.target.value)}
                 placeholder="ashytech@gmail.com"
                 required
-                className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition-all"
+                className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition-all"
               />
             </div>
 
@@ -92,12 +92,12 @@ export default function AuthPage() {
             <button
               type="submit"
               disabled={loading || !email}
-              className="w-full py-3 px-4 bg-violet-600 hover:bg-violet-500 disabled:bg-slate-700 disabled:text-slate-500 text-white font-semibold rounded-xl transition-all focus:outline-none focus:ring-2 focus:ring-violet-500 focus:ring-offset-2 focus:ring-offset-slate-900"
+              className="w-full py-3 px-4 bg-violet-600 hover:bg-violet-500 disabled:bg-slate-700 disabled:text-slate-400 text-white font-semibold rounded-xl transition-all focus:outline-none focus:ring-2 focus:ring-violet-500 focus:ring-offset-2 focus:ring-offset-slate-900"
             >
               {loading ? 'Sending…' : 'Send magic link'}
             </button>
 
-            <p className="mt-4 text-center text-xs text-slate-500">
+            <p className="mt-4 text-center text-xs text-slate-400">
               One-tap sign in. No passwords ever.
             </p>
           </form>

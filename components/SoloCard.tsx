@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ShortVersion, Source } from '@/lib/types'
 import type { StoryWithRelations } from '@/lib/types'
 import { TsLink } from './TsLink'
@@ -8,6 +8,8 @@ import { EngagementBar } from './EngagementBar'
 import { useDwellVisibility } from '@/lib/useDwellVisibility'
 import {
   formatTime,
+  formatDuration,
+  CATEGORY_LABELS,
   CATEGORY_ACCENT_BAR,
   CATEGORY_GLOW_CLASS,
   CATEGORY_BULLET_COLOR,
@@ -20,8 +22,12 @@ interface Props {
   onRead: () => void
   onEngagement: (signal: string) => void
   onDwellStart: () => void
-  onDwellEnd: () => void
+  /** `longForm` is true when the card showed its full sections or the long
+   *  summary while it was on screen, so the caller uses the longer threshold. */
+  onDwellEnd: (opts: { longForm: boolean }) => void
   onMuteTopic?: () => void
+  /** Show the category as a dot + label in the meta row (Today mixes them). */
+  showCategory?: boolean
 }
 
 const SIXTY_MINUTES = 60 * 60 * 1000
@@ -58,7 +64,7 @@ function formatRelativeDate(iso: string): string {
  * broadcasts run 15-25 bullets — collapsing keeps mobile cards scannable. */
 const BULLET_PREVIEW_COUNT = 5
 
-export function SoloCard({ story, source, isRead, onRead, onEngagement, onDwellStart, onDwellEnd, onMuteTopic }: Props) {
+export function SoloCard({ story, source, isRead, onRead, onEngagement, onDwellStart, onDwellEnd, onMuteTopic, showCategory }: Props) {
   const video = story.videos
   const videoUrl = video?.url ?? null
   const thumbnail = video?.thumbnail_url ?? null
@@ -97,7 +103,17 @@ export function SoloCard({ story, source, isRead, onRead, onEngagement, onDwellS
     [short, story.summary, story.bullets, isWalkthrough, showAllBullets],
   )
 
-  const dwellRef = useDwellVisibility<HTMLElement>(onDwellStart, onDwellEnd)
+  // The dwell hook binds its callbacks once, so read live state through refs.
+  const latest = useRef({ hasShort: false, expanded: false })
+  const expandedSeen = useRef(false)
+  useEffect(() => {
+    latest.current = { hasShort: !!short, expanded: showAllBullets }
+    if (showAllBullets) expandedSeen.current = true
+  }, [short, showAllBullets])
+  const dwellRef = useDwellVisibility<HTMLElement>(
+    () => { expandedSeen.current = latest.current.expanded; onDwellStart() },
+    () => onDwellEnd({ longForm: !latest.current.hasShort || expandedSeen.current }),
+  )
 
   const accentBar = CATEGORY_ACCENT_BAR[story.category]
   const glow = CATEGORY_GLOW_CLASS[story.category]
@@ -115,33 +131,36 @@ export function SoloCard({ story, source, isRead, onRead, onEngagement, onDwellS
       {/* Category accent bar — instant visual ID */}
       <div className={`absolute left-0 top-0 bottom-0 w-1 ${accentBar} ${isRead ? 'opacity-30' : ''}`} aria-hidden="true" />
 
-      {/* Thumbnail */}
+      {/* Thumbnail. The headline sits right below, so the image is decorative
+          (alt=""); the play badge is always visible, with the video length. */}
       {thumbnail && (
         <div className="relative w-full aspect-video bg-slate-800 overflow-hidden">
           {videoUrl ? (
-            <a href={videoUrl} target="_blank" rel="noopener noreferrer" className="block w-full h-full">
+            <a
+              href={videoUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block w-full h-full active:opacity-80"
+              aria-label={`Watch on YouTube: ${story.headline}`}
+            >
               <img
                 src={thumbnail}
-                alt={story.headline}
-                className={`w-full h-full object-cover transition-transform duration-500 group-hover:scale-105 ${isRead ? 'opacity-50' : ''}`}
+                alt=""
+                className={`w-full h-full object-cover transition-transform duration-500 group-hover:scale-105 ${isRead ? 'opacity-60' : ''}`}
                 loading="lazy"
               />
-              {/* Dark gradient at bottom for text legibility if we ever overlay */}
-              <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent pointer-events-none" />
-              {/* Play button overlay */}
-              <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                <div className="w-14 h-14 rounded-full bg-black/70 backdrop-blur-sm flex items-center justify-center ring-2 ring-white/20">
-                  <svg className="w-6 h-6 text-white ml-0.5" aria-hidden="true" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M8 5v14l11-7z" />
-                  </svg>
-                </div>
-              </div>
+              <span className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-md bg-black/80 px-2 py-1 text-xs font-semibold text-white">
+                <svg className="w-3 h-3" aria-hidden="true" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+                {video?.duration_seconds ? formatDuration(video.duration_seconds) : 'Watch'}
+              </span>
             </a>
           ) : (
             <img
               src={thumbnail}
-              alt={story.headline}
-              className={`w-full h-full object-cover ${isRead ? 'opacity-50' : ''}`}
+              alt=""
+              className={`w-full h-full object-cover ${isRead ? 'opacity-60' : ''}`}
               loading="lazy"
             />
           )}
@@ -153,29 +172,44 @@ export function SoloCard({ story, source, isRead, onRead, onEngagement, onDwellS
         <div className="flex items-center gap-2 mb-3 flex-wrap">
           {isFresh && (
             <span
+              role="img"
               className="w-2 h-2 rounded-full bg-emerald-400 flex-shrink-0 animate-fresh-pulse shadow-[0_0_8px_rgba(52,211,153,0.7)]"
               title="Published in the last hour"
               aria-label="Fresh"
             />
           )}
+          {showCategory && (
+            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-300">
+              <span className={`w-2 h-2 rounded-full ${bulletColor}`} aria-hidden="true" />
+              {CATEGORY_LABELS[story.category]}
+            </span>
+          )}
           <span className="text-xs font-semibold text-slate-200 bg-slate-800/80 ring-1 ring-slate-700 px-2 py-0.5 rounded-full">
             {source?.name ?? 'Unknown'}
           </span>
           {video?.published_at && (
-            <span className="text-xs text-slate-400">
+            <time dateTime={video.published_at} className="text-xs text-slate-400">
               {formatRelativeDate(video.published_at)}
-            </span>
+            </time>
           )}
-          <span className="text-xs text-slate-500 inline-flex items-center gap-1">
+          <span className="text-xs text-slate-400 inline-flex items-center gap-1">
             <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            {readMins} min
+            {readMins} min read
           </span>
+          {isRead && (
+            <span className="text-xs font-semibold text-slate-400 inline-flex items-center gap-1">
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3} aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+              Read
+            </span>
+          )}
           {story.matched_topics && story.matched_topics.length > 0 && (
             <div className="flex gap-1 ml-auto">
               {story.matched_topics.slice(0, 2).map(t => (
-                <span key={t} className="text-[10px] font-medium uppercase tracking-wider text-rose-300 bg-rose-500/15 ring-1 ring-rose-500/25 px-2 py-0.5 rounded-full">
+                <span key={t} className="text-xs font-medium text-rose-300 bg-rose-500/15 ring-1 ring-rose-500/25 px-2 py-0.5 rounded-full">
                   {t}
                 </span>
               ))}
@@ -185,10 +219,10 @@ export function SoloCard({ story, source, isRead, onRead, onEngagement, onDwellS
 
         {/* Headline — bigger, more confident */}
         <h2 className={`text-lg md:text-xl font-bold leading-tight tracking-tight mb-2.5 ${
-          isRead ? 'text-slate-400 line-through decoration-slate-700 decoration-2' : 'text-white'
+          isRead ? 'text-slate-400' : 'text-white'
         }`}>
           {videoUrl ? (
-            <a href={videoUrl} target="_blank" rel="noopener noreferrer" className="hover:text-slate-100 transition-colors">
+            <a href={videoUrl} target="_blank" rel="noopener noreferrer" className="hover:text-slate-100 active:opacity-70 transition-colors">
               {story.headline}
             </a>
           ) : story.headline}
@@ -198,18 +232,18 @@ export function SoloCard({ story, source, isRead, onRead, onEngagement, onDwellS
             than the backfill window) fall back to the long overview. */}
         {short ? (
           <>
-            <p className={`text-sm leading-relaxed ${short.keyPoints.length > 0 ? 'mb-3' : 'mb-4'} ${isRead ? 'text-slate-500' : 'text-slate-200'}`}>
+            <p className={`text-base leading-[1.55] ${short.keyPoints.length > 0 ? 'mb-3' : 'mb-4'} ${isRead ? 'text-slate-400' : 'text-slate-100'}`}>
               {short.lead}
             </p>
             {short.keyPoints.length > 0 && (
               <ul className="space-y-2 mb-4">
                 {short.keyPoints.map((point, i) => (
-                  <li key={i} className="flex items-start gap-2.5 text-sm">
+                  <li key={i} className="flex items-start gap-2.5 text-base">
                     <span
-                      className={`mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${bulletColor} ${isRead ? 'opacity-40' : ''}`}
+                      className={`mt-2 w-1.5 h-1.5 rounded-full flex-shrink-0 ${bulletColor} ${isRead ? 'opacity-40' : ''}`}
                       aria-hidden="true"
                     />
-                    <span className={`leading-relaxed ${isRead ? 'text-slate-500' : 'text-slate-300'}`}>
+                    <span className={`leading-[1.55] ${isRead ? 'text-slate-400' : 'text-slate-200'}`}>
                       {point}
                     </span>
                   </li>
@@ -218,7 +252,7 @@ export function SoloCard({ story, source, isRead, onRead, onEngagement, onDwellS
             )}
           </>
         ) : (
-          <p className={`text-sm leading-relaxed mb-4 ${isRead ? 'text-slate-500' : 'text-slate-300'}`}>
+          <p className={`text-base leading-[1.55] mb-4 ${isRead ? 'text-slate-400' : 'text-slate-200'}`}>
             {story.summary}
           </p>
         )}
@@ -243,32 +277,32 @@ export function SoloCard({ story, source, isRead, onRead, onEngagement, onDwellS
                   {visibleBullets.map((bullet, i) =>
                     bullet.title ? (
                       /* Walkthrough section: [MM:SS] — Title, prose beneath */
-                      <li key={i} className="text-sm">
+                      <li key={i} className="text-[15px]">
                         <p className="leading-snug mb-1">
                           {bullet.timestamp_seconds !== null && videoUrl && (
                             <>
                               <TsLink videoUrl={videoUrl} timestampSeconds={bullet.timestamp_seconds}>
                                 [{formatTime(bullet.timestamp_seconds)}]
                               </TsLink>
-                              <span className={isRead ? 'text-slate-600' : 'text-slate-500'}>{' — '}</span>
+                              {' '}
                             </>
                           )}
                           <span className={`font-semibold ${isRead ? 'text-slate-400' : 'text-white'}`}>
                             {bullet.title}
                           </span>
                         </p>
-                        <p className={`leading-relaxed ${isRead ? 'text-slate-500' : 'text-slate-300'}`}>
+                        <p className={`leading-[1.6] ${isRead ? 'text-slate-400' : 'text-slate-300'}`}>
                           {bullet.text}
                         </p>
                       </li>
                     ) : (
                       /* Legacy dot bullet (stories summarised before July 2026) */
-                      <li key={i} className="flex items-start gap-2.5 text-sm">
+                      <li key={i} className="flex items-start gap-2.5 text-[15px]">
                         <span
-                          className={`mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${bulletColor} ${isRead ? 'opacity-40' : ''}`}
+                          className={`mt-2 w-1.5 h-1.5 rounded-full flex-shrink-0 ${bulletColor} ${isRead ? 'opacity-40' : ''}`}
                           aria-hidden="true"
                         />
-                        <span className={`leading-relaxed ${isRead ? 'text-slate-500' : 'text-slate-200'}`}>
+                        <span className={`leading-[1.6] ${isRead ? 'text-slate-400' : 'text-slate-200'}`}>
                           {bullet.text}
                           {bullet.timestamp_seconds !== null && videoUrl && (
                             <>{' '}
@@ -286,7 +320,7 @@ export function SoloCard({ story, source, isRead, onRead, onEngagement, onDwellS
               {needsCollapse && (
                 <button
                   onClick={() => setShowAllBullets(v => !v)}
-                  className="w-full min-h-[44px] mt-1 flex items-center justify-center gap-1.5 text-xs font-semibold text-slate-400 hover:text-slate-200 active:scale-[0.98] rounded-lg bg-slate-800/40 ring-1 ring-slate-800 transition-all"
+                  className="w-full min-h-[44px] mt-1 flex items-center justify-center gap-1.5 text-sm font-semibold text-slate-300 hover:text-slate-100 active:scale-[0.98] active:bg-slate-800 rounded-lg bg-slate-800/40 ring-1 ring-slate-800 transition-all"
                   aria-expanded={showAllBullets}
                 >
                   <svg

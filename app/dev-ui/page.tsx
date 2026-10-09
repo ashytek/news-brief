@@ -16,6 +16,12 @@ import { CategoryNav } from '@/components/CategoryNav'
 import type { StoryWithRelations, Category } from '@/lib/types'
 
 const noop = () => {}
+// Dev aid: the first card records its dwell callbacks on window.__dwell so a
+// scroll test can check the F029 tall-card case without a real phone.
+const logDwell = (e: string) => {
+  const w = window as unknown as { __dwell?: string[] }
+  ;(w.__dwell ??= []).push(e)
+}
 
 const NASTY_TITLE =
   'PAKISTAN FOOLED USA | Iran Fighter Jets Inside Pakistan #TrumpGoldPhoneBreakingNewsExclusiveGeopoliticsAnalysis2026'
@@ -45,6 +51,7 @@ const soloBase = {
     url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
     thumbnail_url: 'https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg',
     published_at: new Date(Date.now() - 1800e3).toISOString(),
+    duration_seconds: 3725,
   },
 }
 
@@ -106,7 +113,7 @@ export default function DevUiPage() {
       <main className="max-w-2xl mx-auto px-4 py-4 space-y-3 pb-24 md:pb-6">
         {/* Vantage-style divider clone */}
         <div className="flex items-center gap-3 pt-2">
-          <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-amber-300 bg-amber-500/15 ring-1 ring-amber-500/30 px-2.5 py-1 rounded-full uppercase tracking-wider shrink-0">
+          <span className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-300 bg-amber-500/15 ring-1 ring-amber-500/30 px-2.5 py-1 rounded-full uppercase tracking-wider shrink-0">
             ⚡ Vantage — All Segments
           </span>
           <div className="flex-1 h-px bg-gradient-to-r from-amber-500/40 to-transparent" />
@@ -116,6 +123,19 @@ export default function DevUiPage() {
           story={solo}
           source={{ id: 'dev-src-1', name: 'Firstpost Vantage Extended Name' } as never}
           isRead={false}
+          onRead={noop}
+          onEngagement={noop}
+          onDwellStart={() => logDwell('start')}
+          onDwellEnd={o => logDwell(`end longForm=${o.longForm}`)}
+          onMuteTopic={noop}
+        />
+
+        {/* Read state: dimmed, "Read" label, no strike-through */}
+        <SoloCard
+          story={solo}
+          source={{ id: 'dev-src-1', name: 'Firstpost Vantage Extended Name' } as never}
+          showCategory
+          isRead
           onRead={noop}
           onEngagement={noop}
           onDwellStart={noop}

@@ -160,19 +160,20 @@ export default function ArchiveClient({ userId }: Props) {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
       {/* Header */}
-      <header className="sticky top-0 z-50 bg-slate-950/90 backdrop-blur border-b border-slate-800/60">
+      <header className="sticky top-0 z-50 bg-slate-950/95 border-b border-slate-800/60">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
           <a
             href="/reader"
-            className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 flex items-center justify-center transition-colors"
+            aria-label="Back to feed"
+            className="w-11 h-11 rounded-lg bg-slate-800 hover:bg-slate-700 active:bg-slate-700 flex items-center justify-center transition-colors"
           >
-            <svg className="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg className="w-4 h-4 text-slate-400" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
             </svg>
           </a>
           <div>
             <h1 className="text-sm font-bold text-white">Archive</h1>
-            <p className="text-xs text-slate-500">{dateLabel} · {stories.length} stories</p>
+            <p className="text-xs text-slate-400">{dateLabel} · {stories.length} stories</p>
           </div>
         </div>
       </header>
@@ -186,7 +187,7 @@ export default function ArchiveClient({ userId }: Props) {
               <button
                 key={date}
                 onClick={() => setSelectedDate(date)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                className={`px-3 min-h-11 rounded-lg text-sm font-medium transition-all ${
                   selectedDate === date
                     ? 'bg-violet-600 text-white'
                     : 'bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700'
@@ -199,7 +200,7 @@ export default function ArchiveClient({ userId }: Props) {
 
           {/* Date picker */}
           <div className="flex items-center gap-2">
-            <label className="text-xs text-slate-500 flex-shrink-0">Or pick a date:</label>
+            <label className="text-xs text-slate-400 flex-shrink-0">Or pick a date:</label>
             <input
               type="date"
               value={selectedDate}
@@ -225,7 +226,7 @@ export default function ArchiveClient({ userId }: Props) {
                       ? cat === 'all'
                         ? 'bg-slate-700 text-white border-slate-600'
                         : `bg-slate-800 border-slate-700 ${CATEGORY_TEXT_COLORS[cat as keyof typeof CATEGORY_TEXT_COLORS] ?? ''}`
-                      : 'bg-transparent border-slate-800 text-slate-500 hover:text-slate-300'
+                      : 'bg-transparent border-slate-800 text-slate-400 hover:text-slate-300'
                   }`}
                 >
                   {cat === 'all' ? 'All' : CATEGORY_LABELS[cat as keyof typeof CATEGORY_LABELS]} ({count})
@@ -262,7 +263,7 @@ export default function ArchiveClient({ userId }: Props) {
           <div className="text-center py-20">
             <div className="text-4xl mb-3">📭</div>
             <p className="text-slate-400 font-medium">No stories on this date</p>
-            <p className="text-slate-600 text-sm mt-1">
+            <p className="text-slate-400 text-sm mt-1">
               Try a different date — the pipeline only stores stories from the selected lookback window
             </p>
           </div>
