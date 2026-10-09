@@ -7,6 +7,9 @@
 NewsBrief: Ash's personal news briefing app. Next.js, deployed to Netlify (`netlify.toml` in this folder). Git remote: `ashytek/news-brief`.
 This is the live project folder — a separate copy at `~/Desktop/Claude/News App/` is legacy notes only and holds no app code; don't confuse the two.
 
+## Where the frontend lives (since roadmap session 3, 9 Oct 2026)
+The four signed-in screens are under **`app/(app)/`** (`reader`, `archive`, `search`, `sources`; a route group, URLs unchanged) sharing `app/(app)/layout.tsx`. **`ReaderClient` is now a thin view**: its state and logic are in `lib/reader/*` (hooks composed by `ReaderProvider`) and its markup in `components/reader/*`. **Older sections below that cite `app/reader/ReaderClient.tsx` mean those files.** One category map: `lib/categories.ts`. Design tokens and the `t-*` type scale: `app/globals.css`. Primitives: `components/ui/`. Details: "Foundations (session 3)" near the end.
+
 ## Architecture (v2, since July 2026)
 - **Transcripts**: Apify actor `codepoetry~youtube-transcript-ai-scraper` is primary (~$0.001/video). Language codes must be bare ISO (`en`, `hi`) — the actor rejects `en-GB`/`en-US`. Local fallback chain (yt-dlp → timedtext → capped AssemblyAI) retained for resilience.
 - **Scheduling**: GitHub Actions cron, `.github/workflows/news-pipeline.yml`, 4×/day (03:17/09:17/15:17/21:17 UTC). Ash's Mac is retired from pipeline duty (launchd plist disabled, reversible).
@@ -209,6 +212,45 @@ Built 5 Oct on `catchup-phase2`; rebased and finished 9 Oct on `session2-storyli
 **Gemini spend, session 2: $0.097 against a roadmap estimate of ≈ $0.03** (approved envelope $0.10, raised to $0.12 once). Preview $0.0235; four S7 recap prompt tests $0.0249; recap backfill $0.0282 + a re-run of 3 failures $0.0118; regeneration of 2 recaps after the trim bug $0.0085. Overshoot: recap output is ~1.5× the script's estimate (the `conflicts` list), every recap is re-asked, and the prompt took four S7 rounds. **Ongoing cost estimate ≈ £0.4–0.6/month** (assignment ≈ $0.07/month, recaps ≈ $0.5–0.7/month), inside the +£1/month in the roadmap but above the spec's £0.30 for recaps.
 
 **Verify next:** the first cron run after the push (03/09/15/21:17 UTC) should log "Storyline: joined/new" lines and "Storyline recaps: N/N refreshed", no "Storylines off for this run", and `pipeline_runs` tokens should rise by the assignment and recap calls only. Watch for recaps that fail repeatedly (the log line names the problem) and for stories getting `storyline_id` while `short.lead` begins "Round-up" (should be none).
+
+## Foundations (UI audit step B): BUILT 9 October 2026 (roadmap session 3)
+Branch `session3-foundations` (5 commits on `main` `ae017ab`). Frontend only: **Gemini $0**, pipeline untouched. Built on Sonnet, no subagents. **Deploy status: see the last line of this section.** Evidence images: `~/Desktop/Claude/News App/ui-audit-2026-10-03/session3-evidence/`.
+
+**What was built**
+- **Tokens** (`app/globals.css`): ds.css ported into Tailwind `@theme`, dark only. Names are deliberately *not* Tailwind's own (overriding `--radius-md` would restyle every existing `rounded-md`): `bg-canvas`, `bg-surface-1/2/3`, `border-hairline(-strong)`, `text-fg-1/2/3`, `accent` / `accent-fill` / `accent-soft` / `on-accent`, `text-cat-prophetic|israel|india|tech`, `ok|warn|bad`, `rounded-control` (8) / `rounded-panel` (12), `px-gutter`, `h-topbar`, `pb-navbar`, `shadow-snackbar`. Type scale as `@utility`: `t-display t-title t-lead t-head t-standfirst t-body t-h3 t-label t-meta t-kicker t-overline`. **The page still paints the old slate background**; session 4 switches it to `canvas` and deletes the `legacy` classes.
+- **Newsreader** (`app/layout.tsx`): next/font, `opsz` axis, `font-serif`; **`preload: false`** (nothing uses it yet, so no font download on any page). Flip it on when cards adopt `font-serif` in session 4.
+- **One category map** (`lib/categories.ts`): label, short label (`India` for the bottom nav), token `mark`, and a `legacy` block with the exact old classes so no pixel moved. It replaced seven maps in `constants.ts` and copies in ReaderClient, CategoryNav, Search, Sources, dev-ui. **Two visible label changes:** Search's filter said `India/Global` (now `India & Global`); dev-ui said `Prophetic Word`.
+- **Primitives** (`components/ui/`, all on tokens + lucide): `Button`/`ButtonLink`, `IconButton` (label required), `Chip`/`ChipLink`, `CategoryMark`, `StoryRow` (the compact row; whole row is the hit area when `onToggle` is given), `Sheet` (native `<dialog>`: focus trap, Esc, scroll lock), `SnackbarProvider`/`useSnackbar` (live region, Undo, action closes the bar *before* running its callback), `StateMessage`. **Not used by any live screen yet.** Gallery: **`/dev-ui?view=primitives`** (dev only; the proxy's exact-`/dev-ui` bypass is untouched). Shared card formatters moved to `lib/format.ts`.
+- **ReaderClient split.** `lib/reader/`: `useActiveTab`, `useReadState`, `useMutedTopics`, `useRankingWeights`, `useFeedMeta`, `usePipelineHealth`, `useFeedContent`, `usePipelineTrigger` (polling moved verbatim), `useEngagement` + `useDwellTracking`, `useSinceVisit`, `useFeedView` (mute/active filters, Unread/All, IGR+Vantage pinned mix, merged feed, since-you-left counts), `usePullToRefresh`, composed by `ReaderProvider`. `components/reader/`: `AppHeader`, `FeedToolbar`, `SinceVisitNotice`, `FeedList`, `FeedStates`, `ScrollTopButton`. Markup is moved, not rewritten; ranking, dwell thresholds, polling and queries are unchanged.
+- **next/link + shared layout.** `app/(app)/layout.tsx` mounts `AppProviders` (Snackbar, nav tracker, `ReaderProvider`), so the loaded feed survives a trip to Search/Archive/Sources. `BackLink` (`components/nav/AppNav.tsx`) makes the three back arrows a real `router.back()` when the previous screen was the Reader. `getUser()` (cached, `lib/supabase/server.ts`) is shared by layout and pages. **`prefetch={false}` on every Link**: the old plain `<a>`s made no request until clicked, and prefetching dynamic pages would add serverless calls on Netlify.
+
+**Behaviour decisions (read before touching `ReaderProvider`)**
+- The provider is **inert until the Reader first mounts** (`activate()`), so opening `/archive` cold starts no feed queries (verified: `other-pages` request log identical to before).
+- **Coming back** to the Reader: the feed shows instantly; `read_items` is re-fetched (other screens write read marks); stories are revalidated **in the background only if older than 10 min** (`FEED_STALE_MS`), never with a skeleton.
+- **Leaving the Reader drops dwell reports.** With the Reader mounted across navigation, tapping Search tore the cards down and `useDwellVisibility`'s teardown reported them: `dwell_short` (topic −0.02) for anything on screen < 3 s, and after 40 s a `dwell_long` + mark-read. A full page load never did. Caught by the harness (an unexplained extra `POST /engagement`), fixed with `viewActive` (a **layout-effect** flag whose cleanup runs before the cards' passive teardown). Tab switches *inside* the Reader still report, as before.
+- Unread/All and the "since you left" dismissal now persist while you move between screens (state lives in the provider); a full reload resets them as before.
+- A harmless empty `role="status"` live region (the snackbar's) now exists on every signed-in page.
+
+**Evidence (production builds, read-only harness)**
+- Baseline = `main` `ae017ab`. **Noise floor first** (dev build): two baseline runs were identical in DOM, requests and console errors, screenshots ≤ 0.019 % apart (relative-time text ticking).
+- 16 scenarios, same script on both builds: **12 identical** in DOM, card order, layout offsets, request log, write bodies and console errors (today/tabs/more-menu/mark-actions incl. like, mark-one, mute, mark-all/dwell-held/since-you-left/error-state/offline-banner/pull-to-refresh/refresh-button/trigger-flow/trigger-errors). The rest are the Search label change and the navigation scenarios (the new build keeps one document alive, so its request log accumulates).
+- **The intended change, measured** (`back-slow`, stories delayed 2.5 s): in-app back arrow, before: no content for the first 600 ms, back at the top; after: feed present immediately, scroll restored within 80 px. Browser Back already worked in headless Chrome (bfcache) in both; a phone PWA may not get bfcache.
+- Resume logic: quick return → 0 stories requests, 1 read-marks refresh; return after a simulated 11 min → 1 background stories request, **no skeleton at any of ~70 samples** (25 articles throughout).
+- Pixels vs a baseline captured in the same hour: every screenshot ≤ 0.006 % except `back-slow` (the intended change). Dev (strict mode) run: identical to the old dev baseline apart from live Topics-count drift.
+- Gates: `tsc` clean; `npm run build` clean; **lint 23 → 12 problems (9 → 6 errors, 14 → 6 warnings)**, nothing flagged in any new file. Primitives: sheet opens modal with focus inside, Esc and backdrop close it, scroll lock restored; snackbar Undo works and times out; no overflow at 360 px.
+
+**Traps and lessons**
+- **The React-compiler lint bails out of a component after its first error**, so the old `ReaderClient` showed 3 errors while hiding a handful of `set-state-in-effect` ones. Split into hooks, they surface; each is suppressed with a reason beside it (post-hydration `localStorage` reads, fetch-on-change effects).
+- `usePipelineTrigger.pollTriggerStatus` re-schedules itself, so a poll keeps the closure it was created with. **Existing quirk, not fixed:** switch tabs *during* a manual run and the completion refresh reloads the tab you were on when you pressed Run now. Moved verbatim, per "polling unchanged".
+- Dev mode double-invokes effects, so compare **production builds** for request counts.
+- A comparison tool that says "identical" when every scenario *crashed the same way* is worse than none: `behaviour-diff.mjs` now fails on any scenario error.
+
+**How to re-run the comparison (harness: `~/Desktop/Claude/News App/ui-audit-2026-10-03/harness/`, see its README)**
+`make-copy.sh <repo> <dest>` (cp -Rc first time, rsync after) → `npm run build` in the copy → `next start -p 3005|3006` (`.claude/launch.json`: `s3-base-prod`, `s3-new-prod`; proxy `ui-harness-proxy` on 54321) → `behaviour-check.mjs --base http://localhost:PORT --out DIR [--new]` on both → `behaviour-diff.mjs A B` and `pixdiff.py A/shots B/shots`. Run the baseline twice first to learn the noise.
+
+**Noticed, not fixed (out of scope):** the poll-closure quirk above; the pre-existing hydration warning on `/dev-ui` (module-scope `Date.now()` in the fixture); `ArchiveClient` and `SearchClient` still carry their own copies of the card list/like logic (session 4/5); the 12 remaining lint problems.
+
+**Deploy status:** (updated below once Ash approves and the deploy is verified)
 
 ## Rules for this folder
 - Read the relevant component only before changing code — not the whole repo. Use a subagent for repo-wide reviews.
