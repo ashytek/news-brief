@@ -1,6 +1,6 @@
 # SPEC — Catch-up view, storylines and short cards
 **Written:** 3 October 2026, from an interview with Ash (two interactive mockups using real Flydubai data).
-**Status:** approved design. **Phase 1 (short cards) built 4 Oct 2026** on branch `catchup-phase1` — see CLAUDE.md "Catch-up build — phase 1" for the step order, evidence and prompt lessons. **Phase 2 (storylines pipeline) built 5 Oct 2026** on branch `catchup-phase2`: see CLAUDE.md "Catch-up build — phase 2" for the step order, the deliberate deviations from this spec (RPC gets `p_exclude_id`; the backfill preview shortlists in Python) and the evidence. Phases 3–4 not started; build them in a fresh session: "Read CLAUDE.md and SPEC.md, then build phase 3."
+**Status:** approved design. **Phase 1 (short cards) shipped 9 Oct 2026**; **phase 2 (storylines pipeline) shipped 9 Oct 2026** (roadmap sessions 1 and 2): see CLAUDE.md "Catch-up build — phase 1" and "phase 2" for the evidence, the deliberate deviations from this spec (RPC gets `p_exclude_id`; the backfill preview shortlists in Python; round-ups are excluded deterministically; recaps carry an optional `differ` list) and the prompt lessons. Phases 3–4 not started; build them in a fresh session: "Read CLAUDE.md and SPEC.md, then build phase 3."
 
 ## Problem
 When Ash skips a day or more, 100–160 stories pile up (160 in the 5 days to 3 Oct). Cards are long (overview + 5 timestamped sections), and one event arrives as many near-duplicate cards: the Flydubai pilot attack produced **15+ reports from IGR and Vantage in 3 days** (three were near-identical interviews with Israel's ambassador). Clearing the backlog is impractical.
@@ -28,7 +28,7 @@ When Ash skips a day or more, 100–160 stories pile up (160 in the 5 days to 3 
 
 ## Data model (new migration in `supabase/migrations/`, Ash runs it)
 - `stories.short jsonb null` — `{ "lead": text, "key_points": [text, …] }`.
-- `storylines` — `id uuid pk`, `category text`, `title text`, `recap jsonb` (`{ "so_far": [{ "date": "2026-09-30", "text": … }], "latest": { "date": …, "text": … } }`), `story_count int`, `recap_story_count int` (count the recap was built from), `first_report_at timestamptz`, `last_report_at timestamptz`, `recap_updated_at timestamptz`, `created_at`. RLS: authenticated read; writes via service role only (match `rls_core_tables.sql`).
+- `storylines` — `id uuid pk`, `category text`, `title text`, `recap jsonb` (`{ "so_far": [{ "date": "2026-09-30", "text": … }], "latest": { "date": …, "text": … }, "differ": ["people on board: 174 vs 180"] }`; `differ` is optional: disputed figures the day entries had no room for), `story_count int`, `recap_story_count int` (count the recap was built from), `first_report_at timestamptz`, `last_report_at timestamptz`, `recap_updated_at timestamptz`, `created_at`. RLS: authenticated read; writes via service role only (match `rls_core_tables.sql`).
 - `stories.storyline_id uuid null references storylines(id)` + index. A story is in at most one storyline.
 - RPC `match_recent_stories(query_embedding vector(3072), p_category text, p_since timestamptz, p_min_sim float, p_limit int)` → `id, storyline_id, headline, similarity`.
 - **Don't** reuse the old `clusters` table, `cluster_id` columns, `ClusteredCard`, or any removed clustering code (removed July 2026 for good reasons — see CLAUDE.md "Feature 3").
