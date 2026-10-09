@@ -5,7 +5,8 @@ import { createClient } from '@/lib/supabase/client'
 import type { Source } from '@/lib/types'
 import type { StoryWithRelations } from '@/lib/types'
 import { SoloCard } from './SoloCard'
-import { CATEGORY_LABELS, STORY_SELECT } from '@/lib/constants'
+import { STORY_SELECT } from '@/lib/constants'
+import { categoryLabel } from '@/lib/categories'
 
 interface Props {
   userId: string
@@ -241,7 +242,7 @@ export function TopicsPanel({ userId, readIds, onMarkRead, onEngagement }: Props
               {story.matched_topics && story.matched_topics.length > 0 && (
                 <div className="flex flex-wrap gap-1 mb-1 px-1">
                   <span className="text-xs text-slate-400">
-                    {CATEGORY_LABELS[story.category] ?? story.category} ·
+                    {categoryLabel(story.category)} ·
                   </span>
                   {story.matched_topics.map(t => (
                     <span key={t} className="text-xs bg-rose-500/15 text-rose-400 border border-rose-500/20 px-2 py-0.5 rounded-full">

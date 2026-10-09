@@ -14,7 +14,83 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  /* Headlines (Newsreader 600). Loaded by app/layout.tsx; the redesign puts it on cards. */
+  --font-serif: var(--font-newsreader), "Iowan Old Style", Georgia, serif;
 }
+
+/* ── Design tokens (UI audit, roadmap session 3) ───────────────────────────
+   Ported 1:1 from ui-audit-2026-10-03/mockups/ds.css. DARK ONLY (Ash, 9 Oct
+   2026): the light theme was dropped, so there is one set of values and no
+   [data-theme] switch.
+
+   Names are deliberately NOT Tailwind's own (no --radius-md, --color-red-*):
+   overriding a default would silently restyle every existing `rounded-md` /
+   `text-red-400` in the app. So:  ds.css --bg       -> bg-canvas
+                                   --surface-1/2/3   -> bg-surface-1/2/3
+                                   --hairline(-strong) -> border-hairline(-strong)
+                                   --text-1/2/3      -> text-fg-1/2/3
+                                   --accent(-fill, -soft), --on-accent -> *-accent*
+                                   --cat-*           -> text-cat-* / bg-cat-*
+                                   --ok/--warn/--bad -> text-ok / text-warn / text-bad
+                                   --r-sm/--r-md     -> rounded-control / rounded-panel
+                                   --gutter/--topbar-h/--navbar-h -> *-gutter / *-topbar / *-navbar
+   The page itself still paints the old slate background; the redesign
+   (session 4) switches it to `canvas` and retires the legacy classes. */
+@theme {
+  /* Surfaces: tonal, never pure black */
+  --color-canvas: #0e0f12;
+  --color-surface-1: #17181c;
+  --color-surface-2: #1f2025;
+  --color-surface-3: #2a2b31;
+  --color-hairline: rgb(255 255 255 / 0.08);
+  --color-hairline-strong: rgb(255 255 255 / 0.14);
+
+  /* Text: three tiers, all >= 6:1 on canvas */
+  --color-fg-1: #ececf0;
+  --color-fg-2: #b6b7c0;
+  --color-fg-3: #9596a1;
+
+  /* One interaction accent (brand violet) */
+  --color-accent: #a78bfa;
+  --color-accent-fill: #a78bfa;
+  --color-on-accent: #160f2b;
+  --color-accent-soft: rgb(167 139 250 / 0.16);
+
+  /* Category marks: 8 px dots and kicker text only, never fills */
+  --color-cat-prophetic: #e58a9e;
+  --color-cat-israel: #7db4f0;
+  --color-cat-india: #e0b15a;
+  --color-cat-tech: #5fc3b0;
+
+  /* Status: always paired with text or an icon */
+  --color-ok: #5cc98a;
+  --color-warn: #e6b04c;
+  --color-bad: #f2726b;
+
+  /* Shape + layout */
+  --radius-control: 8px;
+  --radius-panel: 12px;
+  --spacing-gutter: 16px;
+  --spacing-topbar: 56px;
+  --spacing-navbar: 64px;
+  --shadow-snackbar: 0 6px 24px rgb(0 0 0 / 0.35);
+  --ease-emphasized: cubic-bezier(0.05, 0.7, 0.1, 1);
+}
+
+/* ── Type scale (ds.css .t-*) ─────────────────────────────────────────────
+   Serif for headlines, Geist for everything else. Sizes are px on purpose:
+   they are the audited values (12 px floor, 16 px body). */
+@utility t-display   { @apply font-serif; font-size: 30px; line-height: 36px; font-weight: 600; letter-spacing: -0.01em; text-wrap: balance; }
+@utility t-title     { @apply font-serif; font-size: 28px; line-height: 34px; font-weight: 600; letter-spacing: -0.01em; text-wrap: balance; }
+@utility t-lead      { @apply font-serif; font-size: 23px; line-height: 29px; font-weight: 600; text-wrap: balance; }
+@utility t-head      { @apply font-serif; font-size: 18px; line-height: 23.5px; font-weight: 600; text-wrap: pretty; }
+@utility t-standfirst { @apply font-sans text-fg-2; font-size: 17px; line-height: 27px; font-weight: 400; }
+@utility t-body      { @apply font-sans; font-size: 16px; line-height: 26px; font-weight: 400; }
+@utility t-h3        { @apply font-sans; font-size: 16px; line-height: 22px; font-weight: 600; }
+@utility t-label     { @apply font-sans; font-size: 14px; line-height: 20px; font-weight: 500; }
+@utility t-meta      { @apply font-sans text-fg-3; font-size: 13px; line-height: 18px; font-weight: 400; font-variant-numeric: tabular-nums; }
+@utility t-kicker    { @apply font-sans; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.02em; }
+@utility t-overline  { @apply font-sans text-fg-3; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
 
 /* App-wide background — subtle radial that adds depth without contrast loss.
    Two soft glows (violet top-right, blue bottom-left) so the dark surface

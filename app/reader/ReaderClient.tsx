@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback, useRef, useMemo, Fragment } from 'react'
 import { isIGRSource, interleaveLead } from '@/lib/ranking'
 import { createClient } from '@/lib/supabase/client'
-import type { Category, Source } from '@/lib/types'
+import type { Source } from '@/lib/types'
+import { CATEGORIES } from '@/lib/categories'
 import type { StoryWithRelations } from '@/lib/types'
 import { SoloCard } from '@/components/SoloCard'
 import { CategoryNav, type ActiveTab } from '@/components/CategoryNav'
@@ -13,13 +14,6 @@ import { SkeletonCard } from '@/components/SkeletonCard'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { InstallPrompt } from '@/components/InstallPrompt'
 import { STORY_SELECT, DWELL_SHORT_SECONDS, DWELL_LONG_SECONDS } from '@/lib/constants'
-
-const CATEGORIES: { key: Category; label: string; color: string }[] = [
-  { key: 'prophetic',    label: 'Prophetic',      color: 'violet' },
-  { key: 'israel',       label: 'Israel',          color: 'blue'   },
-  { key: 'india_global', label: 'India & Global',  color: 'amber'  },
-  { key: 'tech_ai',      label: 'Tech & AI',       color: 'emerald'},
-]
 
 function formatSince(t: number): string {
   const mins = Math.round((Date.now() - t) / 60000)

@@ -1,14 +1,13 @@
 'use client'
 
 import type { Category } from '@/lib/types'
+import type { CategoryMeta } from '@/lib/categories'
 
-const COLOR_MAP: Record<string, { text: string; bg: string; ring: string; border: string }> = {
-  violet:  { text: 'text-violet-200',  bg: 'bg-violet-500/20',  ring: 'ring-violet-500/40',  border: 'border-violet-500' },
-  blue:    { text: 'text-blue-200',    bg: 'bg-blue-500/20',    ring: 'ring-blue-500/40',    border: 'border-blue-500' },
-  amber:   { text: 'text-amber-200',   bg: 'bg-amber-500/20',   ring: 'ring-amber-500/40',   border: 'border-amber-500' },
-  emerald: { text: 'text-emerald-200', bg: 'bg-emerald-500/20', ring: 'ring-emerald-500/40', border: 'border-emerald-500' },
-  rose:    { text: 'text-rose-200',    bg: 'bg-rose-500/20',    ring: 'ring-rose-500/40',    border: 'border-rose-500' },
-}
+// Tab palettes. Category tabs take theirs from the category map; Today and
+// Topics are not categories, so theirs live here.
+interface Palette { text: string; bg: string; ring: string; border: string }
+const TODAY_PALETTE: Palette = { text: 'text-white', bg: 'bg-slate-700/40', ring: 'ring-slate-500/40', border: 'border-slate-500' }
+const TOPICS_PALETTE: Palette = { text: 'text-rose-200', bg: 'bg-rose-500/20', ring: 'ring-rose-500/40', border: 'border-rose-500' }
 
 const TAB_ICONS: Record<string, string> = {
   today:       'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6',
@@ -19,38 +18,26 @@ const TAB_ICONS: Record<string, string> = {
   topics:      'M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z',
 }
 
-const SHORT_LABELS: Record<string, string> = {
-  today:       'Today',
-  prophetic:   'Prophetic',
-  israel:      'Israel',
-  india_global:'India',
-  tech_ai:     'Tech',
-  topics:      'Topics',
-}
-
 export type ActiveTab = Category | 'topics' | 'today'
 
 interface Props {
-  categories: { key: Category; label: string; color: string }[]
+  categories: readonly CategoryMeta[]
   active: ActiveTab
   onChange: (c: ActiveTab) => void
   topicCount?: number
   todayUnread?: number
 }
 
-function NavButton({ id, label, icon, isActive, color, badge, onClick }: {
+function NavButton({ id, label, shortLabel, icon, isActive, palette, badge, onClick }: {
   id: string
   label: string
+  shortLabel: string
   icon: string
   isActive: boolean
-  color: keyof typeof COLOR_MAP | 'gray'
+  palette: Palette
   badge?: number
   onClick: () => void
 }) {
-  const palette = color === 'gray'
-    ? { text: 'text-white', bg: 'bg-slate-700/40', ring: 'ring-slate-500/40', border: 'border-slate-500' }
-    : COLOR_MAP[color]
-
   return (
     <button
       onClick={onClick}
@@ -64,7 +51,7 @@ function NavButton({ id, label, icon, isActive, color, badge, onClick }: {
         <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={isActive ? 2 : 1.6} aria-hidden="true">
           <path strokeLinecap="round" strokeLinejoin="round" d={icon} />
         </svg>
-        <span className="text-xs font-semibold leading-none">{SHORT_LABELS[id] ?? label}</span>
+        <span className="text-xs font-semibold leading-none">{shortLabel}</span>
       </div>
       {badge != null && badge > 0 && (
         <span className="absolute top-1 right-[calc(50%-26px)] min-w-5 h-5 text-xs font-bold bg-rose-500 text-white rounded-full flex items-center justify-center px-1 ring-2 ring-slate-950">
@@ -77,9 +64,9 @@ function NavButton({ id, label, icon, isActive, color, badge, onClick }: {
 
 export function CategoryNav({ categories, active, onChange, topicCount, todayUnread }: Props) {
   const allTabs = [
-    { id: 'today' as ActiveTab, label: 'Today', color: 'gray' as const, badge: todayUnread },
-    ...categories.map(c => ({ id: c.key as ActiveTab, label: c.label, color: c.color as keyof typeof COLOR_MAP, badge: undefined })),
-    { id: 'topics' as ActiveTab, label: 'Topics', color: 'rose' as const, badge: topicCount },
+    { id: 'today' as ActiveTab, label: 'Today', shortLabel: 'Today', palette: TODAY_PALETTE, badge: todayUnread },
+    ...categories.map(c => ({ id: c.key as ActiveTab, label: c.label, shortLabel: c.shortLabel, palette: c.legacy.tab, badge: undefined })),
+    { id: 'topics' as ActiveTab, label: 'Topics', shortLabel: 'Topics', palette: TOPICS_PALETTE, badge: topicCount },
   ]
 
   return (
@@ -97,9 +84,10 @@ export function CategoryNav({ categories, active, onChange, topicCount, todayUnr
             key={tab.id}
             id={tab.id}
             label={tab.label}
+            shortLabel={tab.shortLabel}
             icon={TAB_ICONS[tab.id] ?? TAB_ICONS.today}
             isActive={active === tab.id}
-            color={tab.color}
+            palette={tab.palette}
             badge={tab.badge}
             onClick={() => onChange(tab.id)}
           />
@@ -123,7 +111,7 @@ export function CategoryNav({ categories, active, onChange, topicCount, todayUnr
 
         {categories.map(cat => {
           const isActive = cat.key === active
-          const palette = COLOR_MAP[cat.color] || COLOR_MAP.violet
+          const palette = cat.legacy.tab
           return (
             <button
               key={cat.key}

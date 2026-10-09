@@ -6,14 +6,8 @@ import type { StoryWithRelations } from '@/lib/types'
 import { TsLink } from './TsLink'
 import { EngagementBar } from './EngagementBar'
 import { useDwellVisibility } from '@/lib/useDwellVisibility'
-import {
-  formatTime,
-  formatDuration,
-  CATEGORY_LABELS,
-  CATEGORY_ACCENT_BAR,
-  CATEGORY_GLOW_CLASS,
-  CATEGORY_BULLET_COLOR,
-} from '@/lib/constants'
+import { formatTime, formatDuration } from '@/lib/constants'
+import { getCategory } from '@/lib/categories'
 
 interface Props {
   story: StoryWithRelations
@@ -115,9 +109,8 @@ export function SoloCard({ story, source, isRead, onRead, onEngagement, onDwellS
     () => onDwellEnd({ longForm: !latest.current.hasShort || expandedSeen.current }),
   )
 
-  const accentBar = CATEGORY_ACCENT_BAR[story.category]
-  const glow = CATEGORY_GLOW_CLASS[story.category]
-  const bulletColor = CATEGORY_BULLET_COLOR[story.category]
+  const category = getCategory(story.category)
+  const { accentBar, glow, bullet: bulletColor } = category.legacy
 
   return (
     <article
@@ -181,7 +174,7 @@ export function SoloCard({ story, source, isRead, onRead, onEngagement, onDwellS
           {showCategory && (
             <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-300">
               <span className={`w-2 h-2 rounded-full ${bulletColor}`} aria-hidden="true" />
-              {CATEGORY_LABELS[story.category]}
+              {category.label}
             </span>
           )}
           <span className="text-xs font-semibold text-slate-200 bg-slate-800/80 ring-1 ring-slate-700 px-2 py-0.5 rounded-full">

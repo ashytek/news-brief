@@ -3,20 +3,8 @@
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import type { Source } from '@/lib/types'
+import { CATEGORIES, categoryMeta } from '@/lib/categories'
 
-const CATEGORY_LABELS: Record<string, string> = {
-  prophetic:    'Prophetic',
-  israel:       'Israel',
-  india_global: 'India & Global',
-  tech_ai:      'Tech & AI',
-}
-
-const CATEGORY_COLORS: Record<string, string> = {
-  prophetic:    'text-violet-400 bg-violet-500/10 border-violet-500/20',
-  israel:       'text-blue-400 bg-blue-500/10 border-blue-500/20',
-  india_global: 'text-amber-400 bg-amber-500/10 border-amber-500/20',
-  tech_ai:      'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
-}
 
 const LOOKBACK_OPTIONS = [
   { label: '24h', value: 24 },
@@ -172,8 +160,8 @@ function AddSourceForm({ onAdded }: { onAdded: () => void }) {
               onChange={e => setCategory(e.target.value)}
               className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-violet-500 focus:border-violet-500"
             >
-              {Object.entries(CATEGORY_LABELS).map(([k, v]) => (
-                <option key={k} value={k}>{v}</option>
+              {CATEGORIES.map(c => (
+                <option key={c.key} value={c.key}>{c.label}</option>
               ))}
             </select>
           </div>
@@ -237,7 +225,7 @@ export default function SourcesClient({ sources: initialSources, recentRuns }: P
     if (data) setSources(data as Source[])
   }
 
-  const byCategory = Object.entries(CATEGORY_LABELS).map(([key, label]) => ({
+  const byCategory = CATEGORIES.map(({ key, label }) => ({
     key,
     label,
     sources: sources.filter(s => s.category === key),
@@ -327,7 +315,7 @@ export default function SourcesClient({ sources: initialSources, recentRuns }: P
                       {!source.last_success_at && ' · Not yet checked'}
                     </p>
                   </div>
-                  <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${CATEGORY_COLORS[cat.key]}`}>
+                  <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${categoryMeta(cat.key)?.legacy.badge}`}>
                     {source.consecutive_failures > 0 ? `${source.consecutive_failures} fail${source.consecutive_failures > 1 ? 's' : ''}` : 'OK'}
                   </span>
                 </div>

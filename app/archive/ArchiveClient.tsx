@@ -4,11 +4,8 @@ import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import type { StoryWithRelations, Source } from '@/lib/types'
 import { SoloCard } from '@/components/SoloCard'
-import {
-  CATEGORY_LABELS,
-  CATEGORY_TEXT_COLORS,
-  STORY_SELECT,
-} from '@/lib/constants'
+import { STORY_SELECT } from '@/lib/constants'
+import { CATEGORIES, categoryMeta } from '@/lib/categories'
 
 // Local-time date math, not UTC — toISOString()/'Z' boundaries bucket by UTC
 // days, which during BST (UTC+1) misclassifies stories published 00:00-01:00
@@ -137,12 +134,12 @@ export default function ArchiveClient({ userId }: Props) {
   ]
 
   // Group by category
-  const categories = ['all', 'prophetic', 'israel', 'india_global', 'tech_ai']
+  const categories = ['all', ...CATEGORIES.map(c => c.key)]
   const filtered = filterCategory === 'all'
     ? stories
     : stories.filter(s => s.category === filterCategory)
 
-  const grouped = Object.entries(CATEGORY_LABELS).reduce<Record<string, StoryWithRelations[]>>((acc, [key]) => {
+  const grouped = CATEGORIES.reduce<Record<string, StoryWithRelations[]>>((acc, { key }) => {
     acc[key] = stories.filter(s => s.category === key)
     return acc
   }, {})
@@ -225,11 +222,11 @@ export default function ArchiveClient({ userId }: Props) {
                     filterCategory === cat
                       ? cat === 'all'
                         ? 'bg-slate-700 text-white border-slate-600'
-                        : `bg-slate-800 border-slate-700 ${CATEGORY_TEXT_COLORS[cat as keyof typeof CATEGORY_TEXT_COLORS] ?? ''}`
+                        : `bg-slate-800 border-slate-700 ${categoryMeta(cat)?.legacy.text ?? ''}`
                       : 'bg-transparent border-slate-800 text-slate-400 hover:text-slate-300'
                   }`}
                 >
-                  {cat === 'all' ? 'All' : CATEGORY_LABELS[cat as keyof typeof CATEGORY_LABELS]} ({count})
+                  {cat === 'all' ? 'All' : categoryMeta(cat)?.label} ({count})
                 </button>
               )
             })}

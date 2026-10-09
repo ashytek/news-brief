@@ -2,18 +2,14 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import type { StoryWithRelations, Source } from '@/lib/types'
+import type { StoryWithRelations, Source, Category } from '@/lib/types'
 import { SoloCard } from '@/components/SoloCard'
-import {
-  CATEGORY_LABELS,
-  CATEGORY_TEXT_COLORS,
-  CATEGORY_PILL_COLORS,
-} from '@/lib/constants'
+import { CATEGORIES, categoryMeta } from '@/lib/categories'
 
 const DEBOUNCE_MS = 450
 
 type DateFilter = '7d' | '30d' | 'all'
-type CategoryFilter = 'all' | keyof typeof CATEGORY_LABELS
+type CategoryFilter = 'all' | Category
 
 const DATE_OPTIONS: { label: string; value: DateFilter }[] = [
   { label: '7 days',  value: '7d'  },
@@ -22,11 +18,8 @@ const DATE_OPTIONS: { label: string; value: DateFilter }[] = [
 ]
 
 const CATEGORY_OPTIONS: { label: string; value: CategoryFilter }[] = [
-  { label: 'All',          value: 'all'          },
-  { label: 'Prophetic',    value: 'prophetic'    },
-  { label: 'Israel',       value: 'israel'       },
-  { label: 'India/Global', value: 'india_global' },
-  { label: 'Tech & AI',    value: 'tech_ai'      },
+  { label: 'All', value: 'all' },
+  ...CATEGORIES.map(c => ({ label: c.label, value: c.key })),
 ]
 
 interface SearchResult {
@@ -243,7 +236,7 @@ export default function SearchClient({ userId }: { userId: string }) {
                   category === opt.value
                     ? opt.value === 'all'
                       ? 'bg-slate-600 text-white'
-                      : `${CATEGORY_PILL_COLORS[opt.value as keyof typeof CATEGORY_PILL_COLORS]} border border-current/20`
+                      : `${categoryMeta(opt.value)?.legacy.pill} border border-current/20`
                     : 'bg-slate-800/60 text-slate-400 hover:text-white'
                 }`}
               >
@@ -328,12 +321,12 @@ export default function SearchClient({ userId }: { userId: string }) {
 
             {results.map(story => {
               const source = sources[story.source_id]
-              const catKey = story.category as keyof typeof CATEGORY_TEXT_COLORS
+              const cat = categoryMeta(story.category)
               return (
                 <div key={story.id}>
                   {/* Category badge above card */}
-                  <p className={`text-xs font-medium mb-1 ${CATEGORY_TEXT_COLORS[catKey] ?? 'text-slate-400'}`}>
-                    {CATEGORY_LABELS[catKey] ?? story.category}
+                  <p className={`text-xs font-medium mb-1 ${cat?.legacy.text ?? 'text-slate-400'}`}>
+                    {cat?.label ?? story.category}
                   </p>
                   <SoloCard
                     story={story}

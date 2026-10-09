@@ -13,6 +13,7 @@
 
 import { SoloCard } from '@/components/SoloCard'
 import { CategoryNav } from '@/components/CategoryNav'
+import { CATEGORIES } from '@/lib/categories'
 import type { StoryWithRelations, Category } from '@/lib/types'
 
 const noop = () => {}
@@ -73,13 +74,6 @@ const solo = {
 // The same story before it is backfilled: falls back to the long summary.
 const soloNoShort = { ...soloBase, id: 'dev-solo-2', short: null } as unknown as StoryWithRelations
 
-const CATS = [
-  { key: 'prophetic' as Category, label: 'Prophetic Word', color: 'violet' },
-  { key: 'israel' as Category, label: 'Israel', color: 'blue' },
-  { key: 'india_global' as Category, label: 'India & Global', color: 'amber' },
-  { key: 'tech_ai' as Category, label: 'Tech & AI', color: 'emerald' },
-]
-
 export default function DevUiPage() {
   return (
     <div className="min-h-screen text-slate-100">
@@ -107,7 +101,7 @@ export default function DevUiPage() {
             ))}
           </div>
         </div>
-        <CategoryNav categories={CATS} active="india_global" onChange={noop} topicCount={12} todayUnread={148} />
+        <CategoryNav categories={CATEGORIES} active="india_global" onChange={noop} topicCount={12} todayUnread={148} />
       </header>
 
       <main className="max-w-2xl mx-auto px-4 py-4 space-y-3 pb-24 md:pb-6">
