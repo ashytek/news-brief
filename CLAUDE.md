@@ -213,8 +213,8 @@ Built 5 Oct on `catchup-phase2`; rebased and finished 9 Oct on `session2-storyli
 
 **Verify next:** the first cron run after the push (03/09/15/21:17 UTC) should log "Storyline: joined/new" lines and "Storyline recaps: N/N refreshed", no "Storylines off for this run", and `pipeline_runs` tokens should rise by the assignment and recap calls only. Watch for recaps that fail repeatedly (the log line names the problem) and for stories getting `storyline_id` while `short.lead` begins "Round-up" (should be none).
 
-## Foundations (UI audit step B): BUILT 9 October 2026 (roadmap session 3)
-Branch `session3-foundations` (5 commits on `main` `ae017ab`). Frontend only: **Gemini $0**, pipeline untouched. Built on Sonnet, no subagents. **Deploy status: see the last line of this section.** Evidence images: `~/Desktop/Claude/News App/ui-audit-2026-10-03/session3-evidence/`.
+## Foundations (UI audit step B): SHIPPED 9 October 2026 (roadmap session 3)
+Built on branch `session3-foundations` (5 commits on `main` `ae017ab`, since merged). Frontend only: **Gemini $0**, pipeline untouched. Built on Sonnet, no subagents. Evidence images: `~/Desktop/Claude/News App/ui-audit-2026-10-03/session3-evidence/`.
 
 **What was built**
 - **Tokens** (`app/globals.css`): ds.css ported into Tailwind `@theme`, dark only. Names are deliberately *not* Tailwind's own (overriding `--radius-md` would restyle every existing `rounded-md`): `bg-canvas`, `bg-surface-1/2/3`, `border-hairline(-strong)`, `text-fg-1/2/3`, `accent` / `accent-fill` / `accent-soft` / `on-accent`, `text-cat-prophetic|israel|india|tech`, `ok|warn|bad`, `rounded-control` (8) / `rounded-panel` (12), `px-gutter`, `h-topbar`, `pb-navbar`, `shadow-snackbar`. Type scale as `@utility`: `t-display t-title t-lead t-head t-standfirst t-body t-h3 t-label t-meta t-kicker t-overline`. **The page still paints the old slate background**; session 4 switches it to `canvas` and deletes the `legacy` classes.
@@ -250,7 +250,7 @@ Branch `session3-foundations` (5 commits on `main` `ae017ab`). Frontend only: **
 
 **Noticed, not fixed (out of scope):** the poll-closure quirk above; the pre-existing hydration warning on `/dev-ui` (module-scope `Date.now()` in the fixture); `ArchiveClient` and `SearchClient` still carry their own copies of the card list/like logic (session 4/5); the 12 remaining lint problems.
 
-**Deploy status:** (updated below once Ash approves and the deploy is verified)
+**Deploy status: SHIPPED 9 Oct 2026.** Fast-forwarded into `main` (`ab4eadb`), pushed, `npm run deploy` from `main` (Netlify deploy `6ac8d7e226fa2e7bc66c4d1a`, https://stellar-cascaron-34922a.netlify.app). **Verified live, signed in (read-only: a `fetch` wrapper blocked every non-GET to Supabase, 0 writes attempted):** 12 Today cards, header and tabs intact; soft navigation to Search (same document) and back through the in-app arrow returned all 12 cards immediately with **scroll restored to exactly 1,200 px, no skeleton**; Archive 27 cards with category chips; Sources renders; Search filter reads `India & Global`; India tab 26 cards + IGR/Vantage block; Topics and Today tabs fine; no horizontal overflow; **0 console errors**. Signed out: `/reader /archive /search /sources /dev-ui /apix` → 307 `/auth` (so the primitives gallery is not exposed), `/manifest.json`, icons, favicon 200, `POST /api/pipeline/trigger` 401. **Verify next:** a real phone check of the installed PWA (back from Search keeps your place; the feed refreshes quietly after 10+ min away), and that the next cron run is unaffected (pipeline untouched).
 
 ## Rules for this folder
 - Read the relevant component only before changing code — not the whole repo. Use a subagent for repo-wide reviews.
