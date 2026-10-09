@@ -52,6 +52,8 @@ export function useEngagement(
 export function useDwellTracking(
   sendEngagement: (signal: string, storyId?: string) => Promise<void>,
   markRead: (storyId?: string, opts?: { hold?: boolean }) => Promise<void>,
+  /** False once the Reader screen itself is being left. */
+  viewActive: { current: boolean },
 ) {
   const dwellTimers = useRef<Map<string, number>>(new Map())
 
@@ -64,6 +66,12 @@ export function useDwellTracking(
     if (!start) return
     const elapsed = (Date.now() - start) / 1000
     dwellTimers.current.delete(id)
+    // Leaving the Reader for another screen unmounts every card, and each card's
+    // teardown reports "still on screen". A full page load never sent those, and
+    // they would skew ranking (a quick tap to Search = dwell_short on whatever
+    // was visible), so only teardowns *inside* the Reader (tab switch, refresh)
+    // count. See setViewActive.
+    if (!viewActive.current) return
     // Measured as time on screen, not time reading — so the card is held in
     // place (see heldIds) rather than dropped from under the reader.
     if (elapsed > (longForm ? DWELL_LONG_SECONDS : DWELL_SHORT_SECONDS)) {
@@ -72,7 +80,7 @@ export function useDwellTracking(
     } else if (elapsed < 3) {
       sendEngagement('dwell_short', storyId)
     }
-  }, [sendEngagement, markRead])
+  }, [sendEngagement, markRead, viewActive])
 
   return { startDwell, endDwell }
 }

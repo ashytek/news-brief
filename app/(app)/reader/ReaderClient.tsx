@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useLayoutEffect } from 'react'
 import { useReader } from '@/lib/reader/ReaderProvider'
 import { usePullToRefresh } from '@/lib/reader/usePullToRefresh'
 import { TopicsPanel } from '@/components/TopicsPanel'
@@ -18,10 +18,17 @@ import { FeedList } from '@/components/reader/FeedList'
  *  status and "Run now" all live in the hooks there. */
 export default function ReaderClient() {
   const r = useReader()
-  const { activate, loadContent, loadReadIds } = r
+  const { activate, setViewActive, loadContent, loadReadIds } = r
 
   // First mount starts the loads; later mounts (back from Search etc.) resume.
   useEffect(() => { activate() }, [activate])
+
+  // Tells the provider whether this screen is showing, so cards torn down because
+  // the user left (not because they switched tabs) don't report dwell.
+  useLayoutEffect(() => {
+    setViewActive(true)
+    return () => setViewActive(false)
+  }, [setViewActive])
 
   const refreshAll = useCallback(() => Promise.all([loadContent(), loadReadIds()]), [loadContent, loadReadIds])
   const pullRefreshing = usePullToRefresh({ loading: r.loading, onRefresh: refreshAll })

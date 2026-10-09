@@ -55,7 +55,12 @@ function useReaderValue(userId: string) {
   }, [content.soloStories, content.todayStories])
 
   const sendEngagement = useEngagement(supabase, userId, storyById, weights.setSourceWeights)
-  const { startDwell, endDwell } = useDwellTracking(sendEngagement, read.markRead)
+  // True while a Reader screen is mounted. Set from a layout effect, whose cleanup
+  // always runs before the cards' (passive) teardown on the same commit — see
+  // useDwellTracking for why that ordering matters.
+  const viewActive = useRef(false)
+  const setViewActive = useCallback((v: boolean) => { viewActive.current = v }, [])
+  const { startDwell, endDwell } = useDwellTracking(sendEngagement, read.markRead, viewActive)
   const visit = useSinceVisit(active)
 
   const view = useFeedView({
@@ -106,7 +111,7 @@ function useReaderValue(userId: string) {
   }, [])
 
   return {
-    userId, activate,
+    userId, activate, setViewActive,
     activeTab, tabReady, handleTabChange,
     showUnreadOnly, toggleUnreadOnly, showAllStories,
     // data
