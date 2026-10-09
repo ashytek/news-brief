@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { useSnackbar } from '@/components/ui'
 import type { StoryWithRelations } from '@/lib/types'
 import { useActiveTab } from './useActiveTab'
 import { useReadState } from './useReadState'
@@ -13,6 +14,7 @@ import { useFeedContent } from './useFeedContent'
 import { usePipelineTrigger } from './usePipelineTrigger'
 import { useDwellTracking, useEngagement } from './useEngagement'
 import { useSinceVisit } from './useSinceVisit'
+import { useReactions } from './useReactions'
 import { useFeedView } from './useFeedView'
 
 /** A feed kept in memory from before a trip to Search/Archive/Sources is shown
@@ -30,17 +32,25 @@ function useReaderValue(userId: string) {
   const [active, setActive] = useState(false)
   const activated = useRef(false)
 
-  const { activeTab, tabReady, handleTabChange } = useActiveTab(active)
+  const snackbar = useSnackbar()
+
+  const { activeTab, lastSection, tabReady, handleTabChange, openSections } = useActiveTab(active)
   const [showUnreadOnly, setShowUnreadOnly] = useState(true)
 
-  const read = useReadState(supabase, userId, active)
+  // Read marks and pipeline health are needed on every signed-in screen (the
+  // top bar's status chip, the read dots in Search and Archive), so they load
+  // as soon as the provider mounts. The feed itself still waits for the Reader.
+  const read = useReadState(supabase, userId, true)
   const muted = useMutedTopics(supabase, userId, active)
   const weights = useRankingWeights(supabase, userId, active)
   const meta = useFeedMeta(supabase, active)
-  const health = usePipelineHealth(supabase, active)
+  const health = usePipelineHealth(supabase, true)
   const content = useFeedContent(supabase, { activeTab, tabReady, clearHeld: read.clearHeld })
+  // A finished "Run now" reloads the feed in the background: no skeleton, no blank screen.
+  const { loadContent } = content
+  const reloadInBackground = useCallback(() => loadContent({ background: true }), [loadContent])
   const trigger = usePipelineTrigger(supabase, {
-    loadContent: content.loadContent,
+    loadContent: reloadInBackground,
     loadReadIds: read.loadReadIds,
     refreshPipelineHealth: health.refreshPipelineHealth,
   })
@@ -55,6 +65,7 @@ function useReaderValue(userId: string) {
   }, [content.soloStories, content.todayStories])
 
   const sendEngagement = useEngagement(supabase, userId, storyById, weights.setSourceWeights)
+  const reactions = useReactions(supabase, userId, true, sendEngagement)
   // True while a Reader screen is mounted. Set from a layout effect, whose cleanup
   // always runs before the cards' (passive) teardown on the same commit — see
   // useDwellTracking for why that ordering matters.
@@ -73,13 +84,61 @@ function useReaderValue(userId: string) {
     showUnreadOnly,
     hasMutedTopic: muted.hasMutedTopic,
     prevVisit: visit.prevVisit,
+    categoryPool: meta.categoryPool,
+    sourceWeights: weights.sourceWeights,
+    topicWeights: weights.topicWeights,
   })
 
-  // One-tap "clear the deck" for the current category view
+  // Explicit "Mark read" taps get an Undo (the dwell timer's auto-mark does not:
+  // it happens while you are reading, and the card is held in place).
+  const markReadUndoable = useCallback(async (storyId: string) => {
+    const ok = await read.markRead(storyId)
+    if (!ok) return   // already read, or the write failed and was rolled back
+    snackbar.show({
+      message: 'Marked as read',
+      actionLabel: 'Undo',
+      onAction: () => {
+        void read.markUnread([storyId]).then(done => { if (!done) snackbar.show({ message: "Couldn't undo. Try again." }) })
+      },
+    })
+  }, [read, snackbar])
+
+  const markManyReadUndoable = useCallback(async (storyIds: string[]) => {
+    const wanted = storyIds.filter(id => !read.readIds.has(id)).length
+    const done = await read.markManyRead(storyIds)
+    if (done.length === 0) {
+      if (wanted > 0) snackbar.show({ message: "Couldn't mark as read. Try again." })
+      return
+    }
+    snackbar.show({
+      message: done.length === 1 ? 'Marked as read' : `Marked ${done.length} as read`,
+      actionLabel: 'Undo',
+      onAction: () => {
+        void read.markUnread(done).then(ok => { if (!ok) snackbar.show({ message: "Couldn't undo. Try again." }) })
+      },
+    })
+  }, [read, snackbar])
+
+  const markUnread = useCallback(async (storyId: string) => {
+    const ok = await read.markUnread([storyId])
+    snackbar.show({ message: ok ? 'Marked as unread' : "Couldn't mark as unread. Try again." })
+  }, [read, snackbar])
+
+  // One-tap "clear the deck" for the current Sections feed
   const markAllVisibleRead = useCallback(() => {
     const storyIds = view.visibleSolos.filter(s => !read.readIds.has(s.id)).map(s => s.id)
-    read.markManyRead(storyIds)
-  }, [view.visibleSolos, read])
+    return markManyReadUndoable(storyIds)
+  }, [view.visibleSolos, read.readIds, markManyReadUndoable])
+
+  // Refresh = reload what is on screen in the background (the feed stays put),
+  // the read marks, and the pipeline status. Button, pull-to-refresh and the
+  // status sheet all come here.
+  const { loadReadIds } = read
+  const { refreshPipelineHealth } = health
+  const refresh = useCallback(
+    () => Promise.all([loadContent({ background: true }), loadReadIds(), refreshPipelineHealth()]).then(() => undefined),
+    [loadContent, loadReadIds, refreshPipelineHealth],
+  )
 
   /** Unread / All toggle. Releases held (dwell-read) cards, as before. */
   const toggleUnreadOnly = useCallback(() => {
@@ -112,17 +171,18 @@ function useReaderValue(userId: string) {
 
   return {
     userId, activate, setViewActive,
-    activeTab, tabReady, handleTabChange,
+    activeTab, lastSection, tabReady, handleTabChange, openSections,
     showUnreadOnly, toggleUnreadOnly, showAllStories,
     // data
     sources: meta.sources, topicCount: meta.topicCount, activeCategoryKeys: meta.activeCategoryKeys,
     sourceWeights: weights.sourceWeights, topicWeights: weights.topicWeights,
     soloStories: content.soloStories, todayStories: content.todayStories,
-    loading: content.loading, loadError: content.loadError, lastUpdated: content.lastUpdated,
-    loadContent: content.loadContent,
+    loading: content.loading, refreshing: content.refreshing, loadError: content.loadError, lastUpdated: content.lastUpdated,
+    loadContent: content.loadContent, refresh,
     // read state
     readIds: read.readIds, layoutReadIds: read.layoutReadIds, loadReadIds: read.loadReadIds,
-    markRead: read.markRead, markAllVisibleRead,
+    markRead: read.markRead, markReadUndoable, markManyReadUndoable, markUnread, markAllVisibleRead,
+    reactions: reactions.reactions, react: reactions.react,
     muteTopics: muted.muteTopics,
     sendEngagement, startDwell, endDwell,
     // pipeline

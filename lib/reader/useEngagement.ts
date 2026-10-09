@@ -51,7 +51,7 @@ export function useEngagement(
  *  is shown). */
 export function useDwellTracking(
   sendEngagement: (signal: string, storyId?: string) => Promise<void>,
-  markRead: (storyId?: string, opts?: { hold?: boolean }) => Promise<void>,
+  markRead: (storyId?: string, opts?: { hold?: boolean }) => Promise<boolean>,
   /** False once the Reader screen itself is being left. */
   viewActive: { current: boolean },
 ) {

@@ -1,11 +1,14 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { ChevronDown, Hash, Search, SearchX, TriangleAlert, X } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import type { StoryWithRelations, Source, Category } from '@/lib/types'
-import { SoloCard } from '@/components/SoloCard'
-import { BackLink } from '@/components/nav/AppNav'
-import { CATEGORIES, categoryMeta } from '@/lib/categories'
+import { Chip, OptionSheet, StateMessage, cx } from '@/components/ui'
+import { StoryListItem } from '@/components/story/StoryListItem'
+import { StorySkeleton } from '@/components/story/StorySkeleton'
+import { useStoryActions } from '@/components/story/useStoryActions'
+import { CATEGORIES } from '@/lib/categories'
 
 const DEBOUNCE_MS = 450
 
@@ -13,23 +16,27 @@ type DateFilter = '7d' | '30d' | 'all'
 type CategoryFilter = 'all' | Category
 
 const DATE_OPTIONS: { label: string; value: DateFilter }[] = [
-  { label: '7 days',  value: '7d'  },
-  { label: '30 days', value: '30d' },
-  { label: 'All time', value: 'all' },
+  { label: 'Any time', value: 'all' },
+  { label: 'Last 7 days', value: '7d' },
+  { label: 'Last 30 days', value: '30d' },
 ]
+const DATE_CHIP: Record<DateFilter, string> = { all: 'Any time', '7d': '7 days', '30d': '30 days' }
 
 const CATEGORY_OPTIONS: { label: string; value: CategoryFilter }[] = [
-  { label: 'All', value: 'all' },
-  ...CATEGORIES.map(c => ({ label: c.label, value: c.key })),
+  { label: 'All sections', value: 'all' },
+  ...CATEGORIES.map(c => ({ label: c.label, value: c.key as CategoryFilter })),
 ]
+
+const EXAMPLES = ['Strait of Hormuz', 'Jonathan Cahn', 'India currency', 'Gaza ceasefire']
 
 interface SearchResult {
   results: StoryWithRelations[]
   mode?: 'hybrid' | 'semantic' | 'text'
 }
 
-export default function SearchClient({ userId }: { userId: string }) {
+export default function SearchClient() {
   const supabase = createClient()
+  const actionsFor = useStoryActions()
 
   const [query,       setQuery]       = useState('')
   const [category,    setCategory]    = useState<CategoryFilter>('all')
@@ -37,9 +44,10 @@ export default function SearchClient({ userId }: { userId: string }) {
   const [results,     setResults]     = useState<StoryWithRelations[] | null>(null)
   const [loading,     setLoading]     = useState(false)
   const [searchMode,  setSearchMode]  = useState<string | null>(null)
-  const [readIds,     setReadIds]     = useState<Set<string>>(new Set())
   const [sources,     setSources]     = useState<Record<string, Source>>({})
+  const [topics,      setTopics]      = useState<string[]>([])
   const [searchError, setSearchError] = useState(false)
+  const [sheet,       setSheet]       = useState<'date' | 'category' | null>(null)
 
   const inputRef    = useRef<HTMLInputElement>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -53,7 +61,7 @@ export default function SearchClient({ userId }: { userId: string }) {
     inputRef.current?.focus()
   }, [])
 
-  // Load sources + read ids once
+  // Sources (for the row kicker) and the watchlist (for the empty state), once
   useEffect(() => {
     supabase.from('sources').select('id, name, category, source_type, is_active').then(({ data }) => {
       if (data) {
@@ -62,18 +70,9 @@ export default function SearchClient({ userId }: { userId: string }) {
         setSources(map)
       }
     })
-    // Ordered + capped: an unordered fetch past Supabase's row cap returns a
-    // nondeterministic subset; most-recent-first makes the truncation
-    // predictable (old reads may resurface as unread, not a random slice).
-    supabase.from('read_items').select('story_id').eq('user_id', userId)
-      .order('read_at', { ascending: false }).limit(2000).then(({ data }) => {
-        if (data) {
-          const ids = new Set<string>()
-          data.forEach(r => { if (r.story_id) ids.add(r.story_id) })
-          setReadIds(ids)
-        }
-      })
-  }, [userId]) // eslint-disable-line react-hooks/exhaustive-deps
+    supabase.from('topic_keywords').select('keyword').eq('is_active', true).order('keyword').limit(6)
+      .then(({ data }) => { if (data) setTopics(data.map(k => k.keyword as string)) })
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const doSearch = useCallback(async (q: string, cat: CategoryFilter, date: DateFilter) => {
     if (q.length < 2) {
@@ -132,218 +131,122 @@ export default function SearchClient({ userId }: { userId: string }) {
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
   }, [query, category, dateFilter, doSearch])
 
-  const markRead = useCallback(async (storyId: string) => {
-    setReadIds(prev => new Set([...prev, storyId]))
-    // Plain insert tolerating 23505 (duplicate key) — upsert(onConflict) was
-    // found to silently lose writes elsewhere (see ReaderClient.tsx markRead)
-    // because the constraint name lookup didn't always resolve.
-    const { error } = await supabase.from('read_items').insert({
-      user_id: userId, story_id: storyId,
-    })
-    if (error && error.code !== '23505') {
-      console.error('markRead failed', { storyId, error })
-    }
-  }, [userId]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const sendEngagement = useCallback(async (storyId: string, signal: string) => {
-    // Must match the table ReaderClient/update_weights.py use — a separate
-    // 'engagement_events' table doesn't exist, so writes there were lost.
-    const { error } = await supabase.from('engagement').insert({
-      user_id: userId, story_id: storyId, signal,
-    })
-    if (error) {
-      console.error('sendEngagement failed', { storyId, signal, error })
-    }
-  }, [userId]) // eslint-disable-line react-hooks/exhaustive-deps
-
   const hasResults  = results !== null && results.length > 0
   const emptySearch = results !== null && results.length === 0
+  const categoryLabel = CATEGORY_OPTIONS.find(o => o.value === category)?.label ?? 'All sections'
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
-
-      {/* Header */}
-      <header className="sticky top-0 z-50 bg-slate-950/95 border-b border-slate-800/60">
-        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
-          {/* Back */}
-          <BackLink
-            href="/reader"
-            aria-label="Back to feed"
-            className="w-11 h-11 rounded-lg bg-slate-800 hover:bg-slate-700 active:bg-slate-700 flex items-center justify-center transition-colors flex-shrink-0"
-            title="Back to feed"
-          >
-            <svg className="w-4 h-4 text-slate-400" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-            </svg>
-          </BackLink>
-
-          {/* Search input */}
-          <div className="relative flex-1">
-            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M17 11A6 6 0 115 11a6 6 0 0112 0z" />
-            </svg>
+    <div className="min-h-screen">
+      {/* Field + filters: stuck to the top while results scroll */}
+      <div className="sticky top-0 z-40 border-b border-hairline bg-canvas">
+        <div className="mx-auto max-w-2xl px-gutter pb-2 pt-3">
+          <label className="flex h-12 items-center gap-2.5 rounded-panel bg-surface-2 pl-3.5 pr-1 focus-within:bg-surface-1 focus-within:ring-1 focus-within:ring-accent">
+            <Search className="size-5 flex-none text-fg-3" aria-hidden="true" />
             <input
               ref={inputRef}
               type="search"
-              placeholder="Search stories…"
+              placeholder="Search 30 days of briefs"
+              aria-label="Search stories"
               value={query}
               onChange={e => setQuery(e.target.value)}
-              className="w-full bg-slate-800 text-white placeholder-slate-400 rounded-xl pl-9 pr-11 py-2.5 text-sm border border-slate-700 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500"
+              className="min-w-0 flex-1 bg-transparent text-base text-fg-1 placeholder:text-fg-3 focus:outline-none [&::-webkit-search-cancel-button]:hidden"
             />
             {query && (
               <button
+                type="button"
                 onClick={() => { setQuery(''); inputRef.current?.focus() }}
-                className="group/clear absolute right-0 top-1/2 -translate-y-1/2 w-11 h-11 flex items-center justify-center"
                 aria-label="Clear search"
+                className="grid size-11 flex-none place-items-center rounded-full text-fg-2 active:bg-surface-3"
               >
-                <span className="w-5 h-5 flex items-center justify-center rounded-full bg-slate-600 group-hover/clear:bg-slate-500 group-active/clear:bg-slate-500">
-                  <svg className="w-3 h-3 text-white" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </span>
+                <X className="size-5" aria-hidden="true" />
               </button>
             )}
+          </label>
+          <div className="mt-2 flex gap-2">
+            <Chip selected={dateFilter !== 'all'} onClick={() => setSheet('date')} aria-haspopup="dialog" aria-pressed={undefined}>
+              {DATE_CHIP[dateFilter]}<ChevronDown className="size-4" aria-hidden="true" />
+            </Chip>
+            <Chip selected={category !== 'all'} onClick={() => setSheet('category')} aria-haspopup="dialog" aria-pressed={undefined}>
+              {categoryLabel}<ChevronDown className="size-4" aria-hidden="true" />
+            </Chip>
           </div>
         </div>
+      </div>
 
-        {/* Filter row */}
-        <div className="max-w-2xl mx-auto px-4 pb-3 flex items-center gap-2 overflow-x-auto scrollbar-hide">
-          {/* Date filter */}
-          <div className="flex items-center gap-1 flex-shrink-0">
-            {DATE_OPTIONS.map(opt => (
-              <button
-                key={opt.value}
-                onClick={() => setDateFilter(opt.value)}
-                className={`px-3 min-h-11 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${
-                  dateFilter === opt.value
-                    ? 'bg-slate-600 text-white'
-                    : 'bg-slate-800/60 text-slate-400 hover:text-white'
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
+      <main className="mx-auto max-w-2xl px-gutter pb-[calc(var(--spacing-navbar)+env(safe-area-inset-bottom,0px)+1.5rem)]">
+        {loading && <StorySkeleton count={3} />}
 
-          <div className="w-px h-4 bg-slate-700 flex-shrink-0" />
-
-          {/* Category filter */}
-          <div className="flex items-center gap-1 flex-shrink-0">
-            {CATEGORY_OPTIONS.map(opt => (
-              <button
-                key={opt.value}
-                onClick={() => setCategory(opt.value)}
-                className={`px-3 min-h-11 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${
-                  category === opt.value
-                    ? opt.value === 'all'
-                      ? 'bg-slate-600 text-white'
-                      : `${categoryMeta(opt.value)?.legacy.pill} border border-current/20`
-                    : 'bg-slate-800/60 text-slate-400 hover:text-white'
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </header>
-
-      {/* Results */}
-      <main className="max-w-2xl mx-auto px-4 py-4 pb-24 md:pb-6 space-y-3">
-
-        {/* Loading */}
-        {loading && (
-          <div className="space-y-3">
-            {[0, 1, 2].map(i => (
-              <div key={i} className="rounded-2xl border border-slate-800 bg-slate-900 p-4 animate-pulse">
-                <div className="h-3 w-1/4 bg-slate-800 rounded mb-3" />
-                <div className="h-4 w-3/4 bg-slate-800 rounded mb-2" />
-                <div className="h-3 w-full bg-slate-800 rounded mb-1" />
-                <div className="h-3 w-5/6 bg-slate-800 rounded" />
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Empty state — no query */}
-        {!loading && results === null && (
-          <div className="flex flex-col items-center justify-center pt-16 text-center gap-3">
-            <div className="w-12 h-12 rounded-full bg-slate-800 flex items-center justify-center">
-              <svg className="w-6 h-6 text-slate-400" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M17 11A6 6 0 115 11a6 6 0 0112 0z" />
-              </svg>
-            </div>
-            <div>
-              <p className="text-sm text-slate-400 font-medium">Search your story history</p>
-              <p className="text-xs text-slate-400 mt-1">Names, countries, topics, events…</p>
-            </div>
-            <div className="flex flex-wrap justify-center gap-2 mt-2">
-              {['Strait of Hormuz', 'Jonathan Cahn', 'India currency', 'Gaza ceasefire'].map(ex => (
-                <button
-                  key={ex}
-                  onClick={() => setQuery(ex)}
-                  className="px-3 min-h-11 rounded-lg bg-slate-800 text-sm text-slate-300 hover:text-white hover:bg-slate-700 transition-colors"
-                >
-                  {ex}
-                </button>
+        {/* No query yet */}
+        {!loading && results === null && !searchError && (
+          <div className="pt-6">
+            <p className="t-overline">Try</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {EXAMPLES.map(ex => (
+                <Chip key={ex} onClick={() => setQuery(ex)}>{ex}</Chip>
               ))}
             </div>
+            {topics.length > 0 && (
+              <>
+                <p className="t-overline mt-8">Search by topic</p>
+                <ul className="mt-3 overflow-hidden rounded-panel bg-surface-1">
+                  {topics.map(t => (
+                    <li key={t} className="border-b border-hairline last:border-b-0">
+                      <button
+                        type="button"
+                        onClick={() => setQuery(t)}
+                        className="flex min-h-14 w-full items-center gap-3 px-4 text-left text-[15px] font-medium text-fg-1 active:bg-surface-2"
+                      >
+                        <Hash className="size-[18px] flex-none text-fg-3" aria-hidden="true" />
+                        {t}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
           </div>
         )}
 
         {/* Search failed — distinct from "no results" so a network/server
             error doesn't read as "nothing matched" */}
         {!loading && searchError && (
-          <div className="flex flex-col items-center justify-center pt-16 text-center gap-2">
-            <p className="text-sm text-rose-300">Search failed</p>
-            <p className="text-xs text-slate-400">Check your connection and try again</p>
-          </div>
+          <StateMessage tone="error" icon={TriangleAlert} title="Search failed">
+            Check your connection and try again.
+          </StateMessage>
         )}
 
-        {/* No results */}
         {!loading && !searchError && emptySearch && (
-          <div className="flex flex-col items-center justify-center pt-16 text-center gap-2">
-            <p className="text-sm text-slate-400">No stories found for <span className="text-white">"{query}"</span></p>
-            <p className="text-xs text-slate-400">Try broader terms or a different date range</p>
-          </div>
+          <StateMessage icon={SearchX} title={`No stories found for "${query}"`}>
+            Try broader terms or a different date range.
+          </StateMessage>
         )}
 
-        {/* Results list */}
         {!loading && hasResults && (
           <>
-            <div className="flex items-center justify-between mb-1">
-              <p className="text-xs text-slate-400">
-                {results.length} result{results.length !== 1 ? 's' : ''}
-                {searchMode === 'hybrid'   && <span className="ml-1 text-violet-500">· semantic+FTS</span>}
-                {searchMode === 'semantic' && <span className="ml-1 text-violet-500">· semantic</span>}
-                {searchMode === 'text'     && <span className="ml-1 text-slate-400">· text match</span>}
-              </p>
+            <p className="t-meta py-3" aria-live="polite">
+              {results.length} result{results.length !== 1 ? 's' : ''}
+              {searchMode === 'hybrid' && ' · semantic + text'}
+              {searchMode === 'semantic' && ' · semantic'}
+              {searchMode === 'text' && ' · text match'}
+            </p>
+            <div className={cx('border-t border-hairline')}>
+              {results.map(story => (
+                <StoryListItem
+                  key={story.id}
+                  story={story}
+                  sourceName={sources[story.source_id]?.name}
+                  showCategory
+                  highlight={query}
+                  actions={actionsFor(story)}
+                />
+              ))}
             </div>
-
-            {results.map(story => {
-              const source = sources[story.source_id]
-              const cat = categoryMeta(story.category)
-              return (
-                <div key={story.id}>
-                  {/* Category badge above card */}
-                  <p className={`text-xs font-medium mb-1 ${cat?.legacy.text ?? 'text-slate-400'}`}>
-                    {cat?.label ?? story.category}
-                  </p>
-                  <SoloCard
-                    story={story}
-                    source={source}
-                    isRead={readIds.has(story.id)}
-                    onRead={() => markRead(story.id)}
-                    onEngagement={(sig) => sendEngagement(story.id, sig)}
-                    onDwellStart={() => {}}
-                    onDwellEnd={() => {}}
-                  />
-                </div>
-              )
-            })}
           </>
         )}
       </main>
+
+      <OptionSheet open={sheet === 'date'} onClose={() => setSheet(null)} title="Date" value={dateFilter} onChange={setDateFilter} options={DATE_OPTIONS} />
+      <OptionSheet open={sheet === 'category'} onClose={() => setSheet(null)} title="Section" value={category} onChange={setCategory} options={CATEGORY_OPTIONS} />
     </div>
   )
 }

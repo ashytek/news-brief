@@ -8,5 +8,5 @@ export default async function SearchPage() {
   const user = await getUser()
   if (!user) redirect('/auth')
 
-  return <SearchClient userId={user.id} />
+  return <SearchClient />
 }

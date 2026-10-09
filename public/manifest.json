@@ -4,8 +4,8 @@
   "description": "Your adaptive intelligence digest",
   "start_url": "/reader",
   "display": "standalone",
-  "background_color": "#030712",
-  "theme_color": "#030712",
+  "background_color": "#0e0f12",
+  "theme_color": "#0e0f12",
   "orientation": "portrait-primary",
   "categories": ["news"],
   "icons": [

@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ActiveTab } from '@/components/CategoryNav'
 import type { StoryWithRelations } from '@/lib/types'
 import { STORY_SELECT } from '@/lib/constants'
-import type { Supabase } from './types'
+import { FEED_SIZE } from './useFeedMeta'
+import type { ActiveTab, Supabase } from './types'
 
-/** Loads the stories for the active tab. Today (last 24 h, 60) and each
- *  category (newest 100) keep separate collections; Topics loads its own. */
+/** Loads the stories for the active tab. Today (last 24 h, 60) and the Sections
+ *  feeds (newest 100 of one category, or of all of them) keep separate
+ *  collections; Topics loads its own. */
 export function useFeedContent(
   supabase: Supabase,
   { activeTab, tabReady, clearHeld }: { activeTab: ActiveTab; tabReady: boolean; clearHeld: () => void },
@@ -14,6 +15,8 @@ export function useFeedContent(
   const [todayStories, setTodayStories] = useState<StoryWithRelations[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
+  // A background reload is in flight (stories stay on screen meanwhile).
+  const [refreshing, setRefreshing] = useState(false)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   // Bumped on every loadContent() call; a response only commits state if it's
   // still the latest in-flight request — otherwise rapid tab switching can
@@ -26,7 +29,8 @@ export function useFeedContent(
   const lastLoadedAt = useRef(0)
 
   /** `background` keeps the current stories on screen (no skeleton) while the
-   *  fresh ones load — used when coming back to a feed that was kept in memory. */
+   *  fresh ones load — used when coming back to a feed that was kept in memory,
+   *  and for every manual refresh (button, pull-to-refresh, Run now finishing). */
   const loadContent = useCallback(async (opts?: { background?: boolean }) => {
     clearHeld()   // a fresh load is the moment held cards may drop off
     if (activeTab === 'topics') {
@@ -41,7 +45,8 @@ export function useFeedContent(
     const reqId = ++loadReqId.current
     const isStale = () => reqId !== loadReqId.current
 
-    if (!opts?.background) setLoading(true)
+    if (opts?.background) setRefreshing(true)
+    else setLoading(true)
     setLoadError(false)
 
     if (activeTab === 'today') {
@@ -55,33 +60,34 @@ export function useFeedContent(
       if (isStale()) return
       if (storyRes.error) {
         console.error('loadContent (today) failed', storyRes.error)
-        setLoadError(true)
+        if (!opts?.background) setLoadError(true)   // a failed background refresh keeps what is on screen
       } else if (storyRes.data) {
         setTodayStories(storyRes.data as unknown as StoryWithRelations[])
         lastLoadedAt.current = Date.now()
       }
       setLastUpdated(new Date())
       setLoading(false)
+      setRefreshing(false)
       return
     }
 
-    const storyRes = await supabase
-      .from('stories')
-      .select(STORY_SELECT)
-      .eq('category', activeTab)
+    let query = supabase.from('stories').select(STORY_SELECT)
+    if (activeTab !== 'all') query = query.eq('category', activeTab)
+    const storyRes = await query
       .order('created_at', { ascending: false })
-      .limit(100)
+      .limit(FEED_SIZE)
 
     if (isStale()) return
     if (storyRes.error) {
       console.error('loadContent failed', storyRes.error)
-      setLoadError(true)
+      if (!opts?.background) setLoadError(true)   // a failed background refresh keeps what is on screen
     } else if (storyRes.data) {
       setSoloStories(storyRes.data as unknown as StoryWithRelations[])
       lastLoadedAt.current = Date.now()
     }
     setLastUpdated(new Date())
     setLoading(false)
+    setRefreshing(false)
   }, [activeTab, supabase, clearHeld])
 
   useEffect(() => {
@@ -90,5 +96,5 @@ export function useFeedContent(
     if (tabReady) loadContent()
   }, [tabReady, activeTab, loadContent])
 
-  return { soloStories, todayStories, loading, loadError, lastUpdated, lastLoadedAt, loadContent }
+  return { soloStories, todayStories, loading, refreshing, loadError, lastUpdated, lastLoadedAt, loadContent }
 }

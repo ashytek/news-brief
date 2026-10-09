@@ -1,10 +1,15 @@
 'use client'
 
 import { useState } from 'react'
+import { CircleCheck, CircleX, LoaderCircle, Plus, TriangleAlert } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import type { Source } from '@/lib/types'
 import { BackLink } from '@/components/nav/AppNav'
-import { CATEGORIES, categoryMeta } from '@/lib/categories'
+import { CATEGORIES } from '@/lib/categories'
+import { Button, IconButton, Sheet, cx } from '@/components/ui'
+import { RunNow } from '@/components/shell/StatusSheet'
+import { useReader } from '@/lib/reader/ReaderProvider'
+import { describePipeline } from '@/lib/reader/pipelineStatus'
 
 
 const LOOKBACK_OPTIONS = [
@@ -30,11 +35,19 @@ interface Props {
   recentRuns: PipelineRun[]
 }
 
+/** Health as a dot plus words for the screen reader: never colour alone. */
 function HealthDot({ failures }: { failures: number }) {
-  if (failures === 0) return <span className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0" />
-  if (failures < 3)   return <span className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
-  return                     <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
+  const [tone, label] = failures === 0 ? ['bg-ok', 'Healthy'] : failures < 3 ? ['bg-warn', 'Some failures'] : ['bg-bad', 'Failing']
+  return (
+    <>
+      <span aria-hidden="true" className={cx('size-2 flex-none rounded-full', tone)} />
+      <span className="sr-only">{label}</span>
+    </>
+  )
 }
+
+const FIELD = 'h-12 w-full rounded-panel bg-surface-2 px-3.5 text-base text-fg-1 placeholder:text-fg-3 focus:bg-surface-1 focus:outline-none focus:ring-1 focus:ring-accent'
+const LABEL = 't-label mb-1.5 block text-fg-2'
 
 /** Parse a YouTube channel URL into a channel identifier for the DB. */
 function parseYouTubeInput(raw: string): { channelId: string; suggestedName: string } | null {
@@ -119,107 +132,119 @@ function AddSourceForm({ onAdded }: { onAdded: () => void }) {
   }
 
   return (
-    <section>
-      <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Add YouTube Channel</h2>
-      <form onSubmit={handleSubmit} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
-        {/* URL input */}
-        <div>
-          <label className="block text-xs text-slate-400 mb-1">Channel URL or @handle</label>
-          <input
-            type="text"
-            value={url}
-            onChange={e => handleUrlChange(e.target.value)}
-            placeholder="https://youtube.com/@FirstpostVantage"
-            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-violet-500 focus:border-violet-500"
-          />
-          {parsed && (
-            <p className="text-xs text-emerald-400 mt-1">
-              ✓ Detected: <code className="font-mono">{parsed.channelId}</code>
-            </p>
-          )}
-          {url && !parsed && (
-            <p className="text-xs text-amber-400 mt-1">Couldn't parse — try pasting a youtube.com/@handle URL</p>
-          )}
-        </div>
+    <form onSubmit={handleSubmit} className="space-y-4 pb-2 pt-3">
+      {/* URL input */}
+      <div>
+        <label htmlFor="src-url" className={LABEL}>Channel URL or @handle</label>
+        <input
+          id="src-url"
+          type="text"
+          value={url}
+          onChange={e => handleUrlChange(e.target.value)}
+          placeholder="https://youtube.com/@FirstpostVantage"
+          className={FIELD}
+        />
+        {parsed && (
+          <p className="t-meta mt-1.5 text-ok">
+            Detected: <code className="font-mono">{parsed.channelId}</code>
+          </p>
+        )}
+        {url && !parsed && (
+          <p className="t-meta mt-1.5 text-warn">Couldn&apos;t parse. Try pasting a youtube.com/@handle URL.</p>
+        )}
+      </div>
 
-        {/* Name + category row */}
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-xs text-slate-400 mb-1">Display name</label>
-            <input
-              type="text"
-              value={name}
-              onChange={e => setName(e.target.value)}
-              placeholder="Channel name"
-              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-violet-500 focus:border-violet-500"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-slate-400 mb-1">Category</label>
-            <select
-              value={category}
-              onChange={e => setCategory(e.target.value)}
-              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-violet-500 focus:border-violet-500"
+      {/* Name + category */}
+      <div>
+        <label htmlFor="src-name" className={LABEL}>Display name</label>
+        <input
+          id="src-name"
+          type="text"
+          value={name}
+          onChange={e => setName(e.target.value)}
+          placeholder="Channel name"
+          className={FIELD}
+        />
+      </div>
+      <div>
+        <label htmlFor="src-cat" className={LABEL}>Category</label>
+        <select id="src-cat" value={category} onChange={e => setCategory(e.target.value)} className={FIELD}>
+          {CATEGORIES.map(c => (
+            <option key={c.key} value={c.key}>{c.label}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Lookback */}
+      <div>
+        <p className={LABEL} id="src-lookback">Lookback window</p>
+        <div role="group" aria-labelledby="src-lookback" className="grid grid-cols-4 gap-2">
+          {LOOKBACK_OPTIONS.map(opt => (
+            <button
+              key={opt.value}
+              type="button"
+              aria-pressed={lookback === opt.value}
+              onClick={() => setLookback(opt.value)}
+              className={cx(
+                'min-h-11 rounded-control text-sm font-medium',
+                lookback === opt.value ? 'bg-accent-soft text-fg-1' : 'border border-hairline-strong text-fg-2',
+              )}
             >
-              {CATEGORIES.map(c => (
-                <option key={c.key} value={c.key}>{c.label}</option>
-              ))}
-            </select>
-          </div>
+              {opt.label}
+            </button>
+          ))}
         </div>
+        <p className="t-meta mt-1.5">
+          {lookback === 168
+            ? 'Good for weekly channels (e.g. Prophetic)'
+            : lookback >= 48
+            ? 'Good for daily/frequent channels'
+            : 'Standard: checks the last 24 hours'}
+        </p>
+      </div>
 
-        {/* Lookback */}
-        <div>
-          <label className="block text-xs text-slate-400 mb-1">Lookback window</label>
-          <div className="flex gap-2">
-            {LOOKBACK_OPTIONS.map(opt => (
-              <button
-                key={opt.value}
-                type="button"
-                onClick={() => setLookback(opt.value)}
-                className={`flex-1 min-h-11 rounded-lg text-sm font-medium transition-all ${
-                  lookback === opt.value
-                    ? 'bg-violet-600 text-white'
-                    : 'bg-slate-800 text-slate-400 hover:text-white'
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-          <p className="text-xs text-slate-400 mt-1">
-            {lookback === 168
-              ? 'Good for weekly channels (e.g. Prophetic)'
-              : lookback >= 48
-              ? 'Good for daily/frequent channels'
-              : 'Standard — checks last 24 hours'}
-          </p>
-        </div>
+      {error && <p role="alert" className="rounded-control bg-bad/10 px-3 py-2 text-sm text-bad">{error}</p>}
+      {success && (
+        <p role="status" className="rounded-control bg-ok/10 px-3 py-2 text-sm text-ok">
+          Source added. It will be picked up on the next pipeline run.
+        </p>
+      )}
 
-        {error && (
-          <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{error}</p>
-        )}
-        {success && (
-          <p className="text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2">
-            ✓ Source added! It will be picked up on the next pipeline run.
-          </p>
-        )}
-
-        <button
-          type="submit"
-          disabled={saving || !url || !name.trim()}
-          className="w-full py-2 bg-violet-600 hover:bg-violet-500 disabled:bg-slate-700 disabled:text-slate-400 text-white text-sm font-semibold rounded-xl transition-all"
-        >
-          {saving ? 'Adding…' : 'Add source'}
-        </button>
-      </form>
-    </section>
+      <Button type="submit" block loading={saving} disabled={!url || !name.trim()}>
+        {saving ? 'Adding…' : 'Add source'}
+      </Button>
+    </form>
   )
 }
 
+const SOURCE_TYPE: Record<string, string> = {
+  youtube_channel: 'YouTube channel',
+  google_news_rss: 'News feed',
+  website_scrape: 'Website',
+}
+
+const STATUS: Record<string, { word: string; tone: string; icon: typeof CircleCheck }> = {
+  success: { word: 'Success', tone: 'text-ok', icon: CircleCheck },
+  partial: { word: 'Partial', tone: 'text-warn', icon: TriangleAlert },
+  failed: { word: 'Failed', tone: 'text-bad', icon: CircleX },
+}
+
+const dateTime = (iso: string) =>
+  new Date(iso).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+
 export default function SourcesClient({ sources: initialSources, recentRuns }: Props) {
   const [sources, setSources] = useState(initialSources)
+  const [adding, setAdding] = useState(false)
   const supabase = createClient()
+  const r = useReader()
+  const last = recentRuns[0]
+  // The provider's health loads a moment after a cold open; the server already
+  // sent the recent runs, so the card never has to say "no run seen" meanwhile.
+  const lastFinished = recentRuns.find(run => run.finished_at)
+  const info = describePipeline(
+    r.lastPipelineRun ?? (lastFinished?.finished_at ? new Date(lastFinished.finished_at) : null),
+    r.pipelineStruggling,
+  )
 
   const refreshSources = async () => {
     const { data } = await supabase.from('sources').select('*').order('category').order('name')
@@ -233,98 +258,109 @@ export default function SourcesClient({ sources: initialSources, recentRuns }: P
   }))
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
-      {/* Header */}
-      <header className="sticky top-0 z-50 bg-slate-950/95 border-b border-slate-800/60">
-        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
+    <div className="min-h-screen">
+      {/* Sub-screen header: back, title, add */}
+      <header className="sticky top-0 z-40 border-b border-hairline bg-canvas">
+        <div className="mx-auto flex h-topbar max-w-2xl items-center gap-1 pl-1 pr-1">
           <BackLink
             href="/reader"
             aria-label="Back to feed"
-            className="w-11 h-11 rounded-lg bg-slate-800 hover:bg-slate-700 active:bg-slate-700 flex items-center justify-center transition-colors"
+            className="grid size-12 flex-none place-items-center rounded-full text-fg-2 active:bg-surface-2"
           >
-            <svg className="w-4 h-4 text-slate-400" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg className="size-6" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
             </svg>
           </BackLink>
-          <div>
-            <h1 className="text-sm font-bold text-white">Sources</h1>
-            <p className="text-xs text-slate-400">{sources.length} monitored feeds</p>
-          </div>
+          <h1 className="t-h3 flex-1 pl-1 text-[17px]">Sources</h1>
+          <IconButton label="Add a channel" icon={Plus} onClick={() => setAdding(true)} />
         </div>
       </header>
 
-      <main className="max-w-2xl mx-auto px-4 py-4 space-y-6">
-        {/* Add source form */}
-        <AddSourceForm onAdded={refreshSources} />
+      <main className="mx-auto max-w-2xl space-y-6 px-gutter pb-10 pt-4">
+        {/* Status card: health, Run now, build stamp */}
+        <section aria-label="Pipeline status" className="rounded-panel bg-surface-1 p-4">
+          <p className="flex items-center gap-2.5 text-base font-semibold text-fg-1">
+            <span
+              aria-hidden="true"
+              className={cx('size-2.5 flex-none rounded-full', info ? { ok: 'bg-ok', warn: 'bg-warn', bad: 'bg-bad' }[info.tone] : 'bg-fg-3')}
+            />
+            {info ? (info.tone === 'ok' ? 'Pipeline healthy' : info.tone === 'warn' ? 'Pipeline slow' : info.label) : 'No pipeline run seen yet'}
+          </p>
+          {last && (
+            <p className="t-meta mt-1">
+              Last run {dateTime(last.started_at)} · {last.videos_found} videos → {last.stories_created} {last.stories_created === 1 ? 'story' : 'stories'}
+            </p>
+          )}
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <RunNow size="compact" />
+            {recentRuns.length > 0 && (
+              <a href="#recent-runs" className="inline-flex min-h-11 items-center rounded-full px-3 text-sm font-semibold text-accent">View runs</a>
+            )}
+          </div>
+          <p className="t-meta mt-4 border-t border-hairline pt-3 font-mono">Build {process.env.NEXT_PUBLIC_BUILD_SHA}</p>
+        </section>
 
-        {/* Pipeline health */}
+        {/* Recent runs */}
         {recentRuns.length > 0 && (
-          <section>
-            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Pipeline Runs</h2>
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
-              {recentRuns.map((run, i) => (
-                <div key={run.id} className={`flex items-center gap-3 px-4 py-3 ${i < recentRuns.length - 1 ? 'border-b border-slate-800/60' : ''}`}>
-                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                    run.status === 'success' ? 'bg-emerald-500' :
-                    run.status === 'partial' ? 'bg-amber-500' :
-                    run.status === 'failed'  ? 'bg-red-500' :
-                    'bg-slate-500 animate-pulse'
-                  }`} />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs text-white font-medium">
-                      {new Date(run.started_at).toLocaleString('en-GB', {
-                        day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'
-                      })}
-                    </p>
-                    <p className="text-xs text-slate-400">
-                      {run.videos_found} videos · {run.stories_created} stories
-                    </p>
-                  </div>
-                  <span className={`text-xs font-medium capitalize ${
-                    run.status === 'success' ? 'text-emerald-400' :
-                    run.status === 'partial' ? 'text-amber-400' :
-                    run.status === 'failed'  ? 'text-red-400' :
-                    'text-slate-400'
-                  }`}>
-                    {run.status}
-                  </span>
-                </div>
-              ))}
-            </div>
+          <section id="recent-runs" className="scroll-mt-16">
+            <h2 className="t-overline mb-2">Recent runs</h2>
+            <ul className="overflow-hidden rounded-panel bg-surface-1">
+              {recentRuns.map(run => {
+                const st = STATUS[run.status]
+                const Icon = st?.icon ?? LoaderCircle
+                return (
+                  <li key={run.id} className="flex min-h-14 items-center gap-3 border-b border-hairline px-4 py-2.5 last:border-b-0">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[15px] font-medium leading-5 text-fg-1">{dateTime(run.started_at)}</p>
+                      <p className="t-meta">{run.videos_found} videos · {run.stories_created} {run.stories_created === 1 ? 'story' : 'stories'}</p>
+                    </div>
+                    <span className={cx('inline-flex items-center gap-1.5 text-sm font-medium', st?.tone ?? 'text-fg-3')}>
+                      <Icon className={cx('size-[18px]', !st && 'animate-spin')} aria-hidden="true" />
+                      {st?.word ?? run.status}
+                    </span>
+                  </li>
+                )
+              })}
+            </ul>
           </section>
         )}
 
         {/* Sources by category */}
         {byCategory.map(cat => (
           <section key={cat.key}>
-            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">
-              {cat.label} <span className="text-slate-400">· {cat.sources.length}</span>
-            </h2>
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+            <h2 className="t-overline mb-2">{cat.label} · {cat.sources.length}</h2>
+            <ul className="overflow-hidden rounded-panel bg-surface-1">
               {cat.sources.length === 0 ? (
-                <div className="px-4 py-3 text-xs text-slate-400">No sources yet</div>
-              ) : cat.sources.map((source, i) => (
-                <div key={source.id} className={`flex items-center gap-3 px-4 py-3 ${i < cat.sources.length - 1 ? 'border-b border-slate-800/60' : ''}`}>
+                <li className="px-4 py-3 text-sm text-fg-3">No sources yet</li>
+              ) : cat.sources.map(source => (
+                <li key={source.id} className="flex min-h-14 items-center gap-3 border-b border-hairline px-4 py-2.5 last:border-b-0">
                   <HealthDot failures={source.consecutive_failures} />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-white font-medium truncate">{source.name}</p>
-                    <p className="text-xs text-slate-400 capitalize">
-                      {source.source_type.replace(/_/g, ' ')}
-                      {source.last_success_at && (
-                        <> · Last ok {new Date(source.last_success_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</>
-                      )}
-                      {!source.last_success_at && ' · Not yet checked'}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[15px] font-medium leading-5 text-fg-1">{source.name}</p>
+                    <p className="t-meta">
+                      {SOURCE_TYPE[source.source_type] ?? source.source_type.replace(/_/g, ' ')}
+                      {source.last_success_at
+                        ? <> · Last OK {new Date(source.last_success_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</>
+                        : ' · Not yet checked'}
                     </p>
                   </div>
-                  <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${categoryMeta(cat.key)?.legacy.badge}`}>
-                    {source.consecutive_failures > 0 ? `${source.consecutive_failures} fail${source.consecutive_failures > 1 ? 's' : ''}` : 'OK'}
-                  </span>
-                </div>
+                  {source.consecutive_failures > 0 && (
+                    <span className="flex-none text-sm font-medium text-warn">
+                      {source.consecutive_failures} fail{source.consecutive_failures > 1 ? 's' : ''}
+                    </span>
+                  )}
+                </li>
               ))}
-            </div>
+            </ul>
           </section>
         ))}
       </main>
+
+      {adding && (
+        <Sheet open onClose={() => setAdding(false)} title="Add a YouTube channel">
+          <AddSourceForm onAdded={refreshSources} />
+        </Sheet>
+      )}
     </div>
   )
 }

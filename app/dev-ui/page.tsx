@@ -1,9 +1,10 @@
 'use client'
 
 /**
- * Dev-only UI fixture — renders the reader's layout-critical pieces with
- * hostile mock data (no auth, no Supabase) so layout/perf issues can be
- * reproduced and measured in a plain browser at any viewport width.
+ * Dev-only UI fixture — renders the cards with hostile mock data (no auth, no
+ * Supabase) so layout/perf issues can be reproduced and measured in a plain
+ * browser at any viewport width. Not served in production (the proxy only lets
+ * the exact /dev-ui path through outside production builds).
  *
  * Visit /dev-ui at 360px width; run in console:
  *   [...document.querySelectorAll('*')].filter(el =>
@@ -11,11 +12,12 @@
  * to enumerate horizontal-overflow offenders.
  */
 
-import { useSyncExternalStore } from 'react'
-import { SoloCard } from '@/components/SoloCard'
+import { useState, useSyncExternalStore } from 'react'
+import { StoryCard } from '@/components/story/StoryCard'
+import { StoryListItem } from '@/components/story/StoryListItem'
+import type { StoryActions } from '@/components/story/types'
+import { DividerLabel, SnackbarProvider } from '@/components/ui'
 import { PrimitivesGallery } from './PrimitivesGallery'
-import { CategoryNav } from '@/components/CategoryNav'
-import { CATEGORIES } from '@/lib/categories'
 import type { StoryWithRelations, Category } from '@/lib/types'
 
 const noop = () => {}
@@ -40,6 +42,10 @@ const mkBullet = (i: number) => ({
   timestamp_seconds: i * 95,
 })
 
+// Built once at module load; the clock is read through a helper so no
+// component body calls it.
+const now = () => Date.now()
+
 const soloBase = {
   id: 'dev-solo-1',
   source_id: 'dev-src-1',
@@ -49,11 +55,11 @@ const soloBase = {
     'A hostile-length summary. Includes one long unbroken string ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ to probe wrapping behaviour on 360px-wide viewports.',
   bullets: Array.from({ length: 18 }, (_, i) => mkBullet(i + 1)),
   matched_topics: ['strait of hormuz', 'india'],
-  created_at: new Date(Date.now() - 3600e3).toISOString(),
+  created_at: new Date(now() - 3600e3).toISOString(),
   videos: {
     url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
     thumbnail_url: 'https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg',
-    published_at: new Date(Date.now() - 1800e3).toISOString(),
+    published_at: new Date(now() - 1800e3).toISOString(),
     duration_seconds: 3725,
   },
 }
@@ -75,89 +81,66 @@ const solo = {
 
 // The same story before it is backfilled: falls back to the long summary.
 const soloNoShort = { ...soloBase, id: 'dev-solo-2', short: null } as unknown as StoryWithRelations
+const soloRow = { ...solo, id: 'dev-solo-3' } as unknown as StoryWithRelations
+
+const SOURCE = { id: 'dev-src-1', name: 'Firstpost Vantage Extended Name' } as never
 
 const subscribeNothing = () => () => {}
 const readSearch = () => window.location.search
+
+/** Fake actions with working local state, so the dev page can exercise the card
+ *  without the provider (no auth, no Supabase). */
+function useFakeActions(startRead = false): StoryActions {
+  const [isRead, setRead] = useState(startRead)
+  const [reaction, setReaction] = useState<StoryActions['reaction']>()
+  return {
+    isRead, reaction,
+    onRead: () => setRead(true),
+    onUnread: () => setRead(false),
+    onReact: setReaction,
+    onShare: noop,
+    onMute: noop,
+  }
+}
+
+function Fixture() {
+  const a = useFakeActions()
+  const b = useFakeActions(true)
+  const c = useFakeActions()
+  const d = useFakeActions()
+  const e = useFakeActions()
+  return (
+    <div className="min-h-screen">
+      <header className="sticky top-0 z-40 flex h-topbar items-center border-b border-hairline bg-canvas px-gutter">
+        <span className="font-serif text-[21px] font-semibold">NewsBrief</span>
+      </header>
+      <main className="mx-auto max-w-2xl px-gutter pb-24">
+        <DividerLabel>Lead card</DividerLabel>
+        <StoryCard
+          story={solo} source={SOURCE} variant="lead" showCategory actions={a}
+          onDwellStart={() => logDwell('start')} onDwellEnd={o => logDwell(`end longForm=${o.longForm}`)}
+        />
+
+        <DividerLabel>Read state: dimmed, no strike-through</DividerLabel>
+        <StoryCard story={solo} source={SOURCE} showCategory actions={b} onDwellStart={noop} onDwellEnd={noop} />
+
+        <DividerLabel>Standard card</DividerLabel>
+        <StoryCard story={solo} source={SOURCE} actions={c} onDwellStart={noop} onDwellEnd={noop} />
+
+        <DividerLabel>No short version yet (falls back to the overview)</DividerLabel>
+        <StoryCard story={soloNoShort} source={SOURCE} actions={d} onDwellStart={noop} onDwellEnd={noop} />
+
+        <DividerLabel>Headline row, opens into the short card</DividerLabel>
+        <StoryListItem story={soloRow} sourceName="Firstpost Vantage Extended Name" showCategory actions={e} />
+      </main>
+    </div>
+  )
+}
 
 export default function DevUiPage() {
   // ?view=primitives swaps in the design-system gallery. useSyncExternalStore
   // keeps the first client render equal to the server's, so no hydration mismatch.
   const search = useSyncExternalStore(subscribeNothing, readSearch, () => '')
   if (new URLSearchParams(search).get('view') === 'primitives') return <PrimitivesGallery />
-
-  return (
-    <div className="min-h-screen text-slate-100">
-      {/* Header clone — every control force-rendered (worst case width) */}
-      <header className="sticky top-0 z-50 bg-slate-950/95 border-b border-slate-800/60">
-        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500 to-violet-700 flex items-center justify-center shrink-0" />
-            <div>
-              <h1 className="text-sm font-bold text-white leading-none tracking-tight">News Brief</h1>
-              <p className="text-xs text-slate-400 mt-1 inline-flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                Sources failing · last check 23h ago
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide">
-            <button className="flex items-center gap-1.5 px-3 py-2 min-h-[44px] rounded-lg text-xs font-semibold bg-violet-500/25 text-violet-200 ring-1 ring-violet-500/40 shrink-0">
-              Unread · 148
-            </button>
-            {[0, 1, 2, 3].map(i => (
-              <button key={i} className="w-11 h-11 shrink-0 rounded-lg bg-slate-800/60 ring-1 ring-slate-700/60 flex items-center justify-center">
-                <span className="w-4 h-4 rounded-sm bg-slate-600" />
-              </button>
-            ))}
-          </div>
-        </div>
-        <CategoryNav categories={CATEGORIES} active="india_global" onChange={noop} topicCount={12} todayUnread={148} />
-      </header>
-
-      <main className="max-w-2xl mx-auto px-4 py-4 space-y-3 pb-24 md:pb-6">
-        {/* Vantage-style divider clone */}
-        <div className="flex items-center gap-3 pt-2">
-          <span className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-300 bg-amber-500/15 ring-1 ring-amber-500/30 px-2.5 py-1 rounded-full uppercase tracking-wider shrink-0">
-            ⚡ Vantage — All Segments
-          </span>
-          <div className="flex-1 h-px bg-gradient-to-r from-amber-500/40 to-transparent" />
-        </div>
-
-        <SoloCard
-          story={solo}
-          source={{ id: 'dev-src-1', name: 'Firstpost Vantage Extended Name' } as never}
-          isRead={false}
-          onRead={noop}
-          onEngagement={noop}
-          onDwellStart={() => logDwell('start')}
-          onDwellEnd={o => logDwell(`end longForm=${o.longForm}`)}
-          onMuteTopic={noop}
-        />
-
-        {/* Read state: dimmed, "Read" label, no strike-through */}
-        <SoloCard
-          story={solo}
-          source={{ id: 'dev-src-1', name: 'Firstpost Vantage Extended Name' } as never}
-          showCategory
-          isRead
-          onRead={noop}
-          onEngagement={noop}
-          onDwellStart={noop}
-          onDwellEnd={noop}
-          onMuteTopic={noop}
-        />
-
-        <SoloCard
-          story={soloNoShort}
-          source={{ id: 'dev-src-1', name: 'Firstpost Vantage Extended Name' } as never}
-          isRead={false}
-          onRead={noop}
-          onEngagement={noop}
-          onDwellStart={noop}
-          onDwellEnd={noop}
-          onMuteTopic={noop}
-        />
-      </main>
-    </div>
-  )
+  return <SnackbarProvider><Fixture /></SnackbarProvider>
 }

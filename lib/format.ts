@@ -53,3 +53,9 @@ export function minutesSince(iso: string | null | undefined): number {
 export function msSince(d: Date | null): number {
   return d ? Date.now() - d.getTime() : Infinity
 }
+
+/** "Saturday 3 October": the Today masthead's overline. Kept here so the clock
+ *  is read outside the component body. */
+export function mastheadDate(d: Date = new Date()): string {
+  return d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })
+}

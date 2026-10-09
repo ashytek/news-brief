@@ -1,7 +1,9 @@
 'use client'
 
 import { useState } from 'react'
+import { Mail } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
+import { Button } from '@/components/ui'
 
 export default function AuthPage() {
   const [email, setEmail] = useState('')
@@ -35,74 +37,55 @@ export default function AuthPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
-      <div className="w-full max-w-sm">
-        {/* Logo area */}
-        <div className="text-center mb-10">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-violet-600 mb-4">
-            <svg className="w-7 h-7 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 12h6m-6-4h2" />
-            </svg>
-          </div>
-          <h1 className="text-2xl font-bold text-white">News Brief</h1>
-          <p className="text-slate-400 text-sm mt-1">Your adaptive intelligence digest</p>
+    <main className="flex min-h-screen items-center justify-center px-gutter py-10">
+      <div className="w-full max-w-[360px]">
+        {/* Brand */}
+        <div className="mb-9 text-center">
+          <span
+            aria-hidden="true"
+            className="mx-auto mb-4 grid size-12 place-items-center rounded-[13px] bg-accent-fill font-serif text-[26px] font-bold leading-none text-on-accent"
+          >
+            N
+          </span>
+          <h1 className="font-serif text-[28px] font-semibold leading-8 tracking-[-0.01em]">NewsBrief</h1>
+          <p className="t-standfirst mt-2">Your daily brief from the channels you follow.</p>
         </div>
 
         {sent ? (
-          <div className="bg-slate-900 rounded-2xl p-6 text-center border border-slate-800">
-            <div className="w-12 h-12 bg-emerald-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg className="w-6 h-6 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-              </svg>
+          <div role="status" className="rounded-panel bg-surface-1 p-6 text-center">
+            <div className="mx-auto mb-4 grid size-12 place-items-center rounded-panel bg-ok/10 text-ok ring-1 ring-ok/30">
+              <Mail className="size-6" aria-hidden="true" />
             </div>
-            <h2 className="text-white font-semibold mb-2">Check your email</h2>
-            <p className="text-slate-400 text-sm">
-              We sent a magic link to <span className="text-white">{email}</span>. Click it to sign in — no password needed.
+            <h2 className="t-h3 mb-2">Check your email</h2>
+            <p className="t-meta">
+              We sent a sign-in link to <span className="text-fg-1">{email}</span>. Open it in this browser. No password needed.
             </p>
-            <button
-              onClick={() => setSent(false)}
-              className="mt-4 text-xs text-slate-400 hover:text-slate-300 transition-colors"
-            >
-              Try a different email
-            </button>
+            <Button variant="text" className="mt-3" onClick={() => setSent(false)}>Try a different email</Button>
           </div>
         ) : (
-          <form onSubmit={handleSignIn} className="bg-slate-900 rounded-2xl p-6 border border-slate-800">
-            <div className="mb-4">
-              <label htmlFor="email" className="block text-sm font-medium text-slate-300 mb-2">
-                Email address
-              </label>
-              <input
-                id="email"
-                type="email"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                placeholder="ashytech@gmail.com"
-                required
-                className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition-all"
-              />
-            </div>
+          <form onSubmit={handleSignIn}>
+            <label htmlFor="email" className="t-label mb-1.5 block text-fg-2">Email</label>
+            <input
+              id="email"
+              type="email"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              placeholder="you@example.com"
+              autoComplete="email"
+              required
+              className="h-12 w-full rounded-panel bg-surface-2 px-3.5 text-base text-fg-1 placeholder:text-fg-3 focus:bg-surface-1 focus:outline-none focus:ring-1 focus:ring-accent"
+            />
 
-            {error && (
-              <div className="mb-4 px-4 py-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm">
-                {error}
-              </div>
-            )}
+            {error && <p role="alert" className="mt-3 rounded-control bg-bad/10 px-3 py-2 text-sm text-bad">{error}</p>}
 
-            <button
-              type="submit"
-              disabled={loading || !email}
-              className="w-full py-3 px-4 bg-violet-600 hover:bg-violet-500 disabled:bg-slate-700 disabled:text-slate-400 text-white font-semibold rounded-xl transition-all focus:outline-none focus:ring-2 focus:ring-violet-500 focus:ring-offset-2 focus:ring-offset-slate-900"
-            >
-              {loading ? 'Sending…' : 'Send magic link'}
-            </button>
+            <Button type="submit" block loading={loading} disabled={!email} className="mt-4">
+              {loading ? 'Sending…' : 'Email me a sign-in link'}
+            </Button>
 
-            <p className="mt-4 text-center text-xs text-slate-400">
-              One-tap sign in. No passwords ever.
-            </p>
+            <p className="t-meta mt-4 text-center">No password needed.</p>
           </form>
         )}
       </div>
-    </div>
+    </main>
   )
 }

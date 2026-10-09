@@ -4,8 +4,8 @@
   /* Dark only (Ash, 9 Oct 2026: no light theme). Declared unconditionally so a
      phone set to light mode can never produce white-on-white. */
   color-scheme: dark;
-  --background: #020617;
-  --foreground: #f1f5f9;
+  --background: #0e0f12;   /* = canvas */
+  --foreground: #ececf0;   /* = fg-1 */
   --accent: #a78bfa;
 }
 
@@ -34,8 +34,7 @@
                                    --ok/--warn/--bad -> text-ok / text-warn / text-bad
                                    --r-sm/--r-md     -> rounded-control / rounded-panel
                                    --gutter/--topbar-h/--navbar-h -> *-gutter / *-topbar / *-navbar
-   The page itself still paints the old slate background; the redesign
-   (session 4) switches it to `canvas` and retires the legacy classes. */
+   The page paints `canvas` since the redesign (roadmap session 4). */
 @theme {
   /* Surfaces: tonal, never pure black */
   --color-canvas: #0e0f12;
@@ -98,20 +97,16 @@
 @utility t-kicker    { @apply font-sans; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.02em; }
 @utility t-overline  { @apply font-sans text-fg-3; font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
 
-/* App-wide background — subtle radial that adds depth without contrast loss.
-   Two soft glows (violet top-right, blue bottom-left) so the dark surface
-   doesn't feel like a flat black slab. */
+/* Page background: one flat tonal canvas (no radial glows or gradients). Text in
+   fg-1; `overflow-wrap: anywhere` because real YouTube titles carry unbroken
+   hashtag chains and URLs that would otherwise push a phone-width layout sideways. */
 body {
-  background:
-    radial-gradient(ellipse 80% 60% at 100% 0%, rgba(139, 92, 246, 0.08), transparent 60%),
-    radial-gradient(ellipse 80% 60% at 0% 100%, rgba(59, 130, 246, 0.06), transparent 60%),
-    var(--background);
-  /* NOTE: no background-attachment: fixed — on mobile Chrome/WebView it forces
-     a full repaint of this background on nearly every scroll frame, which was
-     the single biggest source of scroll jank. Scrolling with the document is
-     visually indistinguishable here since the tint is a single-digit-opacity
-     ambient glow, not a focal design element. */
-  color: var(--foreground);
+  background: var(--color-canvas);
+  color: var(--color-fg-1);
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  overflow-wrap: anywhere;
 }
 
 /* Hide scrollbars while keeping scroll behaviour */
@@ -123,47 +118,16 @@ body {
   display: none;
 }
 
-/* Safe-area bottom padding for iPhone home indicator */
-.safe-area-inset-bottom {
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+/* Thin sliding bar under the top bar while a background refresh runs */
+@keyframes refresh-slide {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
 }
 
-/* Card hover glow — colour-tinted by category accent.
-   Apply via `.card-glow-violet`, `-blue`, `-amber`, `-emerald`, `-rose`. */
-@media (hover: hover) and (pointer: fine) {
-.card-glow-violet:hover  { box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.25), 0 8px 24px -8px rgba(139, 92, 246, 0.18); }
-.card-glow-blue:hover    { box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.25), 0 8px 24px -8px rgba(59, 130, 246, 0.18); }
-.card-glow-amber:hover   { box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.25), 0 8px 24px -8px rgba(245, 158, 11, 0.18); }
-.card-glow-emerald:hover { box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.25), 0 8px 24px -8px rgba(16, 185, 129, 0.18); }
-.card-glow-rose:hover    { box-shadow: 0 0 0 1px rgba(244, 63, 94, 0.25), 0 8px 24px -8px rgba(244, 63, 94, 0.18); }
-}
-
-/* Subtle rise on card hover — uses transform so it's GPU-accelerated */
-.card-rise {
-  transition: transform 200ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 200ms cubic-bezier(0.4, 0, 0.2, 1), border-color 200ms;
-}
-@media (hover: hover) and (pointer: fine) {
-  .card-rise:hover {
-    transform: translateY(-1px);
-  }
-}
-
-/* Pulse animation for "fresh" indicator */
-@keyframes fresh-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50%      { opacity: 0.6; transform: scale(1.15); }
-}
-.animate-fresh-pulse {
-  animation: fresh-pulse 2.4s ease-in-out infinite;
-}
-
-/* Smooth fade-in for newly-loaded content */
-@keyframes fade-in-up {
-  from { opacity: 0; transform: translateY(6px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-.animate-fade-in-up {
-  animation: fade-in-up 320ms cubic-bezier(0.4, 0, 0.2, 1);
+/* A card that is followed by a divider label or the end-of-brief block has no
+   rule of its own: the next element draws the separation. */
+.story-card:has(+ [data-endcap]) {
+  border-bottom-width: 0;
 }
 
 /* ── Mobile ergonomics ─────────────────────────────────────────── */
@@ -211,9 +175,13 @@ html {
 /* ── Accessibility ─────────────────────────────────────────────── */
 /* Visible keyboard focus on every interactive element (inputs keep their own
    focus ring on top of this). */
-:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+@layer base {
+  /* In the base layer so a component can still opt out (`focus:outline-none` on an
+     input that sits inside a labelled field with its own focus ring). */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

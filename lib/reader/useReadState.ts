@@ -42,9 +42,11 @@ export function useReadState(supabase: Supabase, userId: string, enabled: boolea
     if (enabled) loadReadIds()
   }, [enabled, loadReadIds])
 
-  const markRead = useCallback(async (storyId?: string, opts?: { hold?: boolean }) => {
-    if (!storyId) return
-    if (readIds.has(storyId)) return
+  /** Resolves true if the story is now saved as read, false if the write failed
+   *  (and was rolled back) or there was nothing to do. */
+  const markRead = useCallback(async (storyId?: string, opts?: { hold?: boolean }): Promise<boolean> => {
+    if (!storyId) return false
+    if (readIds.has(storyId)) return false
 
     // Optimistic update first so the UI reacts even if the network is slow
     setReadIds(prev => new Set(prev).add(storyId))
@@ -64,14 +66,18 @@ export function useReadState(supabase: Supabase, userId: string, enabled: boolea
       // Roll back so the card isn't shown as read when the DB disagrees.
       setReadIds(prev => { const n = new Set(prev); n.delete(storyId); return n })
       if (opts?.hold) setHeldIds(prev => { const n = new Set(prev); n.delete(storyId); return n })
+      return false
     }
+    return true
   }, [supabase, userId, readIds])
 
   // Batched version for "mark all as read" — the old implementation fired
   // one insert per item (up to ~200 concurrent requests on a full category).
-  const markManyRead = useCallback(async (storyIds: string[]) => {
+  // Resolves the ids that were newly marked (empty if none or the write failed),
+  // which is exactly what an Undo needs to take back.
+  const markManyRead = useCallback(async (storyIds: string[]): Promise<string[]> => {
     const newStoryIds = storyIds.filter(id => !readIds.has(id))
-    if (newStoryIds.length === 0) return
+    if (newStoryIds.length === 0) return []
 
     setReadIds(prev => {
       const next = new Set(prev)
@@ -90,8 +96,31 @@ export function useReadState(supabase: Supabase, userId: string, enabled: boolea
         newStoryIds.forEach(id => next.delete(id))
         return next
       })
+      return []
     }
+    return newStoryIds
   }, [supabase, userId, readIds])
+
+  // Undo, and the card menu's "Mark unread": delete the rows. The RLS policy on
+  // read_items covers all commands for the owner, so no migration is needed.
+  // Resolves true when the rows are gone; on failure the read marks are restored.
+  const markUnread = useCallback(async (storyIds: string[]): Promise<boolean> => {
+    // No filtering on `readIds`: an Undo callback is created in the same render as
+    // the mark itself, so its copy of `readIds` doesn't hold the new marks yet.
+    // Deleting a row that isn't there is harmless.
+    const ids = storyIds
+    if (ids.length === 0) return true
+    const drop = (set: Set<string>) => { const n = new Set(set); ids.forEach(id => n.delete(id)); return n }
+    setReadIds(drop)
+    setHeldIds(drop)
+    const { error } = await supabase.from('read_items').delete().eq('user_id', userId).in('story_id', ids)
+    if (error) {
+      console.error('markUnread failed', { count: ids.length, error })
+      setReadIds(prev => { const n = new Set(prev); ids.forEach(id => n.add(id)); return n })
+      return false
+    }
+    return true
+  }, [supabase, userId])
 
   // Read set for layout decisions only (filtering, sorting). Held cards are
   // treated as unread here so they stay put; `readIds` remains the truth for
@@ -103,5 +132,5 @@ export function useReadState(supabase: Supabase, userId: string, enabled: boolea
     return next
   }, [readIds, heldIds])
 
-  return { readIds, heldIds, layoutReadIds, clearHeld, loadReadIds, markRead, markManyRead }
+  return { readIds, heldIds, layoutReadIds, clearHeld, loadReadIds, markRead, markManyRead, markUnread }
 }

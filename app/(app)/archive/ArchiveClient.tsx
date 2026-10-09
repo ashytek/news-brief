@@ -1,12 +1,17 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { CalendarDays, Inbox, TriangleAlert } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import type { StoryWithRelations, Source } from '@/lib/types'
-import { SoloCard } from '@/components/SoloCard'
 import { STORY_SELECT } from '@/lib/constants'
-import { BackLink } from '@/components/nav/AppNav'
-import { CATEGORIES, categoryMeta } from '@/lib/categories'
+import { Chip, StateMessage, cx } from '@/components/ui'
+import { PageHead } from '@/components/shell/PageHead'
+import { TopBar } from '@/components/shell/TopBar'
+import { StoryListItem } from '@/components/story/StoryListItem'
+import { StorySkeleton } from '@/components/story/StorySkeleton'
+import { useStoryActions } from '@/components/story/useStoryActions'
+import { CATEGORIES } from '@/lib/categories'
 
 // Local-time date math, not UTC — toISOString()/'Z' boundaries bucket by UTC
 // days, which during BST (UTC+1) misclassifies stories published 00:00-01:00
@@ -35,12 +40,14 @@ function shiftDate(dateStr: string, days: number): string {
   return formatDate(d)
 }
 
-interface Props {
-  userId: string
-}
+/** Noon UTC on a local calendar day: formatting it can't slip into the next/previous day. */
+const noon = (dateStr: string) => new Date(dateStr + 'T12:00:00Z')
 
-export default function ArchiveClient({ userId }: Props) {
+const STRIP_DAYS = 6
+
+export default function ArchiveClient() {
   const supabase = createClient()
+  const actionsFor = useStoryActions()
 
   const today = formatDate(new Date())
   const yesterday = shiftDate(today, -1)
@@ -48,7 +55,6 @@ export default function ArchiveClient({ userId }: Props) {
   const [selectedDate, setSelectedDate] = useState(yesterday)
   const [stories, setStories] = useState<StoryWithRelations[]>([])
   const [sources, setSources] = useState<Record<string, Source>>({})
-  const [readIds, setReadIds] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState(false)
   const [filterCategory, setFilterCategory] = useState<string>('all')
@@ -62,18 +68,7 @@ export default function ArchiveClient({ userId }: Props) {
         setSources(map)
       }
     })
-    // Ordered + capped: an unordered fetch past Supabase's row cap returns a
-    // nondeterministic subset; most-recent-first makes the truncation
-    // predictable (old reads may resurface as unread, not a random slice).
-    supabase.from('read_items').select('story_id').eq('user_id', userId)
-      .order('read_at', { ascending: false }).limit(2000).then(({ data }) => {
-        if (data) {
-          const ids = new Set<string>()
-          data.forEach(r => { if (r.story_id) ids.add(r.story_id) })
-          setReadIds(ids)
-        }
-      })
-  }, [userId])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadStories = useCallback(async (date: string) => {
     setLoading(true)
@@ -96,187 +91,100 @@ export default function ArchiveClient({ userId }: Props) {
       setStories((data as unknown as StoryWithRelations[]) ?? [])
     }
     setLoading(false)
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-change: loadStories raises the loading flag, then awaits the query
     loadStories(selectedDate)
   }, [selectedDate, loadStories])
 
-  const markRead = async (storyId?: string) => {
-    if (!storyId || readIds.has(storyId)) return
-    // Optimistic update
-    setReadIds(prev => { const n = new Set(prev); n.add(storyId); return n })
-    const { error } = await supabase.from('read_items').insert({
-      user_id: userId,
-      story_id: storyId,
-      cluster_id: null,
-    })
-    if (error && error.code !== '23505') {
-      console.error('archive markRead failed', { storyId, error })
-    }
-  }
+  // The last six days, newest first: yesterday and back (today is the Today tab).
+  const strip = Array.from({ length: STRIP_DAYS }, (_, i) => shiftDate(today, -1 - i))
 
-  const sendEngagement = async (storyId: string, signal: string) => {
-    // Same table ReaderClient/update_weights.py read — see SearchClient.
-    const { error } = await supabase.from('engagement').insert({
-      user_id: userId, story_id: storyId, signal,
-    })
-    if (error) {
-      console.error('archive sendEngagement failed', { storyId, signal, error })
-    }
-  }
-
-  // Quick date buttons
-  const quickDates = [
-    { label: 'Yesterday', date: yesterday },
-    { label: '2 days ago', date: shiftDate(today, -2) },
-    { label: '3 days ago', date: shiftDate(today, -3) },
-    { label: '1 week ago', date: shiftDate(today, -7) },
-  ]
-
-  // Group by category
-  const categories = ['all', ...CATEGORIES.map(c => c.key)]
-  const filtered = filterCategory === 'all'
-    ? stories
-    : stories.filter(s => s.category === filterCategory)
-
-  const grouped = CATEGORIES.reduce<Record<string, StoryWithRelations[]>>((acc, { key }) => {
-    acc[key] = stories.filter(s => s.category === key)
+  const grouped = CATEGORIES.reduce<Record<string, number>>((acc, { key }) => {
+    acc[key] = stories.filter(s => s.category === key).length
     return acc
   }, {})
+  const filtered = filterCategory === 'all' ? stories : stories.filter(s => s.category === filterCategory)
 
-  const dateLabel = selectedDate === yesterday
-    ? 'Yesterday'
-    : selectedDate === shiftDate(today, -2)
-    ? '2 days ago'
-    : selectedDate === shiftDate(today, -3)
-    ? '3 days ago'
-    : new Date(selectedDate + 'T12:00:00Z').toLocaleDateString('en-GB', {
-        weekday: 'long', day: 'numeric', month: 'long'
-      })
+  const dayLabel = noon(selectedDate).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' })
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
-      {/* Header */}
-      <header className="sticky top-0 z-50 bg-slate-950/95 border-b border-slate-800/60">
-        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
-          <BackLink
-            href="/reader"
-            aria-label="Back to feed"
-            className="w-11 h-11 rounded-lg bg-slate-800 hover:bg-slate-700 active:bg-slate-700 flex items-center justify-center transition-colors"
-          >
-            <svg className="w-4 h-4 text-slate-400" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-            </svg>
-          </BackLink>
-          <div>
-            <h1 className="text-sm font-bold text-white">Archive</h1>
-            <p className="text-xs text-slate-400">{dateLabel} · {stories.length} stories</p>
-          </div>
-        </div>
-      </header>
+    <div className="min-h-screen">
+      <TopBar />
 
-      <main className="max-w-2xl mx-auto px-4 py-4 space-y-4">
-        {/* Date controls */}
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
-          {/* Quick buttons */}
-          <div className="flex flex-wrap gap-2">
-            {quickDates.map(({ label, date }) => (
+      <main className="mx-auto max-w-2xl px-gutter pb-[calc(var(--spacing-navbar)+env(safe-area-inset-bottom,0px)+1.5rem)]">
+        <PageHead title="Archive" meta={`${dayLabel} · ${loading ? '…' : stories.length} stories`} />
+
+        {/* Day strip */}
+        <div role="group" aria-label="Day" className="mt-3 grid grid-cols-7 gap-1.5">
+          {strip.map(date => {
+            const d = noon(date)
+            const on = date === selectedDate
+            return (
               <button
                 key={date}
-                onClick={() => setSelectedDate(date)}
-                className={`px-3 min-h-11 rounded-lg text-sm font-medium transition-all ${
-                  selectedDate === date
-                    ? 'bg-violet-600 text-white'
-                    : 'bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700'
-                }`}
+                type="button"
+                aria-pressed={on}
+                aria-label={d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' })}
+                onClick={() => { setSelectedDate(date); setFilterCategory('all') }}
+                className={cx(
+                  'flex h-16 min-w-0 flex-col items-center justify-center gap-0.5 rounded-panel border',
+                  on ? 'border-transparent bg-accent-soft' : 'border-hairline-strong',
+                )}
               >
-                {label}
+                <span className={cx('text-xs font-medium leading-4', on ? 'text-accent' : 'text-fg-2')}>
+                  {d.toLocaleDateString('en-GB', { weekday: 'short', timeZone: 'UTC' })}
+                </span>
+                <span className="text-lg font-semibold leading-6 tabular-nums text-fg-1">{d.getUTCDate()}</span>
               </button>
-            ))}
-          </div>
-
-          {/* Date picker */}
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-slate-400 flex-shrink-0">Or pick a date:</label>
+            )
+          })}
+          {/* Any other day: the native date picker, laid invisibly over the button */}
+          <label className="relative grid h-16 min-w-0 cursor-pointer place-items-center rounded-panel border border-hairline-strong text-fg-2 focus-within:outline-2 focus-within:outline-accent">
+            <CalendarDays className="size-6" aria-hidden="true" />
             <input
               type="date"
               value={selectedDate}
               max={yesterday}
-              onChange={e => setSelectedDate(e.target.value)}
-              className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-1 focus:ring-violet-500 focus:border-violet-500"
+              aria-label="Pick a date"
+              onChange={e => { if (e.target.value) { setSelectedDate(e.target.value); setFilterCategory('all') } }}
+              className="absolute inset-0 cursor-pointer opacity-0"
             />
-          </div>
+          </label>
         </div>
 
-        {/* Category filter pills */}
+        {/* Category filter chips */}
         {stories.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {categories.map(cat => {
-              const count = cat === 'all' ? stories.length : (grouped[cat]?.length ?? 0)
-              if (cat !== 'all' && count === 0) return null
-              return (
-                <button
-                  key={cat}
-                  onClick={() => setFilterCategory(cat)}
-                  className={`px-3 py-1 rounded-full text-xs font-medium transition-all border ${
-                    filterCategory === cat
-                      ? cat === 'all'
-                        ? 'bg-slate-700 text-white border-slate-600'
-                        : `bg-slate-800 border-slate-700 ${categoryMeta(cat)?.legacy.text ?? ''}`
-                      : 'bg-transparent border-slate-800 text-slate-400 hover:text-slate-300'
-                  }`}
-                >
-                  {cat === 'all' ? 'All' : categoryMeta(cat)?.label} ({count})
-                </button>
-              )
-            })}
+          <div role="group" aria-label="Section" className="scrollbar-hide -mx-gutter flex gap-2 overflow-x-auto px-gutter py-3">
+            <Chip selected={filterCategory === 'all'} count={stories.length} onClick={() => setFilterCategory('all')}>All</Chip>
+            {CATEGORIES.filter(c => grouped[c.key] > 0).map(c => (
+              <Chip key={c.key} selected={filterCategory === c.key} count={grouped[c.key]} onClick={() => setFilterCategory(c.key)}>
+                {c.label}
+              </Chip>
+            ))}
           </div>
         )}
 
-        {/* Stories */}
         {loading ? (
-          <div className="flex justify-center py-16">
-            <div className="w-6 h-6 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
-          </div>
+          <StorySkeleton count={3} />
         ) : loadError ? (
-          <div className="text-center py-20 px-6">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-rose-500/10 ring-1 ring-rose-500/30 mb-4">
-              <svg className="w-8 h-8 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
-              </svg>
-            </div>
-            <p className="text-base font-semibold text-rose-200">Couldn&apos;t load this date</p>
-            <p className="text-sm text-slate-400 mt-1.5 max-w-xs mx-auto">
-              Something went wrong fetching stories — check your connection and try again.
-            </p>
-            <button
-              onClick={() => loadStories(selectedDate)}
-              className="mt-5 text-sm font-semibold text-violet-300 hover:text-violet-200 transition-colors inline-flex items-center gap-1"
-            >
-              Try again
-            </button>
-          </div>
+          <StateMessage tone="error" icon={TriangleAlert} title="Couldn't load this date" action={{ label: 'Try again', onClick: () => loadStories(selectedDate) }}>
+            Something went wrong fetching stories. Check your connection and try again.
+          </StateMessage>
         ) : filtered.length === 0 ? (
-          <div className="text-center py-20">
-            <div className="text-4xl mb-3">📭</div>
-            <p className="text-slate-400 font-medium">No stories on this date</p>
-            <p className="text-slate-400 text-sm mt-1">
-              Try a different date — the pipeline only stores stories from the selected lookback window
-            </p>
-          </div>
+          <StateMessage icon={Inbox} title="No stories on this date">
+            Try a different day. The pipeline only keeps stories from its lookback window.
+          </StateMessage>
         ) : (
-          <div className="space-y-3">
+          <div className="border-t border-hairline">
             {filtered.map(story => (
-              <SoloCard
+              <StoryListItem
                 key={story.id}
                 story={story}
-                source={sources[story.source_id]}
-                isRead={readIds.has(story.id)}
-                onRead={() => markRead(story.id)}
-                onEngagement={(sig) => sendEngagement(story.id, sig)}
-                onDwellStart={() => {}}
-                onDwellEnd={() => {}}
+                sourceName={sources[story.source_id]?.name}
+                showCategory
+                actions={actionsFor(story)}
               />
             ))}
           </div>

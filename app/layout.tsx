@@ -12,16 +12,14 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-// Headline serif for the redesign (Newsreader 600; opsz is the optical-size
-// axis the mockups use). Nothing renders in it yet, and preload:false keeps a
-// ~100 KB font download off every page until a screen actually needs it —
-// flip it on when the cards adopt `font-serif` (roadmap session 4).
+// Headline serif (Newsreader 600; opsz is the optical-size axis the mockups
+// use). Every screen's headlines are set in it since the redesign, so it is
+// preloaded: the first paint already has the right face.
 const newsreader = Newsreader({
   variable: "--font-newsreader",
   subsets: ["latin"],
   axes: ["opsz"],
   display: "swap",
-  preload: false,
 });
 
 export const metadata: Metadata = {
@@ -47,7 +45,7 @@ export const viewport: Viewport = {
   initialScale: 1,
   // Matches manifest.json's theme_color — tints the Android status bar /
   // recent-apps card instead of leaving it default white.
-  themeColor: "#030712",
+  themeColor: "#0e0f12",
   // Lets env(safe-area-inset-*) resolve to real values on notch/gesture-nav
   // devices instead of always reading 0 — needed for the bottom nav and FAB
   // to actually clear the gesture bar rather than sit under it.

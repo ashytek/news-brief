@@ -1,29 +1,39 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { Hash, Pencil, Plus, TriangleAlert, Check, Inbox } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import type { Source } from '@/lib/types'
 import type { StoryWithRelations } from '@/lib/types'
-import { SoloCard } from './SoloCard'
 import { STORY_SELECT } from '@/lib/constants'
-import { categoryLabel } from '@/lib/categories'
+import { Button, DividerLabel, StateMessage, cx } from '@/components/ui'
+import { PageHead } from '@/components/shell/PageHead'
+import { StoryListItem } from '@/components/story/StoryListItem'
+import { StorySkeleton } from '@/components/story/StorySkeleton'
+import { useStoryActions } from '@/components/story/useStoryActions'
+import { useReader } from '@/lib/reader/ReaderProvider'
 
-interface Props {
-  userId: string
-  readIds: Set<string>
-  onMarkRead: (storyId?: string, clusterId?: string) => Promise<void>
-  onEngagement: (signal: string, storyId?: string, clusterId?: string) => Promise<void>
-}
+interface Keyword { id: string; keyword: string; is_active: boolean }
 
-export function TopicsPanel({ userId, readIds, onMarkRead, onEngagement }: Props) {
+/** "Matched: war · middle east +2": the first two, then how many more. */
+const matchedLabel = (topics: string[]) =>
+  `Matched: ${topics.slice(0, 2).join(' · ')}${topics.length > 2 ? ` +${topics.length - 2}` : ''}`
+
+/** The Topics tab: the watchlist as chips (Edit reveals pause/remove), an add
+ *  field, and the latest stories that matched, as headline rows that open into
+ *  the short card. */
+export function TopicsPanel() {
   const supabase = createClient()
+  const r = useReader()
+  const actionsFor = useStoryActions()
 
-  const [keywords, setKeywords] = useState<{ id: string; keyword: string; is_active: boolean }[]>([])
+  const [keywords, setKeywords] = useState<Keyword[]>([])
   const [stories, setStories] = useState<StoryWithRelations[]>([])
   const [sources, setSources] = useState<Record<string, Source>>({})
   const [loading, setLoading] = useState(true)
   const [newKeyword, setNewKeyword] = useState('')
   const [adding, setAdding] = useState(false)
+  const [editing, setEditing] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [loadError, setLoadError] = useState(false)
 
@@ -65,8 +75,9 @@ export function TopicsPanel({ userId, readIds, onMarkRead, onEngagement }: Props
     }
 
     setLoading(false)
-  }, [])
+  }, [supabase])
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount: loadData raises the loading flag, then awaits the queries
   useEffect(() => { loadData() }, [loadData])
 
   const addKeyword = async () => {
@@ -77,7 +88,7 @@ export function TopicsPanel({ userId, readIds, onMarkRead, onEngagement }: Props
     const { error } = await supabase.from('topic_keywords').insert({ keyword: kw, is_active: true })
     if (error) {
       console.error('addKeyword failed', { kw, error })
-      setErrorMsg(error.code === '23505' ? `"${kw}" is already tracked` : 'Could not add keyword — try again')
+      setErrorMsg(error.code === '23505' ? `"${kw}" is already tracked` : 'Could not add the keyword. Try again.')
     } else {
       setNewKeyword('')
       await loadData()
@@ -95,7 +106,7 @@ export function TopicsPanel({ userId, readIds, onMarkRead, onEngagement }: Props
     if (error) {
       console.error('toggleKeyword failed', { id, error })
       setKeywords(prev => prev.map(k => k.id === id ? { ...k, is_active } : k))
-      setErrorMsg('Could not update keyword — try again')
+      setErrorMsg('Could not update the keyword. Try again.')
     }
   }
 
@@ -107,161 +118,115 @@ export function TopicsPanel({ userId, readIds, onMarkRead, onEngagement }: Props
     if (error) {
       console.error('deleteKeyword failed', { id, error })
       if (removed) setKeywords(prev => [...prev, removed].sort((a, b) => a.keyword.localeCompare(b.keyword)))
-      setErrorMsg('Could not remove keyword — try again')
+      setErrorMsg('Could not remove the keyword. Try again.')
     }
   }
 
-  const activeKeywords = keywords.filter(k => k.is_active)
-  const inactiveKeywords = keywords.filter(k => !k.is_active)
+  const active = keywords.filter(k => k.is_active)
+  const paused = keywords.filter(k => !k.is_active)
+
+  const keywordChip = (kw: Keyword) => (
+    <li key={kw.id} className={cx('flex items-center rounded-control border border-hairline-strong', !kw.is_active && 'opacity-70')}>
+      <span className={cx('px-3.5 text-sm font-medium leading-[34px]', kw.is_active ? 'text-fg-1' : 'text-fg-2')}>{kw.keyword}</span>
+      {editing && (
+        <>
+          <button
+            type="button"
+            onClick={() => toggleKeyword(kw.id, kw.is_active)}
+            className="min-h-11 px-2.5 text-sm font-semibold text-accent active:opacity-70"
+            aria-label={`${kw.is_active ? 'Pause' : 'Resume'} ${kw.keyword}`}
+          >
+            {kw.is_active ? 'Pause' : 'Resume'}
+          </button>
+          <button
+            type="button"
+            onClick={() => deleteKeyword(kw.id)}
+            className="min-h-11 pl-1 pr-3 text-sm font-semibold text-bad active:opacity-70"
+            aria-label={`Remove ${kw.keyword}`}
+          >
+            Remove
+          </button>
+        </>
+      )}
+    </li>
+  )
 
   return (
-    <div className="space-y-4">
-      {/* Keyword management */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-800/60">
-          <h2 className="text-sm font-semibold text-white">Topic Watchlist</h2>
-          <p className="text-xs text-slate-400 mt-0.5">Keywords flagged across all sources</p>
-        </div>
+    <div>
+      <PageHead
+        title="Topics"
+        meta={`${active.length} watching${r.topicCount > 0 ? ` · ${r.topicCount} matched stories this week` : ''}`}
+      />
 
-        {/* Add keyword */}
-        <div className="px-4 py-3 border-b border-slate-800/40">
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={newKeyword}
-              onChange={e => setNewKeyword(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && addKeyword()}
-              placeholder="Add keyword… e.g. Gaza, GPT-5, RFK"
-              className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-rose-500 focus:border-rose-500"
-            />
-            <button
-              onClick={addKeyword}
-              disabled={adding || !newKeyword.trim()}
-              className="px-4 min-h-11 bg-rose-600 hover:bg-rose-500 active:bg-rose-500 disabled:bg-slate-700 disabled:text-slate-400 text-white text-sm font-medium rounded-lg transition-colors"
-            >
-              {adding ? '…' : 'Add'}
-            </button>
-          </div>
-          {errorMsg && (
-            <p className="text-xs text-rose-400 mt-2">{errorMsg}</p>
+      {/* Add keyword */}
+      <form
+        onSubmit={e => { e.preventDefault(); void addKeyword() }}
+        className="mt-3 flex items-center gap-2"
+      >
+        <label className="flex h-12 min-w-0 flex-1 items-center gap-2.5 rounded-panel bg-surface-2 px-3.5 focus-within:bg-surface-1 focus-within:ring-1 focus-within:ring-accent">
+          <Hash className="size-5 flex-none text-fg-3" aria-hidden="true" />
+          <input
+            type="text"
+            value={newKeyword}
+            onChange={e => setNewKeyword(e.target.value)}
+            placeholder="Add a topic to watch"
+            aria-label="Add a topic to watch"
+            className="min-w-0 flex-1 bg-transparent text-base text-fg-1 placeholder:text-fg-3 focus:outline-none"
+          />
+        </label>
+        <Button type="submit" icon={Plus} loading={adding} disabled={!newKeyword.trim()}>Add</Button>
+      </form>
+      {errorMsg && <p role="alert" className="mt-2 text-sm text-bad">{errorMsg}</p>}
+
+      {/* Watchlist */}
+      {keywords.length > 0 && (
+        <>
+          <DividerLabel
+            className="pt-6"
+            action={
+              <Button variant="text" icon={editing ? Check : Pencil} onClick={() => setEditing(v => !v)} aria-pressed={editing}>
+                {editing ? 'Done' : 'Edit'}
+              </Button>
+            }
+          >
+            Watching
+          </DividerLabel>
+          <ul className="mt-2 flex flex-wrap gap-2">{active.map(keywordChip)}</ul>
+          {paused.length > 0 && (
+            <>
+              <p className="t-overline mt-5">Paused</p>
+              <ul className="mt-2 flex flex-wrap gap-2">{paused.map(keywordChip)}</ul>
+            </>
           )}
-        </div>
-
-        {/* Active keywords */}
-        {activeKeywords.length > 0 && (
-          <div className="px-4 py-3 flex flex-wrap gap-2">
-            {activeKeywords.map(kw => (
-              <span key={kw.id} className="flex items-center bg-rose-500/15 border border-rose-500/30 text-rose-300 text-sm rounded-full pl-3 min-h-11">
-                {kw.keyword}
-                <button
-                  onClick={() => toggleKeyword(kw.id, kw.is_active)}
-                  className="ml-0.5 min-w-11 min-h-11 flex items-center justify-center text-rose-300 hover:text-rose-100 active:opacity-70 transition-colors"
-                  title="Pause"
-                  aria-label={`Pause ${kw.keyword}`}
-                >
-                  ⏸
-                </button>
-                <button
-                  onClick={() => deleteKeyword(kw.id)}
-                  className="min-w-11 min-h-11 -ml-2 flex items-center justify-center text-rose-300 hover:text-rose-100 active:opacity-70 transition-colors"
-                  title="Remove"
-                  aria-label={`Remove ${kw.keyword}`}
-                >
-                  ×
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
-
-        {/* Paused keywords */}
-        {inactiveKeywords.length > 0 && (
-          <div className="px-4 pb-3 flex flex-wrap gap-2">
-            <span className="text-xs text-slate-400 w-full">Paused:</span>
-            {inactiveKeywords.map(kw => (
-              <span key={kw.id} className="flex items-center bg-slate-800 border border-slate-700 text-slate-400 text-sm rounded-full pl-3 min-h-11">
-                {kw.keyword}
-                <button
-                  onClick={() => toggleKeyword(kw.id, kw.is_active)}
-                  className="ml-0.5 min-w-11 min-h-11 flex items-center justify-center text-slate-400 hover:text-slate-200 active:opacity-70 transition-colors"
-                  title="Resume"
-                  aria-label={`Resume ${kw.keyword}`}
-                >
-                  ▶
-                </button>
-                <button
-                  onClick={() => deleteKeyword(kw.id)}
-                  className="min-w-11 min-h-11 -ml-2 flex items-center justify-center text-slate-400 hover:text-slate-200 active:opacity-70 transition-colors"
-                  title="Remove"
-                  aria-label={`Remove ${kw.keyword}`}
-                >
-                  ×
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
-
-        {keywords.length === 0 && (
-          <div className="px-4 pb-4 pt-1 text-xs text-slate-400">
-            No keywords yet. Add one above to start tracking topics across all your sources.
-          </div>
-        )}
-      </div>
+        </>
+      )}
+      {!loading && keywords.length === 0 && (
+        <p className="t-meta mt-4">No topics yet. Add one above to track it across all your sources.</p>
+      )}
 
       {/* Matched stories */}
+      <DividerLabel className="pt-6">Latest matches</DividerLabel>
       {loading ? (
-        <div className="flex justify-center py-10">
-          <div className="w-5 h-5 border-2 border-rose-500 border-t-transparent rounded-full animate-spin" />
-        </div>
+        <StorySkeleton count={2} />
       ) : loadError ? (
-        <div className="text-center py-12 px-6" role="alert">
-          <p className="text-base font-semibold text-rose-200">Couldn&apos;t load topics</p>
-          <p className="text-sm text-slate-400 mt-1.5">Something went wrong fetching your watchlist and matches.</p>
-          <button
-            onClick={loadData}
-            className="mt-4 min-h-11 px-4 text-sm font-semibold text-violet-300 hover:text-violet-200 active:opacity-70 transition-colors"
-          >
-            Try again
-          </button>
-        </div>
+        <StateMessage tone="error" icon={TriangleAlert} title="Couldn't load topics" action={{ label: 'Try again', onClick: loadData }}>
+          Something went wrong fetching your watchlist and matches.
+        </StateMessage>
       ) : stories.length === 0 ? (
-        <div className="text-center py-12">
-          <div className="text-3xl mb-3">🔍</div>
-          <p className="text-slate-400 font-medium text-sm">No topic matches yet</p>
-          <p className="text-slate-400 text-xs mt-1">
-            Stories matching your keywords will appear here after the next pipeline run
-          </p>
-        </div>
+        <StateMessage icon={Inbox} title="No topic matches yet">
+          Stories matching your topics appear here after the next pipeline run.
+        </StateMessage>
       ) : (
-        <div className="space-y-3">
-          <p className="text-xs text-slate-400 px-1">{stories.length} matched stories</p>
+        <div>
           {stories.map(story => (
-            <div key={story.id}>
-              {/* Topic badges */}
-              {story.matched_topics && story.matched_topics.length > 0 && (
-                <div className="flex flex-wrap gap-1 mb-1 px-1">
-                  <span className="text-xs text-slate-400">
-                    {categoryLabel(story.category)} ·
-                  </span>
-                  {story.matched_topics.map(t => (
-                    <span key={t} className="text-xs bg-rose-500/15 text-rose-400 border border-rose-500/20 px-2 py-0.5 rounded-full">
-                      {t}
-                    </span>
-                  ))}
-                </div>
-              )}
-              <SoloCard
-                story={story}
-                source={sources[story.source_id]}
-                showCategory
-                isRead={readIds.has(story.id)}
-                onRead={() => onMarkRead(story.id)}
-                onEngagement={(signal) => onEngagement(signal, story.id)}
-                onDwellStart={() => {}}
-                onDwellEnd={() => {}}
-              />
-            </div>
+            <StoryListItem
+              key={story.id}
+              story={story}
+              sourceName={sources[story.source_id]?.name}
+              showCategory
+              kickerExtra={matchedLabel(story.matched_topics ?? [])}
+              actions={actionsFor(story)}
+            />
           ))}
         </div>
       )}

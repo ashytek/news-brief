@@ -8,5 +8,5 @@ export default async function ArchivePage() {
   const user = await getUser()
   if (!user) redirect('/auth')
 
-  return <ArchiveClient userId={user.id} />
+  return <ArchiveClient />
 }

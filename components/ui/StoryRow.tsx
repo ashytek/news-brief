@@ -1,22 +1,31 @@
 'use client'
 
 import { useMemo, type ReactNode } from 'react'
-import { Check, Play } from 'lucide-react'
+import { Check } from 'lucide-react'
 import type { StoryWithRelations } from '@/lib/types'
 import { estimateReadMinutes, formatRelativeDate, minutesSince, readShort } from '@/lib/format'
 import { CategoryMark } from './CategoryMark'
+import { StoryThumb } from './StoryThumb'
+import { Highlight } from './Highlight'
 import { cx } from './cx'
 
 /** A story as one compact row: kicker, serif headline, two-line dek, meta (led by
  *  the unread dot or a "Read" tag), and a 104 px thumbnail. Used wherever a list of stories should scan quickly
- *  (Search, Archive, the catch-up headline list). Give it `onToggle` and the
+ *  (Search, Archive, Topics, the catch-up headline list). Give it `onToggle` and the
  *  headline becomes a disclosure button — the whole row is its hit area — that
- *  reveals `children` (the short card) below the row. */
-export function StoryRow({ story, sourceName, isRead = false, showCategory = false, expanded, onToggle, children }: {
+ *  reveals `children` (the short card) below the row; while open the dek is
+ *  dropped, because the short card's lead says the same thing. */
+export function StoryRow({
+  story, sourceName, isRead = false, showCategory = false, kickerExtra, highlight, expanded, onToggle, children,
+}: {
   story: StoryWithRelations
   sourceName?: string
   isRead?: boolean
   showCategory?: boolean
+  /** Extra kicker text after the source ("Matched: war · middle east"). */
+  kickerExtra?: ReactNode
+  /** Search words to mark in the headline and dek. */
+  highlight?: string
   /** Only meaningful with `onToggle`. */
   expanded?: boolean
   onToggle?: () => void
@@ -32,14 +41,13 @@ export function StoryRow({ story, sourceName, isRead = false, showCategory = fal
   )
   const sections = story.bullets?.[0]?.title ? story.bullets.length : 0
   const isNew = minutesSince(video?.published_at) < 60
-  // mqdefault is a true 16:9 image; hqdefault carries letterbox bars at 104 px.
-  const thumb = video?.thumbnail_url?.replace('/hqdefault.', '/mqdefault.') ?? null
+  const hasThumb = !!video?.thumbnail_url
 
   return (
     <article
       className={cx(
         'relative grid gap-x-3.5 gap-y-1.5 border-b border-hairline py-4 last:border-b-0 [overflow-wrap:anywhere]',
-        thumb ? 'grid-cols-[minmax(0,1fr)_104px]' : 'grid-cols-1',
+        hasThumb ? 'grid-cols-[minmax(0,1fr)_104px]' : 'grid-cols-1',
       )}
     >
       {/* Kicker: category, source, "New" */}
@@ -50,6 +58,7 @@ export function StoryRow({ story, sourceName, isRead = false, showCategory = fal
         )}
         {isNew && <span className="t-kicker flex-none text-accent">New</span>}
       </div>
+      {kickerExtra && <div className="col-span-full -mt-0.5 text-xs leading-4 text-fg-3">{kickerExtra}</div>}
 
       <div className="flex min-w-0 flex-col gap-1.5">
         <h3 className={cx('t-head', isRead ? 'font-medium text-fg-3' : 'text-fg-1')}>
@@ -60,11 +69,13 @@ export function StoryRow({ story, sourceName, isRead = false, showCategory = fal
               aria-expanded={!!expanded}
               className="text-left after:absolute after:inset-0 after:content-['']"
             >
-              {story.headline}
+              <Highlight text={story.headline} query={highlight} />
             </button>
-          ) : story.headline}
+          ) : <Highlight text={story.headline} query={highlight} />}
         </h3>
-        {dek && <p className="line-clamp-2 text-sm leading-[21px] text-fg-2">{dek}</p>}
+        {dek && !expanded && (
+          <p className="line-clamp-2 text-sm leading-[21px] text-fg-2"><Highlight text={dek} query={highlight} /></p>
+        )}
         <p className="t-meta flex flex-wrap items-center gap-x-1.5">
           {isRead ? (
             <>
@@ -91,38 +102,9 @@ export function StoryRow({ story, sourceName, isRead = false, showCategory = fal
         </p>
       </div>
 
-      {thumb && (
-        <div className="relative z-10 mt-0.5 aspect-video w-[104px] self-start overflow-hidden rounded-control bg-surface-2">
-          {video?.url ? (
-            <a
-              href={video.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label={`Watch on YouTube: ${story.headline}`}
-              className="block size-full"
-            >
-              {/* decorative: the headline sits right beside it */}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={thumb} alt="" loading="lazy" className={cx('size-full object-cover', isRead && 'opacity-55')} />
-              <PlayBadge />
-            </a>
-          ) : (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={thumb} alt="" loading="lazy" className={cx('size-full object-cover', isRead && 'opacity-55')} />
-          )}
-        </div>
-      )}
+      {hasThumb && <StoryThumb story={story} isRead={isRead} className="relative z-10 mt-0.5 self-start" />}
 
       {expanded && children && <div className="col-span-full pt-2">{children}</div>}
     </article>
-  )
-}
-
-/** Always visible (not hover-only): the thumbnail is a link to the video. */
-function PlayBadge() {
-  return (
-    <span className="absolute bottom-1.5 left-1.5 grid size-[22px] place-items-center rounded-full bg-black/60 text-white">
-      <Play className="ml-px size-[11px] fill-current" aria-hidden="true" />
-    </span>
   )
 }

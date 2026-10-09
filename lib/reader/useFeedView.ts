@@ -1,7 +1,9 @@
 import { useCallback, useMemo } from 'react'
-import type { ActiveTab } from '@/components/CategoryNav'
-import { interleaveLead, isIGRSource } from '@/lib/ranking'
+import { interleaveLead, isIGRSource, rankItems } from '@/lib/ranking'
+import { CATEGORY_KEYS } from '@/lib/categories'
 import type { Source, StoryWithRelations } from '@/lib/types'
+import { FEED_SIZE, type PoolStory } from './useFeedMeta'
+import type { ActiveTab } from './types'
 
 /** Everything the feed screens derive from the loaded stories: mute/active
  *  filters, the Unread/All view, the IGR+Vantage pinned block, the merged
@@ -9,7 +11,7 @@ import type { Source, StoryWithRelations } from '@/lib/types'
  *  filtering and counts are exactly what ReaderClient computed inline. */
 export function useFeedView({
   activeTab, soloStories, todayStories, sources, readIds, layoutReadIds, showUnreadOnly,
-  hasMutedTopic, prevVisit,
+  hasMutedTopic, prevVisit, categoryPool, sourceWeights, topicWeights,
 }: {
   activeTab: ActiveTab
   soloStories: StoryWithRelations[]
@@ -20,6 +22,9 @@ export function useFeedView({
   showUnreadOnly: boolean
   hasMutedTopic: (topics: string[] | null | undefined) => boolean
   prevVisit: number | null
+  categoryPool: Record<string, PoolStory[]> | null
+  sourceWeights: Record<string, number>
+  topicWeights: Record<string, number>
 }) {
   const isActiveSource = useCallback((sourceId: string) =>
     sources[sourceId]?.is_active !== false,
@@ -54,12 +59,41 @@ export function useFeedView({
     [todayStories, isActiveSource, hasMutedTopic]
   )
 
+  // The brief itself: the top 12 by ranking. Held (dwell-read) cards still rank as
+  // unread so they stay put; the count and the progress bar use the real read set.
+  const todayRanked = useMemo(
+    () => rankItems(activeTodayStories, layoutReadIds, sourceWeights, topicWeights, 12,
+      s => isIGRSource(sources[s.source_id])),
+    [activeTodayStories, layoutReadIds, sourceWeights, topicWeights, sources],
+  )
+
+  // The Today badge counts what the brief shows (not every story from the last 24 h),
+  // so "Today 12" and "0 of 12 read" agree.
   const todayUnread = useMemo(
-    () => activeTodayStories.filter(s => !readIds.has(s.id)).length,
-    [activeTodayStories, readIds]
+    () => todayRanked.filter(item => !readIds.has(item.data.id)).length,
+    [todayRanked, readIds]
   )
 
   const isEmpty = visibleSolos.length === 0
+
+  // Unread per Sections chip: the newest stories of each category, through the same
+  // mute / active-source filters and read marks as the feed itself. null until
+  // the pool has loaded, so a chip shows no number rather than a wrong one.
+  // "All" is the newest FEED_SIZE across every category (what the All feed loads),
+  // not the sum of the categories, so its number matches the list it opens.
+  const sectionUnread = useMemo(() => {
+    if (!categoryPool) return null
+    const keep = (s: PoolStory) =>
+      isActiveSource(s.source_id) && !hasMutedTopic(s.matched_topics) && !readIds.has(s.id)
+    const counts: Record<string, number> = {}
+    for (const key of CATEGORY_KEYS) counts[key] = (categoryPool[key] ?? []).filter(keep).length
+    counts.all = CATEGORY_KEYS
+      .flatMap(key => categoryPool[key] ?? [])
+      .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
+      .slice(0, FEED_SIZE)
+      .filter(keep).length
+    return counts
+  }, [categoryPool, isActiveSource, hasMutedTopic, readIds])
 
   const isVantage = useCallback((story: StoryWithRelations) => {
     const src = sources[story.source_id]
@@ -119,7 +153,7 @@ export function useFeedView({
   }, [mergedFeed, isNewSinceVisit])
 
   return {
-    visibleSolos, unreadCount, activeTodayStories, todayUnread, isEmpty,
+    visibleSolos, unreadCount, activeTodayStories, todayRanked, todayUnread, isEmpty, sectionUnread,
     pinnedMix, mergedFeed, newSinceVisit, newLeadCount, isActiveSource,
   }
 }
