@@ -6,6 +6,8 @@ import { useEffect, useRef, useState } from 'react'
 export function useSinceVisit(enabled: boolean) {
   const [prevVisit, setPrevVisit] = useState<number | null>(null)
   const [dismissed, setDismissed] = useState(false)
+  // True once the previous visit has been read (null then means "none on record").
+  const [visitReady, setVisitReady] = useState(false)
 
   // Read the previous visit, then record this one. Guarded so a re-run of the
   // effect (React strict mode in dev) can't read the timestamp it just wrote.
@@ -20,8 +22,9 @@ export function useSinceVisit(enabled: boolean) {
       setPrevVisit(Number.isNaN(t) ? null : t)
       localStorage.setItem('newsbrief_lastVisit', new Date().toISOString())
     } catch { /* storage blocked: no banner */ }
+    setVisitReady(true)
   }, [enabled])
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  return { prevVisit, dismissedSinceNotice: dismissed, dismissSinceNotice: () => setDismissed(true) }
+  return { prevVisit, visitReady, dismissedSinceNotice: dismissed, dismissSinceNotice: () => setDismissed(true) }
 }

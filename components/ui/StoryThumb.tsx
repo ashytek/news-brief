@@ -5,13 +5,13 @@ import { cx } from './cx'
 
 /** The story's video thumbnail, a link to the video with an always-visible play
  *  badge (not hover-only: this is a phone app). `row` is the 104 px thumbnail
- *  beside a headline; `lead` is the full-width 16:9 image of the Today lead card,
+ *  beside a headline (`compact` is the 88 px one of the catch-up headline list); `lead` is the full-width 16:9 image of the Today lead card,
  *  with the video length. The headline sits right next to it, so the image
  *  itself is decorative (alt=""). */
 export function StoryThumb({ story, isRead = false, size = 'row', className }: {
   story: StoryWithRelations
   isRead?: boolean
-  size?: 'row' | 'lead'
+  size?: 'row' | 'compact' | 'lead'
   className?: string
 }) {
   const video = story.videos
@@ -39,7 +39,7 @@ export function StoryThumb({ story, isRead = false, size = 'row', className }: {
     <div
       className={cx(
         'relative aspect-video overflow-hidden bg-surface-2',
-        lead ? 'w-full rounded-panel' : 'w-[104px] flex-none rounded-control',
+        lead ? 'w-full rounded-panel' : cx('flex-none rounded-control', size === 'compact' ? 'w-[88px]' : 'w-[104px]'),
         className,
       )}
     >

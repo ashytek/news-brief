@@ -13,6 +13,9 @@ import { FeedToolbar } from '@/components/reader/FeedToolbar'
 import { SinceVisitNotice } from '@/components/reader/SinceVisitNotice'
 import { FeedList } from '@/components/reader/FeedList'
 import { TodayFeed } from '@/components/reader/TodayFeed'
+import { TodayMasthead } from '@/components/reader/TodayMasthead'
+import { CatchUpFeed } from '@/components/catchup/CatchUpFeed'
+import { CatchUpToggle } from '@/components/catchup/CatchUpToggle'
 
 /** The Reader screen: a thin view over the state held by <ReaderProvider>
  *  (lib/reader). Today, Sections and Topics are three views of this one route,
@@ -35,15 +38,19 @@ export default function ReaderClient() {
 
   const { activeTab } = r
   const inSections = isSection(activeTab)
+  // The catch-up has its own notice; the plain "N new since you left" is for the normal feed.
   const showNotice = !r.loading && !r.loadError && r.newSinceVisit > 0 && r.prevVisit !== null && !r.dismissedSinceNotice
-    && activeTab !== 'topics'
+    && activeTab !== 'topics' && !r.catchUp.on
+  const catchUp = r.catchUp.on
+  const settled = !r.catchUp.pending   // the toggle and toolbar wait for the automatic decision
 
   return (
     <div className="min-h-screen">
       <TopBar>{inSections && <SectionsBar />}</TopBar>
 
       <main className="mx-auto max-w-2xl px-gutter pb-[calc(var(--spacing-navbar)+env(safe-area-inset-bottom,0px)+1.5rem)]">
-        {inSections && (
+        {inSections && settled && <CatchUpToggle feedLabel="Feed" className="mt-3" />}
+        {inSections && settled && !catchUp && (
           <FeedToolbar
             showUnreadOnly={r.showUnreadOnly}
             unreadCount={r.unreadCount}
@@ -55,9 +62,11 @@ export default function ReaderClient() {
           <SinceVisitNotice count={r.newSinceVisit} since={r.prevVisit} onDismiss={r.dismissSinceNotice} />
         )}
 
-        {activeTab === 'today' && <ErrorBoundary><TodayFeed /></ErrorBoundary>}
+        {activeTab === 'today' && !catchUp && <ErrorBoundary><TodayFeed /></ErrorBoundary>}
+        {activeTab === 'today' && catchUp && <ErrorBoundary><TodayMasthead /><CatchUpFeed /></ErrorBoundary>}
         {activeTab === 'topics' && <TopicsPanel />}
-        {inSections && <FeedList />}
+        {inSections && !catchUp && <FeedList />}
+        {inSections && catchUp && <ErrorBoundary><CatchUpFeed /></ErrorBoundary>}
       </main>
       <InstallPrompt />
     </div>

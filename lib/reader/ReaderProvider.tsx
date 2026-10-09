@@ -4,6 +4,9 @@ import { createContext, useCallback, useContext, useEffect, useLayoutEffect, use
 import { createClient } from '@/lib/supabase/client'
 import { useSnackbar } from '@/components/ui'
 import type { StoryWithRelations } from '@/lib/types'
+import { DWELL_SHORT_SECONDS } from '@/lib/constants'
+import { interleaveLead, isIGRSource } from '@/lib/ranking'
+import { nowDate } from '@/lib/format'
 import { useActiveTab } from './useActiveTab'
 import { useReadState } from './useReadState'
 import { useMutedTopics } from './useMutedTopics'
@@ -16,6 +19,9 @@ import { useDwellTracking, useEngagement } from './useEngagement'
 import { useSinceVisit } from './useSinceVisit'
 import { useReactions } from './useReactions'
 import { useFeedView } from './useFeedView'
+import { useSectionUnread } from './useSectionUnread'
+import { useCatchUp } from './useCatchUp'
+import { buildCatchUp } from './catchUp'
 
 /** A feed kept in memory from before a trip to Search/Archive/Sources is shown
  *  at once; if it is older than this when you come back it is revalidated in
@@ -45,7 +51,20 @@ function useReaderValue(userId: string) {
   const weights = useRankingWeights(supabase, userId, active)
   const meta = useFeedMeta(supabase, active)
   const health = usePipelineHealth(supabase, true)
-  const content = useFeedContent(supabase, { activeTab, tabReady, clearHeld: read.clearHeld })
+  const sectionUnread = useSectionUnread({
+    categoryPool: meta.categoryPool, sources: meta.sources, hasMutedTopic: muted.hasMutedTopic, readIds: read.readIds,
+  })
+  const visit = useSinceVisit(active)
+  // Catch-up on/off: decided once from the last visit and the unread count (the same
+  // number as the "All" chip), then the toggle overrides it. See useCatchUp.
+  const catchUp = useCatchUp({
+    enabled: active,
+    visitReady: visit.visitReady,
+    prevVisit: visit.prevVisit,
+    ready: read.loaded && muted.loaded && sectionUnread !== null,
+    unreadCount: sectionUnread?.all ?? null,
+  })
+  const content = useFeedContent(supabase, { activeTab, tabReady, clearHeld: read.clearHeld, catchUpMode: catchUp.mode })
   // A finished "Run now" reloads the feed in the background: no skeleton, no blank screen.
   const { loadContent } = content
   const reloadInBackground = useCallback(() => loadContent({ background: true }), [loadContent])
@@ -61,8 +80,10 @@ function useReaderValue(userId: string) {
     const map = new Map<string, StoryWithRelations>()
     for (const s of content.soloStories) map.set(s.id, s)
     for (const s of content.todayStories) map.set(s.id, s)
+    for (const s of content.catchUpData?.pool ?? []) map.set(s.id, s)
+    for (const s of content.catchUpData?.members ?? []) map.set(s.id, s)
     return map
-  }, [content.soloStories, content.todayStories])
+  }, [content.soloStories, content.todayStories, content.catchUpData])
 
   const sendEngagement = useEngagement(supabase, userId, storyById, weights.setSourceWeights)
   const reactions = useReactions(supabase, userId, true, sendEngagement)
@@ -77,7 +98,6 @@ function useReaderValue(userId: string) {
   useLayoutEffect(() => { readNow.current = read.readIds }, [read.readIds])
   const isRead = useCallback((id: string) => readNow.current.has(id), [])
   const { startDwell, endDwell } = useDwellTracking(sendEngagement, read.markRead, viewActive, isRead)
-  const visit = useSinceVisit(active)
 
   const view = useFeedView({
     activeTab,
@@ -89,7 +109,6 @@ function useReaderValue(userId: string) {
     showUnreadOnly,
     hasMutedTopic: muted.hasMutedTopic,
     prevVisit: visit.prevVisit,
-    categoryPool: meta.categoryPool,
     sourceWeights: weights.sourceWeights,
     topicWeights: weights.topicWeights,
   })
@@ -111,11 +130,18 @@ function useReaderValue(userId: string) {
     })
   }, [read, snackbar])
 
-  const markManyReadUndoable = useCallback(async (storyIds: string[]) => {
+  /** `hold` keeps the cards in place, dimmed, like a dwell mark (a storyline read by
+   *  its recap); without it they leave the list (Mark all read, Mark day read). */
+  const markManyReadUndoable = useCallback(async (storyIds: string[], opts?: { hold?: boolean }) => {
     const wanted = storyIds.filter(id => !read.readIds.has(id)).length
-    const done = await read.markManyRead(storyIds)
+    const done = await read.markManyRead(storyIds, opts)
+    if (done === null) {
+      snackbar.show({ message: "Couldn't mark as read. Try again." })
+      return
+    }
     if (done.length === 0) {
-      if (wanted > 0) snackbar.show({ message: "Couldn't mark as read. Try again." })
+      // Everything asked for was already read (in another tab, say): nothing to undo.
+      if (wanted > 0) snackbar.show({ message: 'Already marked as read' })
       return
     }
     snackbar.show({
@@ -131,6 +157,46 @@ function useReaderValue(userId: string) {
     const ok = await read.markUnread([storyId])
     snackbar.show({ message: ok ? 'Marked as unread' : "Couldn't mark as unread. Try again." })
   }, [read, snackbar])
+
+  // The catch-up view of the current tab (null when it is off or its data hasn't landed).
+  const { catchUpData } = content
+  const { hasMutedTopic } = muted
+  const catchUpView = useMemo(() => {
+    if (!catchUp.on || !catchUpData) return null
+    return buildCatchUp({
+      pool: catchUpData.pool,
+      members: catchUpData.members,
+      storylines: catchUpData.storylines,
+      readIds: read.readIds,
+      layoutReadIds: read.layoutReadIds,
+      keep: s => meta.sources[s.source_id]?.is_active !== false && !hasMutedTopic(s.matched_topics),
+      isIGR: s => isIGRSource(meta.sources[s.source_id]),
+      mix: interleaveLead,
+      now: nowDate(),
+      prevVisit: visit.prevVisit,
+    })
+  }, [catchUp.on, catchUpData, read.readIds, read.layoutReadIds, meta.sources, hasMutedTopic, visit.prevVisit])
+
+  // Reading a storyline's recap reads its reports (Ash, 3 Oct 2026): the same dwell
+  // rule as a card (40 s on screen), applied to all the reports at once, held in
+  // place and with an Undo, because it is many marks from one pause. One `dwell_long`
+  // signal for the newest report, not one per report (that would count a single
+  // reading 22 times towards the topic weights). Callbacks are bound once by the
+  // dwell hook, so the current marking function is read through a ref.
+  const storylineDwell = useRef<Map<string, number>>(new Map())
+  const markManyRef = useRef(markManyReadUndoable)
+  useLayoutEffect(() => { markManyRef.current = markManyReadUndoable })
+  const startStorylineDwell = useCallback((id: string) => { storylineDwell.current.set(id, Date.now()) }, [])
+  const endStorylineDwell = useCallback((id: string, unreadIds: string[], newestId?: string) => {
+    const start = storylineDwell.current.get(id)
+    if (!start) return
+    storylineDwell.current.delete(id)
+    if (!viewActive.current) return   // leaving the Reader is not reading
+    if ((Date.now() - start) / 1000 > DWELL_SHORT_SECONDS && unreadIds.length > 0) {
+      void sendEngagement('dwell_long', newestId)
+      void markManyRef.current(unreadIds, { hold: true })
+    }
+  }, [sendEngagement])
 
   // One-tap "clear the deck" for the current Sections feed
   const markAllVisibleRead = useCallback(() => {
@@ -180,6 +246,7 @@ function useReaderValue(userId: string) {
   return {
     userId, activate, setViewActive,
     activeTab, lastSection, tabReady, handleTabChange, openSections,
+    catchUp, catchUpView, startStorylineDwell, endStorylineDwell, sectionUnread,
     showUnreadOnly, toggleUnreadOnly, showAllStories,
     // data
     sources: meta.sources, topicCount: meta.topicCount, activeCategoryKeys: meta.activeCategoryKeys,

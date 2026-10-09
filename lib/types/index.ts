@@ -31,6 +31,31 @@ export interface ShortVersion {
   key_points: string[]
 }
 
+/** What a storyline's recap says (pipeline/storylines.py `build_recap`). `so_far`
+ *  has one entry per earlier day (empty for a single-day storyline); `latest` is
+ *  the newest day's developments; `differ` is optional: disputed figures the day
+ *  entries had no room for ("people on board: 174 vs 180"). */
+export interface StorylineRecap {
+  so_far?: { date: string; text: string }[]
+  latest?: { date: string; text: string } | null
+  differ?: string[]
+}
+
+/** One developing news event with many reports, across sources. The recap exists
+ *  only once it has 3+ reports. `recap_story_count` is the count the recap was
+ *  built from (the pipeline refreshes it when `story_count` moves on). */
+export interface Storyline {
+  id: string
+  category: Category
+  title: string
+  recap: StorylineRecap | null
+  story_count: number
+  recap_story_count: number
+  first_report_at: string | null
+  last_report_at: string | null
+  recap_updated_at: string | null
+}
+
 export interface Story {
   id: string
   video_id: string
@@ -40,6 +65,10 @@ export interface Story {
   summary: string
   bullets: Bullet[]
   short?: ShortVersion | null
+  /** The developing event this story is one report of (news categories only;
+   *  null for round-ups, prophetic stories and anything the pipeline hasn't
+   *  grouped). Written by pipeline/storylines.py. */
+  storyline_id?: string | null
   cluster_id: string | null
   matched_topics: string[] | null
   created_at: string

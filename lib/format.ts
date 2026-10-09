@@ -59,3 +59,9 @@ export function msSince(d: Date | null): number {
 export function mastheadDate(d: Date = new Date()): string {
   return d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })
 }
+
+/** The current time as a Date, for derivations that group by day ("Today",
+ *  "Yesterday"). Like `msSince`, it keeps the clock read out of component bodies. */
+export function nowDate(): Date {
+  return new Date()
+}

@@ -16,12 +16,15 @@ import { cx } from './cx'
  *  reveals `children` (the short card) below the row; while open the dek is
  *  dropped, because the short card's lead says the same thing. */
 export function StoryRow({
-  story, sourceName, isRead = false, showCategory = false, kickerExtra, highlight, expanded, onToggle, children,
+  story, sourceName, isRead = false, showCategory = false, compact = false, kickerExtra, highlight, expanded, onToggle, children,
 }: {
   story: StoryWithRelations
   sourceName?: string
   isRead?: boolean
   showCategory?: boolean
+  /** The catch-up headline list: no two-line dek and an 88 px thumbnail, so a long
+   *  list scans quickly. Tapping still opens the short card. */
+  compact?: boolean
   /** Extra kicker text after the source ("Matched: war · middle east"). */
   kickerExtra?: ReactNode
   /** Search words to mark in the headline and dek. */
@@ -47,7 +50,7 @@ export function StoryRow({
     <article
       className={cx(
         'relative grid gap-x-3.5 gap-y-1.5 border-b border-hairline py-4 last:border-b-0 [overflow-wrap:anywhere]',
-        hasThumb ? 'grid-cols-[minmax(0,1fr)_104px]' : 'grid-cols-1',
+        hasThumb ? (compact ? 'grid-cols-[minmax(0,1fr)_88px]' : 'grid-cols-[minmax(0,1fr)_104px]') : 'grid-cols-1',
       )}
     >
       {/* Kicker: category, source, "New" */}
@@ -73,7 +76,7 @@ export function StoryRow({
             </button>
           ) : <Highlight text={story.headline} query={highlight} />}
         </h3>
-        {dek && !expanded && (
+        {dek && !expanded && !compact && (
           <p className="line-clamp-2 text-sm leading-[21px] text-fg-2"><Highlight text={dek} query={highlight} /></p>
         )}
         <p className="t-meta flex flex-wrap items-center gap-x-1.5">
@@ -102,7 +105,7 @@ export function StoryRow({
         </p>
       </div>
 
-      {hasThumb && <StoryThumb story={story} isRead={isRead} className="relative z-10 mt-0.5 self-start" />}
+      {hasThumb && <StoryThumb story={story} isRead={isRead} size={compact ? 'compact' : 'row'} className="relative z-10 mt-0.5 self-start" />}
 
       {expanded && children && <div className="col-span-full pt-2">{children}</div>}
     </article>

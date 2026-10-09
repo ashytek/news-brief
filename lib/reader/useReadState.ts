@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { PostgrestError } from '@supabase/supabase-js'
 import type { Supabase } from './types'
 
 /** Ids per DELETE when taking read marks back (keeps the request URL short). */
@@ -15,6 +16,10 @@ export function useReadState(supabase: Supabase, userId: string, enabled: boolea
   // past the dwell threshold was unmounted the moment it scrolled below
   // half-visible, pulling everything under it up (Ash, 3 & 14 Sep 2026).
   const [heldIds, setHeldIds] = useState<Set<string>>(new Set())
+  // True once the read marks have been fetched at least once. Anything that counts
+  // unread stories (the catch-up trigger) must wait for it: before then every
+  // story looks unread.
+  const [loaded, setLoaded] = useState(false)
 
   const clearHeld = useCallback(() => setHeldIds(new Set()), [])
 
@@ -37,6 +42,7 @@ export function useReadState(supabase: Supabase, userId: string, enabled: boolea
         if (r.cluster_id) ids.add(r.cluster_id)
       })
       setReadIds(ids)
+      setLoaded(true)
     }
   }, [supabase, userId])
 
@@ -76,10 +82,18 @@ export function useReadState(supabase: Supabase, userId: string, enabled: boolea
 
   // Batched version for "mark all as read" — the old implementation fired
   // one insert per item (up to ~200 concurrent requests on a full category).
-  // Resolves the ids that were newly marked (empty if none or the write failed),
-  // which is exactly what an Undo needs to take back.
-  const markManyRead = useCallback(async (storyIds: string[]): Promise<string[]> => {
-    const newStoryIds = storyIds.filter(id => !readIds.has(id))
+  // Resolves the ids that were newly marked by this call (exactly what an Undo
+  // needs to take back): empty when there was nothing to do, `null` when the
+  // write failed and was rolled back.
+  //
+  // A multi-row insert is all-or-nothing, so one row that was already read
+  // somewhere else (another tab, the phone) used to fail the whole batch with
+  // 23505 and roll everything back (roadmap session 5). Now that error is
+  // answered by asking which of the rows exist and inserting only the rest.
+  // Rows that were already read stay read, and are not "newly marked", so an
+  // Undo never takes back a mark this call did not make.
+  const markManyRead = useCallback(async (storyIds: string[], opts?: { hold?: boolean }): Promise<string[] | null> => {
+    const newStoryIds = [...new Set(storyIds)].filter(id => !readIds.has(id))
     if (newStoryIds.length === 0) return []
 
     setReadIds(prev => {
@@ -87,21 +101,49 @@ export function useReadState(supabase: Supabase, userId: string, enabled: boolea
       newStoryIds.forEach(id => next.add(id))
       return next
     })
-
-    const rows = newStoryIds.map(id => ({ user_id: userId, story_id: id }))
-    const { error } = await supabase.from('read_items').insert(rows)
-    if (error) {
-      // A multi-row insert is all-or-nothing, so any error means none of
-      // these were saved — roll all of them back.
-      console.error('markManyRead failed', { count: rows.length, error })
-      setReadIds(prev => {
+    if (opts?.hold) {
+      setHeldIds(prev => {
         const next = new Set(prev)
-        newStoryIds.forEach(id => next.delete(id))
+        newStoryIds.forEach(id => next.add(id))
         return next
       })
-      return []
     }
-    return newStoryIds
+    const rollBack = (ids: string[]) => {
+      if (ids.length === 0) return
+      const drop = (set: Set<string>) => { const n = new Set(set); ids.forEach(id => n.delete(id)); return n }
+      setReadIds(drop)
+      if (opts?.hold) setHeldIds(drop)
+    }
+
+    const insert = (ids: string[]) => supabase.from('read_items').insert(ids.map(id => ({ user_id: userId, story_id: id })))
+    let error: PostgrestError | null = (await insert(newStoryIds)).error
+    let saved = newStoryIds
+    if (error?.code === '23505') {
+      // The ids travel in the URL, so ask in chunks (as the Undo does).
+      const already = new Set<string>()
+      let lookupError: PostgrestError | null = null
+      for (let i = 0; i < newStoryIds.length && !lookupError; i += UNDO_CHUNK) {
+        const { data, error: e } = await supabase
+          .from('read_items')
+          .select('story_id')
+          .eq('user_id', userId)
+          .in('story_id', newStoryIds.slice(i, i + UNDO_CHUNK))
+        lookupError = e
+        for (const r of data ?? []) already.add(r.story_id as string)
+      }
+      if (lookupError) {
+        error = lookupError
+      } else {
+        saved = newStoryIds.filter(id => !already.has(id))
+        error = saved.length === 0 ? null : (await insert(saved)).error
+      }
+    }
+    if (error) {
+      console.error('markManyRead failed', { count: newStoryIds.length, error })
+      rollBack(newStoryIds)
+      return null
+    }
+    return saved
   }, [supabase, userId, readIds])
 
   // Undo, and the card menu's "Mark unread": delete the rows. The RLS policy on
@@ -143,5 +185,5 @@ export function useReadState(supabase: Supabase, userId: string, enabled: boolea
     return next
   }, [readIds, heldIds])
 
-  return { readIds, heldIds, layoutReadIds, clearHeld, loadReadIds, markRead, markManyRead, markUnread }
+  return { readIds, loaded, heldIds, layoutReadIds, clearHeld, loadReadIds, markRead, markManyRead, markUnread }
 }

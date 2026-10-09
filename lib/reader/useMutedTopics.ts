@@ -4,6 +4,9 @@ import type { Supabase } from './types'
 /** Topics the user muted (14-day expiry) and the write that adds them. */
 export function useMutedTopics(supabase: Supabase, userId: string, enabled: boolean) {
   const [mutedKeywords, setMutedKeywords] = useState<Set<string>>(new Set())
+  // True once the list has been asked for (even if the read failed), so a count of
+  // visible stories (the catch-up trigger) is not made before mutes are known.
+  const [loaded, setLoaded] = useState(false)
 
   // Load active muted topics (expires_at > now)
   useEffect(() => {
@@ -15,6 +18,7 @@ export function useMutedTopics(supabase: Supabase, userId: string, enabled: bool
       .gt('expires_at', new Date().toISOString())
       .then(({ data }) => {
         if (data) setMutedKeywords(new Set(data.map(r => r.keyword)))
+        setLoaded(true)
       })
   }, [enabled, supabase, userId])
 
@@ -54,5 +58,5 @@ export function useMutedTopics(supabase: Supabase, userId: string, enabled: bool
     return topics.some(t => mutedKeywords.has(t))
   }, [mutedKeywords])
 
-  return { mutedKeywords, muteTopics, hasMutedTopic }
+  return { mutedKeywords, loaded, muteTopics, hasMutedTopic }
 }

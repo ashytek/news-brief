@@ -1,8 +1,6 @@
 import { useCallback, useMemo } from 'react'
 import { interleaveLead, isIGRSource, rankItems } from '@/lib/ranking'
-import { CATEGORY_KEYS } from '@/lib/categories'
 import type { Source, StoryWithRelations } from '@/lib/types'
-import { FEED_SIZE, type PoolStory } from './useFeedMeta'
 import type { ActiveTab } from './types'
 
 /** Everything the feed screens derive from the loaded stories: mute/active
@@ -11,7 +9,7 @@ import type { ActiveTab } from './types'
  *  filtering and counts are exactly what ReaderClient computed inline. */
 export function useFeedView({
   activeTab, soloStories, todayStories, sources, readIds, layoutReadIds, showUnreadOnly,
-  hasMutedTopic, prevVisit, categoryPool, sourceWeights, topicWeights,
+  hasMutedTopic, prevVisit, sourceWeights, topicWeights,
 }: {
   activeTab: ActiveTab
   soloStories: StoryWithRelations[]
@@ -22,7 +20,6 @@ export function useFeedView({
   showUnreadOnly: boolean
   hasMutedTopic: (topics: string[] | null | undefined) => boolean
   prevVisit: number | null
-  categoryPool: Record<string, PoolStory[]> | null
   sourceWeights: Record<string, number>
   topicWeights: Record<string, number>
 }) {
@@ -75,25 +72,6 @@ export function useFeedView({
   )
 
   const isEmpty = visibleSolos.length === 0
-
-  // Unread per Sections chip: the newest stories of each category, through the same
-  // mute / active-source filters and read marks as the feed itself. null until
-  // the pool has loaded, so a chip shows no number rather than a wrong one.
-  // "All" is the newest FEED_SIZE across every category (what the All feed loads),
-  // not the sum of the categories, so its number matches the list it opens.
-  const sectionUnread = useMemo(() => {
-    if (!categoryPool) return null
-    const keep = (s: PoolStory) =>
-      isActiveSource(s.source_id) && !hasMutedTopic(s.matched_topics) && !readIds.has(s.id)
-    const counts: Record<string, number> = {}
-    for (const key of CATEGORY_KEYS) counts[key] = (categoryPool[key] ?? []).filter(keep).length
-    counts.all = CATEGORY_KEYS
-      .flatMap(key => categoryPool[key] ?? [])
-      .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
-      .slice(0, FEED_SIZE)
-      .filter(keep).length
-    return counts
-  }, [categoryPool, isActiveSource, hasMutedTopic, readIds])
 
   const isVantage = useCallback((story: StoryWithRelations) => {
     const src = sources[story.source_id]
@@ -153,7 +131,7 @@ export function useFeedView({
   }, [mergedFeed, isNewSinceVisit])
 
   return {
-    visibleSolos, unreadCount, activeTodayStories, todayRanked, todayUnread, isEmpty, sectionUnread,
+    visibleSolos, unreadCount, activeTodayStories, todayRanked, todayUnread, isEmpty,
     pinnedMix, mergedFeed, newSinceVisit, newLeadCount, isActiveSource,
   }
 }

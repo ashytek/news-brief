@@ -7,7 +7,7 @@
 // Supabase select strings — keep in sync with lib/types.
 // Explicitly omits transcript_text/embedding blobs so payloads stay slim.
 export const STORY_SELECT =
-  'id, source_id, video_id, category, headline, summary, bullets, short, cluster_id, matched_topics, created_at, ' +
+  'id, source_id, video_id, category, headline, summary, bullets, short, storyline_id, cluster_id, matched_topics, created_at, ' +
   'videos(id, url, published_at, thumbnail_url, duration_seconds)'
 
 /** Dwell auto-read thresholds, seconds on screen (Ash, 9 Oct 2026): a short
@@ -15,6 +15,10 @@ export const STORY_SELECT =
  *  is no short version and the long summary shows) it takes 120 s. */
 export const DWELL_SHORT_SECONDS = 40
 export const DWELL_LONG_SECONDS = 120
+
+/** Storyline columns for the catch-up view (the table is read-only for the app). */
+export const STORYLINE_SELECT =
+  'id, category, title, recap, story_count, recap_story_count, first_report_at, last_report_at, recap_updated_at'
 
 /** Video length for the thumbnail badge: "7:05" or "1:02:03". */
 export function formatDuration(seconds: number): string {

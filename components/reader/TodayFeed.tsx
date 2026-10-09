@@ -5,10 +5,10 @@ import { Check, CircleCheck, Inbox, TriangleAlert } from 'lucide-react'
 import { StoryCard } from '@/components/story/StoryCard'
 import { StorySkeleton } from '@/components/story/StorySkeleton'
 import { useStoryActions } from '@/components/story/useStoryActions'
-import { PageHead } from '@/components/shell/PageHead'
 import { Button, ButtonLink, StateMessage } from '@/components/ui'
-import { estimateReadMinutes, mastheadDate, readShort } from '@/lib/format'
+import { estimateReadMinutes, readShort } from '@/lib/format'
 import { useReader } from '@/lib/reader/ReaderProvider'
+import { TodayMasthead } from './TodayMasthead'
 
 /** The Today tab: a masthead (date, title, how long it takes, progress), the lead
  *  story with its full-width image, then the rest as short cards, and a real
@@ -35,22 +35,28 @@ export function TodayFeed() {
 
   if (r.loadError) {
     return (
-      <StateMessage
-        tone="error"
-        icon={TriangleAlert}
-        title="Couldn't load today's brief"
-        action={{ label: 'Try again', onClick: () => { void r.refresh() } }}
-      >
-        Something went wrong fetching stories. Check the pipeline status in the top bar, or try again.
-      </StateMessage>
+      <>
+        <TodayMasthead />
+        <StateMessage
+          tone="error"
+          icon={TriangleAlert}
+          title="Couldn't load today's brief"
+          action={{ label: 'Try again', onClick: () => { void r.refresh() } }}
+        >
+          Something went wrong fetching stories. Check the pipeline status in the top bar, or try again.
+        </StateMessage>
+      </>
     )
   }
 
   if (ranked.length === 0) {
     return (
-      <StateMessage tone="ok" icon={Inbox} title="All caught up">
-        Nothing new in the last 24 hours.
-      </StateMessage>
+      <>
+        <TodayMasthead />
+        <StateMessage tone="ok" icon={Inbox} title="All caught up">
+          Nothing new in the last 24 hours.
+        </StateMessage>
+      </>
     )
   }
 
@@ -58,9 +64,7 @@ export function TodayFeed() {
 
   return (
     <div>
-      <PageHead
-        overline={mastheadDate()}
-        title="Today's Brief"
+      <TodayMasthead
         meta={`${ranked.length} stories · about ${minutes} min${channels > 0 ? ` · AI summaries of ${channels} channels` : ''}`}
       >
         <div className="mt-2 flex items-center gap-3">
@@ -78,7 +82,7 @@ export function TodayFeed() {
             {unreadCount === 0 ? <span className="inline-flex items-center gap-1 text-ok"><Check className="size-3.5" aria-hidden="true" />All read</span> : `${readCount} of ${ranked.length} read`}
           </span>
         </div>
-      </PageHead>
+      </TodayMasthead>
 
       <div className="mt-3">
         {ranked.map(({ data: story }, i) => (
