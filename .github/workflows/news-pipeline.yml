@@ -2,7 +2,9 @@ name: news-pipeline
 
 # Runs the News Brief pipeline 4×/day from GitHub's infrastructure —
 # no laptop required. Transcripts come from the Apify managed API
-# (APIFY_TOKEN secret), so a datacenter IP is not a problem.
+# (APIFY_TOKEN secret), so a datacenter IP is not a problem. The free local
+# fetchers (yt-dlp, youtube-transcript-api, audio) are skipped here: YouTube
+# blocks GitHub's IPs, and every transcript in recent runs came from Apify.
 #
 # Required repo secrets (Settings → Secrets and variables → Actions):
 #   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, GOOGLE_API_KEY,
@@ -56,8 +58,12 @@ jobs:
           APIFY_TOKEN:               ${{ secrets.APIFY_TOKEN }}
           ASSEMBLYAI_API_KEY:        ${{ secrets.ASSEMBLYAI_API_KEY }}
           HEALTHCHECK_URL:           ${{ secrets.HEALTHCHECK_URL }}
-          # No YOUTUBE_BROWSER here — headless runner has no Chrome profile.
-          # The local fallback chain (yt-dlp android client) is cookie-free.
+          # No YOUTUBE_BROWSER here — headless runner has no Chrome profile — and
+          # get_transcripts.py skips the local fallback chain on CI by itself
+          # (GITHUB_ACTIONS=true). TRANSCRIPT_LOCAL_FALLBACK_IN_CI=1 would turn it back on.
+          # Unbuffered stdout: Python block-buffers a pipe, so without this every line
+          # of a run's log carried one timestamp and nothing could be timed.
+          PYTHONUNBUFFERED:          "1"
           # Lets run_pipeline.py tell a manual "Run now" trigger (app button,
           # or the GitHub UI) apart from the scheduled cron — a scheduled run
           # skips real work if a manual one already covered this window.

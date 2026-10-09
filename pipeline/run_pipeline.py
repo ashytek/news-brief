@@ -26,7 +26,7 @@ import storylines
 import llm
 import archive_transcripts
 import update_weights
-from config import MAX_VANTAGE_RECAP_SECONDS
+from config import MAX_VANTAGE_RECAP_SECONDS, GEMINI_FLASH_MODEL
 
 
 def _ping_healthcheck(success: bool = True):
@@ -208,7 +208,7 @@ def process_transcripts_and_summarise(items, stats, source_map, retry_delay_rang
             print(f"    ✗ No transcript")
 
     # Summarise
-    print(f"\n  Summarising {len(processed)} items with Claude…")
+    print(f"\n  Summarising {len(processed)} items with Gemini ({GEMINI_FLASH_MODEL})…")
     story_ids = []
 
     # Load topic keywords once for this batch

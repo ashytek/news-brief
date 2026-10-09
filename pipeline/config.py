@@ -20,6 +20,14 @@ APIFY_TRANSCRIPT_ACTOR = os.environ.get(
     "APIFY_TRANSCRIPT_ACTOR",
     "codepoetry~youtube-transcript-ai-scraper",   # ~$0.001/native transcript
 )
+# Caption languages the Apify actor may return, in order of preference (first
+# match wins, so English channels are unaffected by the later codes). Bare ISO
+# 639-1 codes only: the actor rejects en-GB/en-US. "hi" exists for the Hindi
+# source (Career 247), whose transcripts Gemini summarises into English anyway.
+# A channel in another language needs its code added here (comma-separated).
+APIFY_CAPTION_LANGUAGES = [
+    c.strip() for c in os.environ.get("APIFY_CAPTION_LANGUAGES", "en,hi").split(",") if c.strip()
+] or ["en", "hi"]
 # ANTHROPIC_API_KEY is no longer required — Gemini is the primary LLM.
 # To re-add Claude as a fallback: pip install anthropic, uncomment below, restore key in .env
 # ANTHROPIC_API_KEY   = os.environ["ANTHROPIC_API_KEY"]

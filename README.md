@@ -1,8 +1,8 @@
 # NewsBrief
 
-Ash's personal news briefing app — tracks a curated set of YouTube sources, extracts and summarizes video transcripts, clusters related stories, and serves them as a reader UI.
+Ash's personal news briefing app — tracks a curated set of YouTube sources, extracts and summarizes video transcripts, and serves them as a reader UI.
 
-For architecture, current status, and working rules, see [`CLAUDE.md`](./CLAUDE.md). For the ingestion pipeline (transcript extraction, summarization, clustering), see [`pipeline/README.md`](./pipeline/README.md).
+For architecture, current status, and working rules, see [`CLAUDE.md`](./CLAUDE.md). For the ingestion pipeline (transcript extraction, summarization, embeddings for search, storylines), see [`pipeline/README.md`](./pipeline/README.md).
 
 ## Stack
 
@@ -17,7 +17,7 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). Requires `.env.local` with Supabase and API keys — see `CLAUDE.md` for which variables are needed.
+Open [http://localhost:3000](http://localhost:3000). Requires `.env.local` with the Supabase URL and keys — see `.env.example` for which variables are needed.
 
 ## Scripts
 

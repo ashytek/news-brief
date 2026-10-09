@@ -1,11 +1,20 @@
 """
 Transcript extraction.
 
-Primary (when YOUTUBE_COOKIES_FILE is set): yt-dlp — proper cookie auth, much
-better at bypassing YouTube IP rate-limits / residential blocks.
+Primary (APIFY_TOKEN set, always the case in production): the Apify managed
+transcript API. It runs on Apify's infrastructure, so YouTube's bot checks on
+datacenter IPs don't touch it. Every transcript in the last 60 production runs
+(469) came from here.
 
-Fallback (no cookies): youtube-transcript-api — fast, no auth, works on fresh
-IPs with light traffic.
+Local fallback chain (a home / residential IP, or when Apify is not configured):
+  1. yt-dlp with the cookie-free android client
+  2. youtube-transcript-api (timedtext)
+  3. AssemblyAI on the audio, for caption-less fresh videos (paid, capped per run)
+
+**On GitHub Actions the local chain is skipped** (see `_local_chain_enabled`):
+YouTube blocks datacenter IPs for all three, so it only adds failed requests and
+spends the per-run audio cap on videos that cannot succeed.
+TRANSCRIPT_LOCAL_FALLBACK_IN_CI=1 turns it back on.
 
 For non-video sources (articles, RSS): scrapes article text.
 """
@@ -26,7 +35,7 @@ from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, Tran
 import db
 from config import (
     ASSEMBLYAI_API_KEY, YOUTUBE_COOKIES_FILE, YOUTUBE_BROWSER,
-    MIN_VIDEO_DURATION_SECONDS, APIFY_TOKEN, APIFY_TRANSCRIPT_ACTOR,
+    MIN_VIDEO_DURATION_SECONDS, APIFY_TOKEN, APIFY_TRANSCRIPT_ACTOR, APIFY_CAPTION_LANGUAGES,
 )
 
 # ---------------------------------------------------------------------------
@@ -97,14 +106,52 @@ _audio_fallback_count = 0
 # get_fetcher_mix().
 _fetcher_success_counts: dict[str, int] = {}
 
+# So the "local fetchers skipped" note prints once per run, not once per video.
+_local_skip_noted = False
+
 
 def reset_run_state():
     """Reset per-run counters. Called by run_pipeline at the start of each cycle."""
-    global _rate_limit_streak, _last_rate_limit_at, _audio_fallback_count, _fetcher_success_counts
+    global _rate_limit_streak, _last_rate_limit_at, _audio_fallback_count, _fetcher_success_counts, _local_skip_noted
     _rate_limit_streak = 0
     _last_rate_limit_at = 0.0
     _audio_fallback_count = 0
     _fetcher_success_counts = {}
+    _local_skip_noted = False
+
+
+def _on_ci() -> bool:
+    """True on GitHub Actions (or any CI that sets CI=true): a datacenter IP with
+    no browser profile. Read at call time so a test can flip it."""
+    return (os.environ.get("GITHUB_ACTIONS", "").lower() == "true"
+            or os.environ.get("CI", "").lower() == "true")
+
+
+def _local_chain_enabled() -> bool:
+    """Are the free local fetchers (yt-dlp, youtube-transcript-api) and the
+    yt-dlp-based audio fallback worth trying?
+
+    No on CI when Apify is configured and there are no cookies: YouTube blocks
+    datacenter IPs for all of them (0 successes in 60 production runs), so each
+    attempt is a wasted request and an audio attempt burns the per-run cap. A
+    failure then stays 'failed' and is retried free next run, or Apify's own
+    verdict stands. Yes everywhere else: a residential IP works, cookies change
+    the odds, and without Apify the local chain is all there is."""
+    if not APIFY_TOKEN or not _on_ci():
+        return True
+    if YOUTUBE_BROWSER or _resolve_cookie_path():
+        return True
+    return os.environ.get("TRANSCRIPT_LOCAL_FALLBACK_IN_CI", "") == "1"
+
+
+def _note_local_skipped():
+    global _local_skip_noted
+    if _local_skip_noted:
+        return
+    _local_skip_noted = True
+    print("    · Local fetchers (yt-dlp, youtube-transcript-api, audio) skipped on CI: "
+          "YouTube blocks datacenter IPs. A failed fetch stays retryable for the next run. "
+          "(TRANSCRIPT_LOCAL_FALLBACK_IN_CI=1 to try them anyway.)")
 
 
 def get_fetcher_mix() -> dict[str, int]:
@@ -309,10 +356,9 @@ def _get_transcript_apify(video_id: str) -> tuple[str, list] | None:
     payload = {
         "startUrls":      [{"url": f"https://www.youtube.com/watch?v={video_id}"}],
         # Bare ISO 639-1 codes only (actor rejects en-GB/en-US variants).
-        # First match wins, so English channels are unaffected by the "hi"
-        # fallback — it exists for Hindi-language sources (Career 247), whose
-        # transcripts Gemini summarises into English regardless.
-        "languages":      ["en", "hi"],
+        # First match wins, so English channels are unaffected by the later
+        # codes. Configurable: APIFY_CAPTION_LANGUAGES (config.py).
+        "languages":      list(APIFY_CAPTION_LANGUAGES),
         "subType":        "both",          # manual captions preferred, auto OK
         "outputFormats":  ["json", "text"],
         "enableAiFallback": False,         # AI transcription handled by our own
@@ -643,6 +689,7 @@ def get_youtube_transcript(video_id: str) -> tuple[str, list] | None:
          Transport errors fall through to the free local chain below.
       1. yt-dlp + android player client (cookie-free)
       2. youtube-transcript-api (timedtext)
+    (Steps 1-2 are skipped on GitHub Actions: see _local_chain_enabled.)
 
     Local-chain rationale below.
 
@@ -671,32 +718,33 @@ def get_youtube_transcript(video_id: str) -> tuple[str, list] | None:
         result = _get_transcript_apify(video_id)   # PermanentNoTranscript propagates
         if result:
             return result
-        # None → Apify transport problem / credit exhausted → free local chain
+        # None → Apify transport problem / credit exhausted / an error code that
+        # isn't a permanent verdict (premiere, live, private, language not found).
+        if not _local_chain_enabled():
+            _note_local_skipped()
+            return None   # stays 'failed': retried free on the next run
 
-    have_auth = bool(YOUTUBE_BROWSER or _resolve_cookie_path())
-
-    if have_auth:
+    # ── Local chain: yt-dlp (android client, cookie-free) first ─────────
+    # (An earlier version only tried yt-dlp when cookies were configured, which
+    # contradicted this docstring: the cookie-free android path was dead code.)
+    try:
+        result = _get_transcript_ytdlp(video_id)
+        if result:
+            return result
+        # None = retryable error — fall through to ytt as a second chance
+    except PermanentNoTranscript as ytdlp_perm:
+        # yt-dlp's android client found no caption track. Double-check with
+        # ytt before declaring permanent — occasionally timedtext exposes a
+        # track the android caption list omitted.
         try:
-            result = _get_transcript_ytdlp(video_id)
+            result = _get_transcript_ytt(video_id)
             if result:
                 return result
-            # None = retryable error — fall through to ytt as a second chance
-        except PermanentNoTranscript as ytdlp_perm:
-            # yt-dlp's android client found no caption track. Double-check with
-            # ytt before declaring permanent — occasionally timedtext exposes a
-            # track the android caption list omitted.
-            try:
-                result = _get_transcript_ytt(video_id)
-                if result:
-                    return result
-            except PermanentNoTranscript:
-                raise ytdlp_perm  # both agree: genuinely no transcript
-            # ytt was rate-limited (None) — can't confirm. Trust yt-dlp's verdict.
-            raise ytdlp_perm
-        # yt-dlp returned None (retryable). Try ytt before giving up.
-        return _get_transcript_ytt(video_id)
-
-    # No cookies/browser configured → timedtext is the only option.
+        except PermanentNoTranscript:
+            raise ytdlp_perm  # both agree: genuinely no transcript
+        # ytt was rate-limited (None) — can't confirm. Trust yt-dlp's verdict.
+        raise ytdlp_perm
+    # yt-dlp returned None (retryable). Try ytt before giving up.
     return _get_transcript_ytt(video_id)
 
 
@@ -784,7 +832,7 @@ def fetch_transcript(video: dict, retry_delay_range: tuple[float, float] | None 
     elif _resolve_cookie_path():
         fetcher = "yt-dlp+cookiefile"
     else:
-        fetcher = "youtube-transcript-api"
+        fetcher = "yt-dlp+youtube-transcript-api"
     print(f"    Fetching transcript for {vid_id} via {fetcher}…")
 
     # Adaptive pre-request delay protects OUR IP from YouTube rate-limits.
@@ -841,6 +889,8 @@ def _should_try_audio_on_block(video: dict) -> bool:
     """
     if MAX_AUDIO_FALLBACK_PER_RUN <= 0 or not ASSEMBLYAI_API_KEY:
         return False
+    if not _local_chain_enabled():   # the audio download is yt-dlp: blocked on CI
+        return False
     pub = video.get("published_at")
     if not pub:
         return False
@@ -862,6 +912,9 @@ def _try_audio_fallback(url: str, reason: str) -> tuple | None:
     """
     global _audio_fallback_count
     if MAX_AUDIO_FALLBACK_PER_RUN <= 0 or not ASSEMBLYAI_API_KEY:
+        return None
+    if not _local_chain_enabled():
+        _note_local_skipped()
         return None
     if _audio_fallback_count >= MAX_AUDIO_FALLBACK_PER_RUN:
         print(f"    · Audio fallback skipped — per-run cap reached "
