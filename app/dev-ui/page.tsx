@@ -84,6 +84,14 @@ const solo = {
 const soloNoShort = { ...soloBase, id: 'dev-solo-2', short: null } as unknown as StoryWithRelations
 const soloRow = { ...solo, id: 'dev-solo-3' } as unknown as StoryWithRelations
 
+// A story from before July 2026: plain dot bullets (no section titles), no short version.
+const soloLegacy = {
+  ...soloBase,
+  id: 'dev-solo-4',
+  short: null,
+  bullets: Array.from({ length: 9 }, (_, i) => ({ text: `Legacy dot bullet ${i + 1}: a single flat sentence with a fact (${(i + 1) * 3}%).`, timestamp_seconds: i % 3 === 0 ? null : i * 80 })),
+} as unknown as StoryWithRelations
+
 const SOURCE = { id: 'dev-src-1', name: 'Firstpost Vantage Extended Name' } as never
 
 const subscribeNothing = () => () => {}
@@ -110,6 +118,7 @@ function Fixture() {
   const c = useFakeActions()
   const d = useFakeActions()
   const e = useFakeActions()
+  const f = useFakeActions()
   return (
     <div className="min-h-screen">
       <header className="sticky top-0 z-40 flex h-topbar items-center border-b border-hairline bg-canvas px-gutter">
@@ -130,6 +139,9 @@ function Fixture() {
 
         <DividerLabel>No short version yet (falls back to the overview)</DividerLabel>
         <StoryCard story={soloNoShort} source={SOURCE} actions={d} onDwellStart={noop} onDwellEnd={noop} />
+
+        <DividerLabel>Legacy dot-bullet story (before July 2026)</DividerLabel>
+        <StoryCard story={soloLegacy} source={SOURCE} actions={f} onDwellStart={noop} onDwellEnd={noop} />
 
         <DividerLabel>Headline row, opens into the short card</DividerLabel>
         <StoryListItem story={soloRow} sourceName="Firstpost Vantage Extended Name" showCategory actions={e} />
