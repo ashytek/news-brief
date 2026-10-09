@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import type { Source } from '@/lib/types'
 import { BackLink } from '@/components/nav/AppNav'
 import { CATEGORIES } from '@/lib/categories'
-import { Button, IconButton, Sheet, cx } from '@/components/ui'
+import { Button, IconButton, LocalTime, Sheet, cx } from '@/components/ui'
 import { RunNow } from '@/components/shell/StatusSheet'
 import { useReader } from '@/lib/reader/ReaderProvider'
 import { describePipeline } from '@/lib/reader/pipelineStatus'
@@ -229,9 +229,6 @@ const STATUS: Record<string, { word: string; tone: string; icon: typeof CircleCh
   failed: { word: 'Failed', tone: 'text-bad', icon: CircleX },
 }
 
-const dateTime = (iso: string) =>
-  new Date(iso).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
-
 export default function SourcesClient({ sources: initialSources, recentRuns }: Props) {
   const [sources, setSources] = useState(initialSources)
   const [adding, setAdding] = useState(false)
@@ -288,7 +285,7 @@ export default function SourcesClient({ sources: initialSources, recentRuns }: P
           </p>
           {last && (
             <p className="t-meta mt-1">
-              Last run {dateTime(last.started_at)} · {last.videos_found} videos → {last.stories_created} {last.stories_created === 1 ? 'story' : 'stories'}
+              Last run <LocalTime iso={last.started_at} /> · {last.videos_found} videos → {last.stories_created} {last.stories_created === 1 ? 'story' : 'stories'}
             </p>
           )}
           <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -311,7 +308,7 @@ export default function SourcesClient({ sources: initialSources, recentRuns }: P
                 return (
                   <li key={run.id} className="flex min-h-14 items-center gap-3 border-b border-hairline px-4 py-2.5 last:border-b-0">
                     <div className="min-w-0 flex-1">
-                      <p className="text-[15px] font-medium leading-5 text-fg-1">{dateTime(run.started_at)}</p>
+                      <p className="text-[15px] font-medium leading-5 text-fg-1"><LocalTime iso={run.started_at} /></p>
                       <p className="t-meta">{run.videos_found} videos · {run.stories_created} {run.stories_created === 1 ? 'story' : 'stories'}</p>
                     </div>
                     <span className={cx('inline-flex items-center gap-1.5 text-sm font-medium', st?.tone ?? 'text-fg-3')}>
@@ -340,7 +337,7 @@ export default function SourcesClient({ sources: initialSources, recentRuns }: P
                     <p className="t-meta">
                       {SOURCE_TYPE[source.source_type] ?? source.source_type.replace(/_/g, ' ')}
                       {source.last_success_at
-                        ? <> · Last OK {new Date(source.last_success_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</>
+                        ? <> · Last OK <LocalTime iso={source.last_success_at} variant="date" /></>
                         : ' · Not yet checked'}
                     </p>
                   </div>
