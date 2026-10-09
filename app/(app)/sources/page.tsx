@@ -1,13 +1,14 @@
 export const dynamic = 'force-dynamic'
 
 import { redirect } from 'next/navigation'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, getUser } from '@/lib/supabase/server'
 import SourcesClient from './SourcesClient'
 
 export default async function SourcesPage() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getUser()
   if (!user) redirect('/auth')
+
+  const supabase = await createClient()
 
   const { data: sources } = await supabase
     .from('sources')

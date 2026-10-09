@@ -47,3 +47,9 @@ export function minutesSince(iso: string | null | undefined): number {
   const t = iso ? new Date(iso).getTime() : NaN
   return Number.isNaN(t) ? Infinity : Math.floor((Date.now() - t) / 60000)
 }
+
+/** Milliseconds since a Date (Infinity for null). Same idea as minutesSince:
+ *  keeps the clock read out of component bodies. */
+export function msSince(d: Date | null): number {
+  return d ? Date.now() - d.getTime() : Infinity
+}
