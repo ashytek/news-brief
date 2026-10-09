@@ -114,6 +114,17 @@ There's no need to run this continuously or keep it scheduled locally — produc
 
 ---
 
+## Tests
+
+Offline (no network, no Gemini, no database), from this folder:
+
+```bash
+./venv/bin/python test_storylines.py     # recaps, storyline assignment (120 checks)
+./venv/bin/python test_transcripts.py    # the transcript fetch chain, CI skip, languages (38 checks)
+```
+
+---
+
 ## Troubleshooting
 
 **"No transcript available"** — checked in order: Apify (if `APIFY_TOKEN` set) → yt-dlp (cookie-free android client) → YouTube timedtext → AssemblyAI (if configured). **On GitHub Actions only Apify runs** (the log says "Local fetchers … skipped on CI"). A fetch that fails for a passing reason (a premiere that hasn't aired, a live stream, a private video, an Apify hiccup) stays `failed` and is retried every run for 14 days, so a premiere is picked up after it airs. Apify's own verdict "this video has no captions" is permanent (`no_transcript`).
