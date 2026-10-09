@@ -534,7 +534,7 @@ def run_once():
         if not new_items and not failed:
             print("  Nothing new. Run complete.")
 
-        status_str ="success" if stats["stories_created"] > 0 else "partial"
+        status_str = "success" if stats["stories_created"] > 0 else "partial"
         db.finish_pipeline_run(run_id, status_str, stats)
 
         # ── Zero-story streak alert ──────────────────────────────────────

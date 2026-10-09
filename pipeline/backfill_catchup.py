@@ -241,8 +241,12 @@ def storylines_estimate(client, days: int) -> tuple[int, float]:
     backend, todo = make_replay(client, days)
     engine = storylines.Engine(backend)
     already = len(backend.stories)
-    calls = in_chars = 0
+    calls = in_chars = round_ups = 0
     for s in todo:
+        if storylines.is_round_up(s):
+            round_ups += 1       # never placed: no candidates, no call
+            backend.add(s)
+            continue
         entries = backend.candidates(s)
         if entries:
             contents, _ = engine.build_prompt(s, entries)
@@ -253,8 +257,9 @@ def storylines_estimate(client, days: int) -> tuple[int, float]:
     usd = cost_usd(in_tok, out_tok)
     print(f"News stories to place: {len(todo)} · by category: {dict(Counter(s['category'] for s in todo))}"
           + (f" · {already} already in a storyline" if already else ""))
+    print(f"  round-ups, never placed in a storyline: {round_ups}")
     print(f"  with at least one candidate (cosine >= {storylines.MIN_SIM}): {calls}"
-          f"  → {calls} Flash calls; the other {len(todo) - calls} need none")
+          f"  → {calls} Flash calls; the other {len(todo) - round_ups - calls} need none")
     print(f"Estimated Gemini 2.5 Flash cost: {money(usd)}")
     print(f"  input  ≈ {in_tok:>9,} tokens × ${PRICE_IN_PER_M}/M")
     print(f"  output ≈ {out_tok:>9,} tokens × ${PRICE_OUT_PER_M}/M  (thinking off)")
@@ -413,7 +418,8 @@ def recaps_step(args) -> int:
     print(f"Storylines (3+ reports, active) whose recap is missing or stale: {len(targets)}")
     for sl in targets:
         print(f"    {sl['story_count']:>2} reports · {sl['title'][:70]}")
-    print(f"Estimated Gemini 2.5 Flash cost: {money(usd)}")
+    print(f"Estimated Gemini 2.5 Flash cost: {money(usd)}"
+          f"  (ceiling if every recap is re-asked once: {money(cost_usd(2 * in_tok + out_tok, 2 * out_tok))})")
     print(f"  input  ≈ {in_tok:>9,} tokens × ${PRICE_IN_PER_M}/M")
     print(f"  output ≈ {out_tok:>9,} tokens × ${PRICE_OUT_PER_M}/M  (thinking off)")
     if not args.apply:

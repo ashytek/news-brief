@@ -36,11 +36,13 @@ from __future__ import annotations
 import json
 import math
 import operator
+import re
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import db
 import llm
+from summarise import tidy_text
 
 NEWS_CATEGORIES = ("india_global", "tech_ai")
 
@@ -50,6 +52,10 @@ MAX_CANDIDATES = 8
 MIN_RECAP_STORIES = 3        # fewer than this and the UI shows plain headlines
 MAX_RECAP_MEMBERS = 30       # newest N reports feed a recap (bounds the prompt)
 MAX_CONSECUTIVE_LLM_FAILURES = 3
+SO_FAR_MAX_WORDS = 35        # one earlier day (RECAP_SYSTEM says the same; enforced in build_recap)
+LATEST_MAX_WORDS = 60        # the newest day
+MAX_CONFLICTS = 3            # disputed figures the recap must state; a longer list from the model is ignored past this
+CAP_TOLERANCE = 1.25         # text this far over a word cap is trimmed; beyond it the model is asked again
 
 LOCAL_TZ = ZoneInfo("Europe/London")   # "a day" is Ash's day, like the app's day groups
 
@@ -115,8 +121,20 @@ def _brief(story: dict, limit: int = 600) -> str:
 
 
 def clean_title(raw) -> str:
-    t = " ".join(raw.split()).strip(" \"'“”") if isinstance(raw, str) else ""
+    t = tidy_text(raw).strip(" \"'“”") if isinstance(raw, str) else ""
     return t if len(t) <= 120 else t[:120].rsplit(" ", 1)[0]
+
+
+def is_round_up(story: dict) -> bool:
+    """A video that covers several unrelated items under one headline. The short
+    prompt opens such a lead with "Round-up:" (session 1, 9 Oct). Marking a
+    storyline read would mark the whole video read, items the reader never saw
+    included, so round-ups neither join a storyline nor serve as a candidate.
+    Stories without a short version are not recognised here; the assignment
+    prompt still tells the model to answer null for them."""
+    short = story.get("short")
+    lead = short.get("lead") if isinstance(short, dict) else None
+    return isinstance(lead, str) and lead.lstrip().lower().startswith("round-up")
 
 
 def _is_missing(exc: Exception) -> bool:
@@ -190,13 +208,17 @@ def fetch_stories(build, *, require_storyline_id: bool = False, extra: list[str]
 ASSIGN_SYSTEM = """You decide whether a new news report belongs to a developing story that earlier reports already cover. The reader is a busy doctor catching up after days away: he wants one card per real-world event, not ten near-identical reports.
 
 WHAT COUNTS AS THE SAME STORY
-- One specific event or incident and its direct follow-ups: the event itself, new details, eyewitness or official accounts, reactions, investigations, consequences.
+- One specific event or incident and its direct follow-ups: the event itself, new details, eyewitness or official accounts, reactions, investigations, consequences, and commentary or analysis about that event.
 - Different outlets covering it count, even when the headlines are worded very differently or one headline leaves out a name or place that another uses.
 - Reports may disagree on figures or details. That does not make them different stories.
 
 WHAT DOES NOT
-- A shared broad topic, country, person, company or ongoing theme (a war, the economy, an election campaign, a bilateral relationship) when the reports are about different specific developments.
+- A shared broad topic, country, person, company or ongoing theme (a war, the economy, a stock-market slump, an election campaign, trade talks, a bilateral relationship) when the reports are about different specific developments. Same subject is not same story.
+- Separate incidents, even close together or involving the same countries or people: two different strikes, attacks, speeches, announcements or market sessions are different stories unless one report presents the other as its cause or follow-up.
 - Round-up or multi-topic videos (one headline over several unrelated items): answer null unless the report is clearly about the same single event.
+
+THE TEST
+Would someone who read the candidate say the new report is an update on THE SAME thing they read, the same incident at the same moment in time, rather than something related? Only then is it a match.
 
 HOW TO ANSWER
 - Candidates are labelled A, B, C... Each is either a DEVELOPING STORY already tracked (with its title and a recent report) or a SINGLE REPORT that is not part of any story yet.
@@ -216,76 +238,222 @@ RECAP_SYSTEM = """You write the running recap of a developing news story for a b
 
 OUTPUT
 - title: at most 12 words, neutral, naming the event, in English.
-- so_far: one entry per EARLIER day (every day except the newest), oldest first. text is ONE sentence of at most 35 words: what happened or was reported that day. Merge reports from the same day. If the story spans a single day, so_far is an empty list.
-- latest: the NEWEST day's developments in 1-3 sentences (at most 60 words): what is new, not a retelling of earlier days.
+- so_far: exactly one entry for EACH earlier day listed under DATES (every day except the newest), oldest first, even when a day has a single report. text is ONE sentence, aim for 20 to 30 words and never more than 35: what happened or was reported that day. Merge reports from the same day. If the story spans a single day, so_far is an empty list.
+- latest: dated with the NEWEST day under DATES, never an earlier one, even when that day has a single report. 1-3 sentences, aim for 40 to 50 words and never more than 60: what is new that day, not a retelling of earlier days.
+- conflicts: at most 3, the most important first. Only disagreements between reports about a NUMBER that matters (people killed, injured or on board, amounts, heights, dates, vote counts). One entry each: what (a few words) and figures (just the competing numbers, each as a short string like "174"). Ignore spelling variants of names (the transcripts are machine-captioned), codes and minor details. An empty list when the reports agree on every important number.
 
 RULES
-- Use only what the reports say. Keep names and figures exact. When a report attributes a claim to someone, keep the attribution; do not turn claims into facts, and add no interpretation.
+- Use only what the reports say. Keep names and figures exact. When a report attributes a claim to someone, keep the attribution; do not turn claims into facts, and add no interpretation. If only one outlet makes a claim or draws a conclusion (for example what a leader gains politically, or why something happened), name the outlet from the [date · source] tag ("Firstpost Vantage argued ..."), never state it as fact. Keep each verb as strong as the report's (a suspension is not a ban; do not add "all" or "every").
 - Say each fact once: no repetition across days or sources.
-- If reports disagree on a figure or detail, say so plainly (for example "reports differ: 140 vs 174 killed"). Never pick one silently.
+- Every conflict you list MUST be stated in the so_far or latest text with each competing number, as a bracketed note at the END of the sentence, for example "Modi praised the captain for saving lives (reports differ: 140, 174 or 180 on board)." Never put the bracket in the middle of a clause. Never pick one silently.
 - Use the exact YYYY-MM-DD dates given in the input. Write in English."""
+
+_DATED_TEXT = {
+    "type": "object",
+    "properties": {"date": {"type": "string"}, "text": {"type": "string"}},
+    "required": ["date", "text"],
+}
 
 RECAP_SCHEMA = {
     "type": "object",
     "properties": {
         "title": {"type": "string"},
-        "so_far": {
+        "so_far": {"type": "array", "items": _DATED_TEXT},
+        "latest": _DATED_TEXT,
+        "conflicts": {
             "type": "array",
             "items": {
                 "type": "object",
-                "properties": {"date": {"type": "string"}, "text": {"type": "string"}},
-                "required": ["date", "text"],
+                "properties": {"what": {"type": "string"}, "figures": {"type": "array", "items": {"type": "string"}}},
+                "required": ["what", "figures"],
             },
         },
-        "latest": {
-            "type": "object",
-            "properties": {"date": {"type": "string"}, "text": {"type": "string"}},
-            "required": ["date", "text"],
-        },
     },
-    "required": ["title", "so_far", "latest"],
+    "required": ["title", "so_far", "latest", "conflicts"],
 }
 
 
 def recap_prompt(title: str, members: list[dict]) -> tuple[str, str]:
     """(system_instruction, contents) for a recap. members are story dicts in
     date order. Split out so the backfill can estimate cost from the real text."""
-    lines = [f"Working title: {title}", "", "REPORTS"]
+    days = sorted({_local_date(m["when"]) for m in members})
+    lines = [
+        f"Working title: {title}", "",
+        "DATES",
+        f"so_far, one entry each: {', '.join(days[:-1]) or '(none: the story spans one day)'}",
+        f"latest: {days[-1]}", "",
+        "REPORTS",
+    ]
     for m in members:
         lines.append(f"[{_local_date(m['when'])} · {m['source']}] {m['headline']} — {_brief(m)}")
     return RECAP_SYSTEM, "\n".join(lines)
 
 
-def clean_recap(raw, members: list[dict]) -> dict | None:
-    """Validate the model's recap against the reports it was built from.
-    Returns {"title", "recap": {"so_far", "latest"}} or None when unusable.
+_NUMBER = re.compile(r"\d+(?:,\d{3})*(?:\.\d+)?")
 
-    Dates are checked against the members' real days: `latest` always carries
-    the newest day (the model cannot move it), and so_far entries for unknown
-    or not-earlier days are dropped rather than shown with a wrong date."""
+
+def _numbers(text: str) -> set[str]:
+    """Numbers in a string with thousands commas removed ("17,000" == "17000")."""
+    return {n.replace(",", "") for n in _NUMBER.findall(text)}
+
+
+def _trim_words(text: str, cap: int) -> str:
+    """Cut to at most `cap` words: on a sentence boundary if one fits; failing
+    that, a single long sentence is closed at its last comma/semicolon in the
+    back half of the allowance (flash overshoots by a few words and a clean
+    shorter sentence beats a mid-phrase cut); failing that, cut at the cap with
+    an ellipsis."""
+    if len(text.split()) <= cap:
+        return text
+    kept = ""
+    for sentence in re.split(r"(?<=[.!?])\s+(?=[A-Z0-9“\"'‘])", text):
+        candidate = f"{kept} {sentence}".strip()
+        if len(candidate.split()) > cap:
+            break
+        kept = candidate
+    if kept:
+        return kept
+    head = " ".join(text.split()[:cap])
+    for i in range(len(head) - 1, -1, -1):
+        # a clause comma is followed by a space (or ends the head): the comma in
+        # "34,000" is not one. Never close inside an open bracket.
+        if (head[i] in ",;" and (i + 1 == len(head) or head[i + 1] == " ")
+                and len(head[:i].split()) >= cap // 2 and head[:i].count("(") == head[:i].count(")")):
+            return head[:i].rstrip() + "."
+    if head.count("(") > head.count(")"):
+        head = head[:head.rfind("(")].rstrip()
+    return head.rstrip(",;:") + "…"
+
+
+def build_recap(raw, members: list[dict], *, final: bool = False) -> tuple[dict | None, list[str]]:
+    """Check the model's recap against the reports it was built from.
+    Returns (cleaned, problems). `cleaned` is {"title", "recap": {"so_far",
+    "latest"}} and is only returned with no problems; otherwise it is None and
+    `problems` says what to fix, in words that can be fed back to the model.
+
+    Dates and coverage are never repaired, because a repaired recap can be wrong
+    in ways that read fine (8 Oct: "latest" dated 3 Oct was relabelled 4 Oct, so
+    "New on 4 Oct" described 3 Oct news). Checked: `latest` is dated the newest
+    day; every earlier day has an entry (entries for unknown, duplicate or
+    not-earlier days are dropped); every figure the model lists as disputed
+    appears in the text; word caps.
+
+    Text up to CAP_TOLERANCE over its cap is trimmed, not sent back: the model
+    always overshoots a little and a second call per recap doubled the cost.
+    With final=True (the answer to a re-ask) all over-cap text is trimmed, and a
+    disputed figure still missing from the text is not a failure: it goes into
+    recap["differ"] ("what: a vs b"), but only when two or more of its figures
+    appear in the reports the model was shown, so the flag cannot be lost to the
+    word cap and cannot be invented."""
     if not isinstance(raw, dict) or not members:
-        return None
+        return None, ["the answer was not the requested JSON object"]
     days = sorted({_local_date(m["when"]) for m in members})
     newest = days[-1]
+    problems: list[str] = []
+
     latest = raw.get("latest")
-    latest_text = " ".join(str(latest.get("text") or "").split()) if isinstance(latest, dict) else ""
+    latest_text = tidy_text(str(latest.get("text") or "")) if isinstance(latest, dict) else ""
     if not latest_text:
-        return None
-    so_far = []
-    seen = set()
+        return None, ["latest is missing or empty"]
+    latest_date = str(latest.get("date") or "").strip()
+    if latest_date != newest:
+        problems.append(f"latest is dated {latest_date or 'nothing'}; it must be dated {newest}, "
+                        f"the newest day, and describe what the {newest} reports add")
+
+    so_far: list[dict] = []
+    seen: set[str] = set()
     for item in raw.get("so_far") or []:
         if not isinstance(item, dict):
             continue
         date = str(item.get("date") or "").strip()
-        text = " ".join(str(item.get("text") or "").split())
+        text = tidy_text(str(item.get("text") or ""))
         if text and date in days and date < newest and date not in seen:
             seen.add(date)
             so_far.append({"date": date, "text": text})
     so_far.sort(key=lambda e: e["date"])
-    return {
-        "title": clean_title(raw.get("title")),
-        "recap": {"so_far": so_far, "latest": {"date": newest, "text": latest_text}},
-    }
+    missing = [d for d in days[:-1] if d not in seen]
+    if missing:
+        problems.append(f"so_far has no entry for {', '.join(missing)}; it needs exactly one entry per "
+                        f"earlier day ({', '.join(days[:-1])})")
+
+    for entry, cap, label in [(e, SO_FAR_MAX_WORDS, e["date"]) for e in so_far] + \
+                             [({"text": latest_text}, LATEST_MAX_WORDS, "latest")]:
+        words = len(entry["text"].split())
+        if words > cap:
+            if final or words <= cap * CAP_TOLERANCE:
+                entry["text"] = _trim_words(entry["text"], cap)
+            else:
+                problems.append(f"the {label} text has {words} words; the limit is {cap}. Shorten it, keeping any disputed figures")
+        if label == "latest":
+            latest_text = entry["text"]
+
+    shown = _numbers(" ".join([e["text"] for e in so_far] + [latest_text]))
+    seen_by_model = _numbers(" ".join(f"{m['headline']} {_brief(m)}" for m in members))
+    differ: list[str] = []
+    for c in (raw.get("conflicts") or [])[:MAX_CONFLICTS]:     # the prompt asks for 3, most important first
+        if not isinstance(c, dict):
+            continue
+        figures = [tidy_text(str(f)) for f in c.get("figures") or []]
+        absent = [f for f in figures if _numbers(f) and not _numbers(f) <= shown]
+        if not absent:
+            continue
+        what = tidy_text(str(c.get("what") or "")) or "a disputed figure"
+        if not final:
+            problems.append(f"you list \"{what}\" as disputed but the recap text never states {', '.join(absent)}; "
+                            f"state every competing figure (\"reports differ: ...\")")
+            continue
+        real = [f for f in figures if _numbers(f) and _numbers(f) <= seen_by_model]
+        if len(real) >= 2:
+            differ.append(f"{what}: {' vs '.join(real)}")
+
+    if problems:
+        return None, problems
+    recap = {"so_far": so_far, "latest": {"date": newest, "text": latest_text}}
+    if differ:
+        recap["differ"] = differ
+    return {"title": clean_title(raw.get("title")), "recap": recap}, []
+
+
+def _ask_recap(contents: str, system: str):
+    return llm.flash_json(
+        contents=contents,
+        system_instruction=system,
+        response_schema=RECAP_SCHEMA,
+        temperature=0.2,
+        max_output_tokens=2048,
+        thinking_budget=0,
+    )
+
+
+def make_recap(title: str, members: list[dict], ask=_ask_recap) -> tuple[dict | None, list[str], int]:
+    """One recap, with at most one re-ask. Returns (cleaned, problems, calls);
+    `problems` is empty on success and says why it failed otherwise.
+
+    A rejected answer is sent back with the list of problems. The corrected
+    answer is judged with final=True (over-cap text trimmed, disputed figures
+    that still missed the text recorded under recap["differ"]); if it is still
+    unusable, the first answer is tried the same way, so a recap that only ran
+    long is not lost to a failed re-ask. Missing days or a wrong `latest` date
+    still fail, and are retried by the next run. A call that returned nothing is
+    not re-asked: llm.py already retried it with backoff."""
+    system, contents = recap_prompt(title, members)
+    raw = ask(contents, system)
+    cleaned, problems = build_recap(raw, members)
+    if cleaned is not None:
+        return cleaned, [], 1
+    if raw is None:
+        return None, ["no answer from Gemini"], 1
+    previous = json.dumps(raw, ensure_ascii=False)
+    feedback = ("\n\nYOUR PREVIOUS ANSWER WAS REJECTED\n" + previous
+                + "\n\nAnswer again in full, keeping what was right, and fix:\n- " + "\n- ".join(problems))
+    again = ask(contents + feedback, system)
+    for candidate in (again, raw):
+        cleaned, why = build_recap(candidate, members, final=True)
+        if cleaned is not None:
+            return cleaned, [], 2
+        if candidate is again and again is not None:
+            problems = why      # report what is wrong with the corrected answer, not the first one
+    return None, problems, 2
 
 
 # ---------------------------------------------------------------------------
@@ -339,6 +507,8 @@ class MemoryBackend:
         scored = []
         for o in self.stories.values():
             if o["id"] == story["id"] or o["category"] != story["category"] or o.get("vec") is None:
+                continue
+            if is_round_up(o):
                 continue
             if o["created_at"] < floor:
                 continue
@@ -414,7 +584,7 @@ class DbBackend:
                 "p_category": story["category"],
                 "p_since": since,
                 "p_min_sim": MIN_SIM,
-                "p_limit": MAX_CANDIDATES,
+                "p_limit": MAX_CANDIDATES * 2,   # round-ups are dropped below; MemoryBackend drops them before its cut
                 "p_exclude_id": story["id"],
             }).execute().data
         except Exception as e:
@@ -428,7 +598,8 @@ class DbBackend:
             require_storyline_id=True,
         )
         by_id = {m["id"]: m for m in metas}
-        scored = [(sims[r["id"]], by_id[r["id"]]) for r in rows if r["id"] in by_id]
+        scored = [(sims[r["id"]], by_id[r["id"]]) for r in rows
+                  if r["id"] in by_id and not is_round_up(by_id[r["id"]])][:MAX_CANDIDATES]
         sids = sorted({s["storyline_id"] for _, s in scored if s.get("storyline_id")})
         storylines: dict[str, dict] = {}
         if sids:
@@ -542,6 +713,9 @@ class Engine:
                "when": story["when"].isoformat(), "candidates": 0, "best_sim": None,
                "action": "none", "target": None, "title": None, "other": None}
         try:
+            if is_round_up(story):
+                rec["skipped"] = "round-up"    # no candidates, no Gemini call
+                return rec
             entries = self.backend.candidates(story)
             rec["candidates"] = len(entries)
             if entries:
@@ -596,7 +770,7 @@ def refresh_recaps(backend, *, limit: int | None = None) -> dict:
     """Recap every storyline with 3+ reports whose recap is out of date.
     Stops after repeated Gemini failures; a failed storyline keeps its old
     recap and is retried by the next run."""
-    stats = {"targets": 0, "refreshed": 0, "failed": 0}
+    stats = {"targets": 0, "refreshed": 0, "failed": 0, "reasked": 0}
     consecutive = 0
     targets = backend.recap_targets()
     stats["targets"] = len(targets)
@@ -604,20 +778,12 @@ def refresh_recaps(backend, *, limit: int | None = None) -> dict:
         members = backend.members(sl["id"])
         if len(members) < MIN_RECAP_STORIES:
             continue
-        system, contents = recap_prompt(sl["title"], members)
-        result = llm.flash_json(
-            contents=contents,
-            system_instruction=system,
-            response_schema=RECAP_SCHEMA,
-            temperature=0.2,
-            max_output_tokens=2048,
-            thinking_budget=0,
-        )
-        cleaned = clean_recap(result, members)
+        cleaned, problems, calls = make_recap(sl["title"], members)
+        stats["reasked"] += calls - 1
         if cleaned is None:
             stats["failed"] += 1
             consecutive += 1
-            print(f"    ✗ Recap failed: {sl['title'][:60]}")
+            print(f"    ✗ Recap failed: {sl['title'][:60]} — {'; '.join(problems)[:200]}")
             if consecutive >= MAX_CONSECUTIVE_LLM_FAILURES:
                 print(f"    ⚠ {consecutive} recap failures in a row — stopping recaps for this run")
                 break
@@ -625,7 +791,8 @@ def refresh_recaps(backend, *, limit: int | None = None) -> dict:
         consecutive = 0
         backend.save_recap(sl["id"], cleaned["title"], cleaned["recap"], sl["story_count"])
         stats["refreshed"] += 1
-        print(f"    ✓ Recap: {cleaned['title'] or sl['title']} ({sl['story_count']} reports)")
+        print(f"    ✓ Recap: {cleaned['title'] or sl['title']} ({sl['story_count']} reports"
+              + (", re-asked once" if calls > 1 else "") + ")")
     return stats
 
 
@@ -686,6 +853,7 @@ def refresh_recaps_live() -> None:
         stats = refresh_recaps(backend)
         if stats["targets"]:
             print(f"  Storyline recaps: {stats['refreshed']}/{stats['targets']} refreshed"
+                  + (f", {stats['reasked']} re-asked" if stats["reasked"] else "")
                   + (f", {stats['failed']} failed" if stats["failed"] else ""))
     except NotMigrated:
         _disable("supabase/migrations/storylines.sql has not been run")
