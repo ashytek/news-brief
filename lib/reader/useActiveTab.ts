@@ -40,6 +40,8 @@ export function useActiveTab(enabled: boolean) {
 
   const handleTabChange = useCallback((tab: ActiveTab) => {
     setActiveTab(tab)
+    // A different tab starts at its top, not wherever the last one was scrolled to (F073).
+    if (typeof window !== 'undefined') window.scrollTo({ top: 0 })
     if (isSection(tab)) setLastSection(tab)
     try {
       localStorage.setItem(STORAGE_KEY, tab)

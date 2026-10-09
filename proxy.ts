@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { isAuthPath } from '@/lib/authPath'
 
 export async function proxy(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
@@ -40,7 +41,7 @@ export async function proxy(request: NextRequest) {
   }
 
   // Redirect unauthenticated users to /auth
-  if (!user && !request.nextUrl.pathname.startsWith('/auth')) {
+  if (!user && !isAuthPath(request.nextUrl.pathname)) {
     const url = request.nextUrl.clone()
     url.pathname = '/auth'
     const redirectResponse = NextResponse.redirect(url)
@@ -49,7 +50,7 @@ export async function proxy(request: NextRequest) {
   }
 
   // Redirect authenticated users away from /auth
-  if (user && request.nextUrl.pathname.startsWith('/auth')) {
+  if (user && isAuthPath(request.nextUrl.pathname)) {
     const url = request.nextUrl.clone()
     url.pathname = '/reader'
     const redirectResponse = NextResponse.redirect(url)

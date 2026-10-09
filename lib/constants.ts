@@ -8,7 +8,7 @@
 // Explicitly omits transcript_text/embedding blobs so payloads stay slim.
 export const STORY_SELECT =
   'id, source_id, video_id, category, headline, summary, bullets, short, cluster_id, matched_topics, created_at, ' +
-  'videos(id, url, published_at, thumbnail_url, duration_seconds), sources(id, name)'
+  'videos(id, url, published_at, thumbnail_url, duration_seconds)'
 
 /** Dwell auto-read thresholds, seconds on screen (Ash, 9 Oct 2026): a short
  *  card is read in about 40 s; once its sections are expanded (or when there

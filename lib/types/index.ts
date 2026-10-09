@@ -64,8 +64,9 @@ export interface EngagementSignal {
   signal: 'like' | 'dislike' | 'expand_perspectives' | 'dwell_long' | 'dwell_short'
 }
 
-// Supabase join relations come back under the table name (videos/sources), not the field name (video/source)
+// Supabase join relations come back under the table name (videos), not the field name (video).
+// The source comes from the `sources` lookup the screens load once (by `source_id`), not from a
+// join on every story row (F081).
 export interface StoryWithRelations extends Omit<Story, 'video' | 'source'> {
   videos?: Video | null
-  sources?: Source | null
 }

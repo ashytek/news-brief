@@ -31,6 +31,13 @@ export function usePipelineTrigger(
     deadline: number
   }>({ timeoutId: null, baselineId: null, phase: 'waiting', deadline: 0 })
 
+  // The poll re-schedules itself, so each scheduled run keeps the closure it was
+  // created with. Anything it should see *fresh* when the run finishes (above all,
+  // which tab to reload) is read through this ref instead of the closure: switching
+  // tabs during a manual run used to reload the tab you pressed "Run now" on.
+  const latest = useRef({ loadContent, loadReadIds, refreshPipelineHealth })
+  useEffect(() => { latest.current = { loadContent, loadReadIds, refreshPipelineHealth } })
+
   const pollTriggerStatus = useCallback(async () => {
     const ref = triggerPollRef.current
     const { data } = await supabase
@@ -47,8 +54,7 @@ export function usePipelineTrigger(
         setTriggerState('idle')
         return
       }
-      // The poll re-schedules itself: each scheduled run keeps the closure it was
-      // created with (unchanged behaviour, moved verbatim from ReaderClient).
+      // The poll re-schedules itself (see `latest` above for what it must not close over).
       // eslint-disable-next-line react-hooks/immutability
       ref.timeoutId = setTimeout(pollTriggerStatus, POLL_INTERVAL_WAITING_MS)
       return
@@ -71,9 +77,9 @@ export function usePipelineTrigger(
       )
       // The whole point of the button is fresh content — completion alone
       // doesn't update what's on screen.
-      loadContent()
-      loadReadIds()
-      refreshPipelineHealth()
+      latest.current.loadContent()
+      latest.current.loadReadIds()
+      latest.current.refreshPipelineHealth()
       return
     }
 
@@ -84,7 +90,7 @@ export function usePipelineTrigger(
       return
     }
     ref.timeoutId = setTimeout(pollTriggerStatus, POLL_INTERVAL_RUNNING_MS)
-  }, [supabase, loadContent, loadReadIds, refreshPipelineHealth])
+  }, [supabase])
 
   const handleTriggerPipeline = useCallback(async () => {
     if (triggerState !== 'idle') return
