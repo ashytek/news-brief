@@ -54,6 +54,9 @@ export function useDwellTracking(
   markRead: (storyId?: string, opts?: { hold?: boolean }) => Promise<boolean>,
   /** False once the Reader screen itself is being left. */
   viewActive: { current: boolean },
+  /** Is this story read by now? A card taken out of the list because it was just
+   *  marked read (Mark all read) is not one the reader glanced at and left. */
+  isRead: (storyId: string) => boolean = () => false,
 ) {
   const dwellTimers = useRef<Map<string, number>>(new Map())
 
@@ -77,10 +80,10 @@ export function useDwellTracking(
     if (elapsed > (longForm ? DWELL_LONG_SECONDS : DWELL_SHORT_SECONDS)) {
       sendEngagement('dwell_long', storyId)
       markRead(storyId, { hold: true }) // auto-mark-read after sufficient reading time
-    } else if (elapsed < 3) {
+    } else if (elapsed < 3 && !(storyId && isRead(storyId))) {
       sendEngagement('dwell_short', storyId)
     }
-  }, [sendEngagement, markRead, viewActive])
+  }, [sendEngagement, markRead, viewActive, isRead])
 
   return { startDwell, endDwell }
 }

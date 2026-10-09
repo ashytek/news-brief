@@ -31,7 +31,7 @@ function Glyph({ icon: Icon, badge }: Pick<Own, 'icon' | 'badge'>) {
       {badge ? (
         <span
           aria-hidden="true"
-          className="absolute right-1.5 top-1.5 min-w-[18px] rounded-full bg-accent-fill px-1 text-center text-[11px] font-bold leading-[18px] tabular-nums text-on-accent"
+          className="absolute right-1 top-1 min-w-5 rounded-full bg-accent-fill px-1 text-center text-xs font-bold leading-5 tabular-nums text-on-accent"
         >
           {badge > 99 ? '99+' : badge}
         </span>

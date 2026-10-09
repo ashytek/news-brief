@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Supabase } from './types'
 
+/** Ids per DELETE when taking read marks back (keeps the request URL short). */
+const UNDO_CHUNK = 100
+
 /** Which stories are read, plus the "held" subset (see below) and the writes
  *  that change them. */
 export function useReadState(supabase: Supabase, userId: string, enabled: boolean) {
@@ -113,9 +116,17 @@ export function useReadState(supabase: Supabase, userId: string, enabled: boolea
     const drop = (set: Set<string>) => { const n = new Set(set); ids.forEach(id => n.delete(id)); return n }
     setReadIds(drop)
     setHeldIds(drop)
-    const { error } = await supabase.from('read_items').delete().eq('user_id', userId).in('story_id', ids)
-    if (error) {
-      console.error('markUnread failed', { count: ids.length, error })
+    // The ids travel in the URL (`story_id=in.(…)`), so a very long list goes in chunks.
+    let failed = false
+    for (let i = 0; i < ids.length; i += UNDO_CHUNK) {
+      const { error } = await supabase.from('read_items').delete().eq('user_id', userId).in('story_id', ids.slice(i, i + UNDO_CHUNK))
+      if (error) {
+        console.error('markUnread failed', { count: ids.length, error })
+        failed = true
+        break
+      }
+    }
+    if (failed) {
       setReadIds(prev => { const n = new Set(prev); ids.forEach(id => n.add(id)); return n })
       return false
     }

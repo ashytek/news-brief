@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useSnackbar } from '@/components/ui'
 import type { StoryWithRelations } from '@/lib/types'
@@ -71,7 +71,12 @@ function useReaderValue(userId: string) {
   // useDwellTracking for why that ordering matters.
   const viewActive = useRef(false)
   const setViewActive = useCallback((v: boolean) => { viewActive.current = v }, [])
-  const { startDwell, endDwell } = useDwellTracking(sendEngagement, read.markRead, viewActive)
+  // The newest read set, for the dwell teardown (see useDwellTracking). A layout
+  // effect: it runs before the passive cleanup of cards that vanished in the same commit.
+  const readNow = useRef(read.readIds)
+  useLayoutEffect(() => { readNow.current = read.readIds }, [read.readIds])
+  const isRead = useCallback((id: string) => readNow.current.has(id), [])
+  const { startDwell, endDwell } = useDwellTracking(sendEngagement, read.markRead, viewActive, isRead)
   const visit = useSinceVisit(active)
 
   const view = useFeedView({
@@ -90,9 +95,12 @@ function useReaderValue(userId: string) {
   })
 
   // Explicit "Mark read" taps get an Undo (the dwell timer's auto-mark does not:
-  // it happens while you are reading, and the card is held in place).
+  // it happens while you are reading). Like the dwell mark, a tap *holds* the card
+  // in place, dimmed, instead of pulling it out of an Unread list from under your
+  // thumb; the next refresh or the Unread/All switch lets it go. (It also means the
+  // card is not torn down, so no "glanced and left" signal is reported for it.)
   const markReadUndoable = useCallback(async (storyId: string) => {
-    const ok = await read.markRead(storyId)
+    const ok = await read.markRead(storyId, { hold: true })
     if (!ok) return   // already read, or the write failed and was rolled back
     snackbar.show({
       message: 'Marked as read',

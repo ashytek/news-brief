@@ -42,9 +42,10 @@ const mkBullet = (i: number) => ({
   timestamp_seconds: i * 95,
 })
 
-// Built once at module load; the clock is read through a helper so no
-// component body calls it.
-const now = () => Date.now()
+// Fixed dates (old enough to print as plain dates): the server and the browser
+// render this module separately, so anything built from the clock would differ
+// between them and trip a hydration warning.
+const PUBLISHED = '2026-10-01T10:00:00.000Z'
 
 const soloBase = {
   id: 'dev-solo-1',
@@ -55,11 +56,11 @@ const soloBase = {
     'A hostile-length summary. Includes one long unbroken string ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ to probe wrapping behaviour on 360px-wide viewports.',
   bullets: Array.from({ length: 18 }, (_, i) => mkBullet(i + 1)),
   matched_topics: ['strait of hormuz', 'india'],
-  created_at: new Date(now() - 3600e3).toISOString(),
+  created_at: PUBLISHED,
   videos: {
     url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
     thumbnail_url: 'https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg',
-    published_at: new Date(now() - 1800e3).toISOString(),
+    published_at: PUBLISHED,
     duration_seconds: 3725,
   },
 }

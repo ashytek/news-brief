@@ -149,7 +149,7 @@ export default function SearchClient() {
               aria-label="Search stories"
               value={query}
               onChange={e => setQuery(e.target.value)}
-              className="min-w-0 flex-1 bg-transparent text-base text-fg-1 placeholder:text-fg-3 focus:outline-none [&::-webkit-search-cancel-button]:hidden"
+              className="h-full min-w-0 flex-1 bg-transparent text-base text-fg-1 placeholder:text-fg-3 focus:outline-none [&::-webkit-search-cancel-button]:hidden"
             />
             {query && (
               <button

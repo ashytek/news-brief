@@ -155,7 +155,7 @@ export function TopicsPanel() {
     <div>
       <PageHead
         title="Topics"
-        meta={`${active.length} watching${r.topicCount > 0 ? ` · ${r.topicCount} matched stories this week` : ''}`}
+        meta={loading ? '\u00a0' : `${active.length} watching${r.topicCount > 0 ? ` · ${r.topicCount} matched stories this week` : ''}`}
       />
 
       {/* Add keyword */}
@@ -171,7 +171,7 @@ export function TopicsPanel() {
             onChange={e => setNewKeyword(e.target.value)}
             placeholder="Add a topic to watch"
             aria-label="Add a topic to watch"
-            className="min-w-0 flex-1 bg-transparent text-base text-fg-1 placeholder:text-fg-3 focus:outline-none"
+            className="h-full min-w-0 flex-1 bg-transparent text-base text-fg-1 placeholder:text-fg-3 focus:outline-none"
           />
         </label>
         <Button type="submit" icon={Plus} loading={adding} disabled={!newKeyword.trim()}>Add</Button>

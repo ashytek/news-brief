@@ -8,8 +8,8 @@
 import { useState } from 'react'
 import { Bell, Check, Inbox, RefreshCw, Search, TriangleAlert, CircleCheck } from 'lucide-react'
 import {
-  Button, ButtonLink, Chip, ChipLink, CategoryMark, IconButton, Sheet, SnackbarProvider,
-  StateMessage, StoryRow, useSnackbar,
+  Button, ButtonLink, Chip, ChipLink, CategoryMark, DividerLabel, Highlight, IconButton, OptionSheet,
+  Segmented, Sheet, SnackbarProvider, StateMessage, StoryRow, useSnackbar,
 } from '@/components/ui'
 import { CATEGORIES } from '@/lib/categories'
 import type { StoryWithRelations } from '@/lib/types'
@@ -68,6 +68,9 @@ function Demo() {
   const [sheet, setSheet] = useState(false)
   const [chip, setChip] = useState('all')
   const [expanded, setExpanded] = useState(true)
+  const [seg, setSeg] = useState<'unread' | 'all'>('unread')
+  const [opt, setOpt] = useState<'all' | '7d' | '30d'>('all')
+  const [optSheet, setOptSheet] = useState(false)
 
   return (
     <div className="mx-auto max-w-2xl px-gutter pb-40 pt-6">
@@ -126,6 +129,15 @@ function Demo() {
         <div className="flex flex-wrap gap-x-5 gap-y-2">
           {CATEGORIES.map(c => <CategoryMark key={c.key} category={c.key} />)}
         </div>
+      </Section>
+
+      <Section title="Segmented · divider · highlight · option sheet">
+        <Segmented label="Show" value={seg} onChange={setSeg} options={[{ value: 'unread', label: 'Unread' }, { value: 'all', label: 'All' }]} />
+        <DividerLabel>Before you left</DividerLabel>
+        <p className="t-body"><Highlight text="A search match inside a sentence about Trump and tariffs" query="trump tariffs" /></p>
+        <div className="mt-3"><Button variant="tonal" onClick={() => setOptSheet(true)}>Date: {opt}</Button></div>
+        <OptionSheet open={optSheet} onClose={() => setOptSheet(false)} title="Date" value={opt} onChange={setOpt}
+          options={[{ value: 'all', label: 'Any time' }, { value: '7d', label: 'Last 7 days' }, { value: '30d', label: 'Last 30 days' }]} />
       </Section>
 
       <Section title="Story rows">

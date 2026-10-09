@@ -80,7 +80,7 @@ export function BottomNav() {
                 {badge > 0 && (
                   <span
                     aria-hidden="true"
-                    className="absolute -top-1 left-8 min-w-[18px] rounded-full bg-accent-fill px-1 text-center text-[11px] font-bold leading-[18px] tabular-nums text-on-accent"
+                    className="absolute -top-1.5 left-7 min-w-5 rounded-full bg-accent-fill px-1 text-center text-xs font-bold leading-5 tabular-nums text-on-accent"
                   >
                     {badge > 99 ? '99+' : badge}
                   </span>
