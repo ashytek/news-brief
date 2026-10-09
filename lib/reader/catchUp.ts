@@ -176,8 +176,6 @@ export interface CatchUpInput {
   /** Active source and not muted. */
   keep: (s: StoryWithRelations) => boolean
   isIGR: (s: StoryWithRelations) => boolean
-  /** Two lead per one rest (`interleaveLead`): IGR leads within a day, as everywhere else. */
-  mix: (lead: StoryWithRelations[], rest: StoryWithRelations[]) => StoryWithRelations[]
   now: Date
   prevVisit: number | null
 }
@@ -192,7 +190,7 @@ export interface CatchUpInput {
  * auto-marked read stays where it is (`layoutReadIds`), like in the normal feed.
  */
 export function buildCatchUp(input: CatchUpInput): CatchUpView {
-  const { readIds, layoutReadIds, keep, isIGR, mix, now, prevVisit } = input
+  const { readIds, layoutReadIds, keep, isIGR, now, prevVisit } = input
 
   const poolVisible = input.pool.filter(keep)
   const inPool = new Set(poolVisible.map(s => s.id))
@@ -236,7 +234,10 @@ export function buildCatchUp(input: CatchUpInput): CatchUpView {
   }
   const days: DayGroup[] = [...byDay.keys()].sort().reverse().map(key => {
     const list = byDay.get(key)!.sort(newestFirst)
-    const stories = mix(list.filter(isIGR), list.filter(s => !isIGR(s)))
+    // India Global Review first, then the rest, each newest first (roadmap session 5 and the
+    // mockups). Not the 2:1 mix of Today's Brief: that exists to keep other sources inside a
+    // 12-story cut, and this list is not cut.
+    const stories = [...list.filter(isIGR), ...list.filter(s => !isIGR(s))]
     return { key, label: dayHeading(key, now), stories, unreadIds: stories.filter(s => !readIds.has(s.id)).map(s => s.id) }
   })
 

@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useSnackbar } from '@/components/ui'
 import type { StoryWithRelations } from '@/lib/types'
 import { DWELL_SHORT_SECONDS } from '@/lib/constants'
-import { interleaveLead, isIGRSource } from '@/lib/ranking'
+import { isIGRSource } from '@/lib/ranking'
 import { nowDate } from '@/lib/format'
 import { useActiveTab } from './useActiveTab'
 import { useReadState } from './useReadState'
@@ -171,7 +171,6 @@ function useReaderValue(userId: string) {
       layoutReadIds: read.layoutReadIds,
       keep: s => meta.sources[s.source_id]?.is_active !== false && !hasMutedTopic(s.matched_topics),
       isIGR: s => isIGRSource(meta.sources[s.source_id]),
-      mix: interleaveLead,
       now: nowDate(),
       prevVisit: visit.prevVisit,
     })

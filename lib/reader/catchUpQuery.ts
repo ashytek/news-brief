@@ -6,7 +6,7 @@ import type { SectionKey, Supabase } from './types'
 export interface CatchUpData {
   /** The tab's stories from the last 7 days, newest first. */
   pool: StoryWithRelations[]
-  /** Every report of the storylines the pool points to (some are older than the window). */
+  /** The reports of the storylines the pool points to that are older than the window (the rest are in `pool`). */
   members: StoryWithRelations[]
   storylines: Storyline[]
 }
@@ -39,10 +39,18 @@ export async function fetchCatchUp(
 
   const chunks: string[][] = []
   for (let i = 0; i < ids.length; i += ID_CHUNK) chunks.push(ids.slice(i, i + ID_CHUNK))
-  const results = await Promise.all(chunks.map(chunk => Promise.all([
-    supabase.from('storylines').select(STORYLINE_SELECT).in('id', chunk),
-    supabase.from('stories').select(STORY_SELECT).in('storyline_id', chunk).order('created_at', { ascending: false }).limit(CATCHUP_POOL_LIMIT),
-  ])))
+  // The members inside the window are already in the pool: ask only for the older ones
+  // (the "See all N reports" list reaches back past 7 days), unless the pool was cut
+  // short by its row limit, when the in-window ones could be missing from it.
+  const olderOnly = pool.length < CATCHUP_POOL_LIMIT
+  const results = await Promise.all(chunks.map(chunk => {
+    let members = supabase.from('stories').select(STORY_SELECT).in('storyline_id', chunk)
+    if (olderOnly) members = members.lt('created_at', since)
+    return Promise.all([
+      supabase.from('storylines').select(STORYLINE_SELECT).in('id', chunk),
+      members.order('created_at', { ascending: false }).limit(CATCHUP_POOL_LIMIT),
+    ])
+  }))
   const failed = results.flat().find(r => r.error)
   if (failed?.error) {
     console.error('catch-up storylines failed; showing headlines only', failed.error)
