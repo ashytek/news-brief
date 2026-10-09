@@ -11,7 +11,9 @@
  * to enumerate horizontal-overflow offenders.
  */
 
+import { useSyncExternalStore } from 'react'
 import { SoloCard } from '@/components/SoloCard'
+import { PrimitivesGallery } from './PrimitivesGallery'
 import { CategoryNav } from '@/components/CategoryNav'
 import { CATEGORIES } from '@/lib/categories'
 import type { StoryWithRelations, Category } from '@/lib/types'
@@ -74,7 +76,15 @@ const solo = {
 // The same story before it is backfilled: falls back to the long summary.
 const soloNoShort = { ...soloBase, id: 'dev-solo-2', short: null } as unknown as StoryWithRelations
 
+const subscribeNothing = () => () => {}
+const readSearch = () => window.location.search
+
 export default function DevUiPage() {
+  // ?view=primitives swaps in the design-system gallery. useSyncExternalStore
+  // keeps the first client render equal to the server's, so no hydration mismatch.
+  const search = useSyncExternalStore(subscribeNothing, readSearch, () => '')
+  if (new URLSearchParams(search).get('view') === 'primitives') return <PrimitivesGallery />
+
   return (
     <div className="min-h-screen text-slate-100">
       {/* Header clone — every control force-rendered (worst case width) */}

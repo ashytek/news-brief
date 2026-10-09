@@ -75,6 +75,12 @@
   --spacing-navbar: 64px;
   --shadow-snackbar: 0 6px 24px rgb(0 0 0 / 0.35);
   --ease-emphasized: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --animate-sheet-in: sheet-in 240ms var(--ease-emphasized) both;
+}
+
+@keyframes sheet-in {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 /* ── Type scale (ds.css .t-*) ─────────────────────────────────────────────

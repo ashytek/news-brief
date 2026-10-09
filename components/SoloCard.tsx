@@ -1,13 +1,14 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ShortVersion, Source } from '@/lib/types'
+import type { Source } from '@/lib/types'
 import type { StoryWithRelations } from '@/lib/types'
 import { TsLink } from './TsLink'
 import { EngagementBar } from './EngagementBar'
 import { useDwellVisibility } from '@/lib/useDwellVisibility'
 import { formatTime, formatDuration } from '@/lib/constants'
 import { getCategory } from '@/lib/categories'
+import { estimateReadMinutes, readShort, formatRelativeDate } from '@/lib/format'
 
 interface Props {
   story: StoryWithRelations
@@ -25,34 +26,6 @@ interface Props {
 }
 
 const SIXTY_MINUTES = 60 * 60 * 1000
-
-/** Rough words-per-minute reading estimate (250 wpm = average adult). */
-function estimateReadMinutes(texts: string[]): number {
-  const words = texts.reduce((sum, t) => sum + (t?.split(/\s+/).length ?? 0), 0)
-  return Math.max(1, Math.round(words / 250))
-}
-
-/** The story's short version, or null when absent or malformed — the card then
- *  falls back to the long summary. `short` is untyped jsonb in the database. */
-function readShort(s: ShortVersion | null | undefined): { lead: string; keyPoints: string[] } | null {
-  if (!s || typeof s.lead !== 'string' || !s.lead.trim()) return null
-  const keyPoints = Array.isArray(s.key_points)
-    ? s.key_points.filter(p => typeof p === 'string' && p.trim().length > 0)
-    : []
-  return { lead: s.lead.trim(), keyPoints }
-}
-
-/** Friendly relative-time string: "2h ago", "Yesterday", "3 May". */
-function formatRelativeDate(iso: string): string {
-  const then = new Date(iso).getTime()
-  const diff = Date.now() - then
-  const mins = Math.floor(diff / 60000)
-  if (mins < 60) return `${Math.max(1, mins)}m ago`
-  const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs}h ago`
-  if (hrs < 48) return 'Yesterday'
-  return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
-}
 
 /** Bullets shown before the "Show all" expander kicks in. Long prophetic
  * broadcasts run 15-25 bullets — collapsing keeps mobile cards scannable. */
