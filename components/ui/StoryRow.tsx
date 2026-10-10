@@ -83,7 +83,7 @@ export function StoryRow({
               type="button"
               onClick={onSelect}
               aria-current={selected ? 'true' : undefined}
-              className={cx("block text-left after:absolute after:inset-0 after:content-['']", clamp)}
+              className={cx(clamp || 'block', "text-left after:absolute after:inset-0 after:content-['']")}
             >
               <Highlight text={title} query={highlight} />
             </button>
@@ -92,7 +92,7 @@ export function StoryRow({
               type="button"
               onClick={onToggle}
               aria-expanded={!!expanded}
-              className={cx("block text-left after:absolute after:inset-0 after:content-['']", clamp)}
+              className={cx(clamp || 'block', "text-left after:absolute after:inset-0 after:content-['']")}
             >
               <Highlight text={title} query={highlight} />
             </button>
