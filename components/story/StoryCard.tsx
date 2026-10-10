@@ -119,6 +119,7 @@ export function StoryCard({
     <article
       ref={dwellRef}
       data-story-id={story.id}
+      {...(isPane ? {} : { 'data-flow': '' })}
       className={cx('story-card card-cv flex flex-col border-b border-hairline py-5', isLead && 'pt-1', isPane && 'border-b-0 py-0')}
     >
       {isPane ? (

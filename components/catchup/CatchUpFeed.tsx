@@ -7,6 +7,7 @@ import { StorySkeleton } from '@/components/story/StorySkeleton'
 import { useStoryActions } from '@/components/story/useStoryActions'
 import { Button, DividerLabel, StateMessage } from '@/components/ui'
 import { useReader } from '@/lib/reader/ReaderProvider'
+import { afterPaint, keepFlow, toTop } from '@/lib/reader/flow'
 import { CatchUpNotice } from './CatchUpNotice'
 import { StorylineCard } from './StorylineCard'
 import { StorylineRow } from './StorylineRow'
@@ -23,6 +24,22 @@ export function CatchUpFeed() {
   const [toggled, setToggled] = useState<Record<string, boolean>>({})
   // Today and All mix categories, so each row names its own; a single category needn't.
   const showCategory = r.activeTab === 'today' || r.activeTab === 'all'
+
+  // Folding a developing story puts it at the top of the screen, so you carry on from it
+  // instead of landing somewhere below where its card was (Ash, 10 Oct 2026).
+  const collapse = (id: string) => {
+    setToggled(t => ({ ...t, [id]: false }))
+    afterPaint(() => {
+      const row = document.querySelector(`[data-flow][data-storyline-id="${CSS.escape(id)}"]`)
+      if (row) toTop(row)
+    })
+  }
+  // Mark day read: the day leaves and the next day comes to the top of the screen.
+  const markDay = (el: Element | null, key: string, ids: string[]) => {
+    const bringNext = keepFlow(el)
+    void r.markManyReadUndoable(ids, { reveal: () => document.querySelector(`[data-flow][data-day="${CSS.escape(key)}"]`) })
+    afterPaint(bringNext)
+  }
 
   const body = (() => {
     if (r.loading || r.catchUp.pending) return <StorySkeleton />
@@ -56,18 +73,18 @@ export function CatchUpFeed() {
                 const open = toggled[id] ?? i === 0
                 return open
                   ? <StorylineCard key={id} entry={entry} actionsFor={actionsFor} showCategory={showCategory}
-                      onCollapse={() => setToggled(t => ({ ...t, [id]: false }))} />
+                      onCollapse={() => collapse(id)} />
                   : <StorylineRow key={id} entry={entry} onOpen={() => setToggled(t => ({ ...t, [id]: true }))} />
               })}
             </div>
           </section>
         )}
         {view.days.map(day => (
-          <section key={day.key} aria-label={day.label} data-day={day.key}>
+          <section key={day.key} aria-label={day.label} data-day={day.key} data-flow>
             <DividerLabel
               className="mt-4"
               action={day.unreadIds.length > 0
-                ? <Button variant="text" className="-mr-3" onClick={() => { void r.markManyReadUndoable(day.unreadIds) }}>Mark day read</Button>
+                ? <Button variant="text" className="-mr-3" onClick={e => markDay(e.currentTarget.closest('[data-flow]'), day.key, day.unreadIds)}>Mark day read</Button>
                 : undefined}
             >
               {day.label} · {day.stories.length}
@@ -80,6 +97,7 @@ export function CatchUpFeed() {
                 sourceName={r.sources[story.source_id]?.name}
                 showCategory={showCategory}
                 actions={actionsFor(story)}
+                collapseToTop
               />
             ))}
           </section>

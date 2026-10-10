@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type MouseEvent } from 'react'
 import { Check, ChevronDown, ChevronUp } from 'lucide-react'
 import type { StoryWithRelations } from '@/lib/types'
 import { Button, IconButton, cx } from '@/components/ui'
@@ -9,6 +9,7 @@ import type { StoryActions } from '@/components/story/types'
 import { useReader } from '@/lib/reader/ReaderProvider'
 import { recapDate, sourceCounts, type StorylineEntry } from '@/lib/reader/catchUp'
 import { useDwellVisibility } from '@/lib/useDwellVisibility'
+import { afterPaint, keepFlow } from '@/lib/reader/flow'
 
 /** A developing story, open: kicker, title, who reported it, the recap (So far, by
  *  day; New on <latest day>; where the reports differ), then "See all N reports"
@@ -42,12 +43,22 @@ export function StorylineCard({ entry, actionsFor, showCategory, onCollapse }: {
   const toggleDay = (date: string) =>
     setFullDays(prev => { const n = new Set(prev); if (n.has(date)) n.delete(date); else n.add(date); return n })
 
+  // Mark all read: the story leaves the catch-up and the next item comes to the top of
+  // the screen (Ash, 10 Oct 2026). Undo brings it back into view.
+  const markAll = (e: MouseEvent<HTMLElement>) => {
+    const bringNext = keepFlow(e.currentTarget.closest('[data-flow]'))
+    const id = storyline.id
+    void r.markManyReadUndoable(unreadIds, { reveal: () => document.querySelector(`[data-flow][data-storyline-id="${CSS.escape(id)}"]`) })
+    afterPaint(bringNext)
+  }
+
   const covers = recap && storyline.recap_story_count > 0 && storyline.recap_story_count < storyline.story_count
 
   return (
     <article
       ref={dwellRef}
       data-storyline-id={storyline.id}
+      data-flow
       className="my-2 flex flex-col rounded-panel bg-surface-1 p-4"
     >
       <div className="mb-2 flex min-w-0 items-center gap-2">
@@ -119,7 +130,7 @@ export function StorylineCard({ entry, actionsFor, showCategory, onCollapse }: {
         {allRead ? (
           <span className="t-meta ml-2 inline-flex items-center gap-1 text-fg-2"><Check className="size-3.5" aria-hidden="true" />All read</span>
         ) : (
-          <Button variant="text" onClick={() => { void r.markManyReadUndoable(unreadIds) }}>Mark all read</Button>
+          <Button variant="text" onClick={markAll}>Mark all read</Button>
         )}
       </div>
 
@@ -133,6 +144,7 @@ export function StorylineCard({ entry, actionsFor, showCategory, onCollapse }: {
               sourceName={r.sources[m.source_id]?.name}
               showCategory={showCategory}
               actions={actionsFor(m)}
+              collapseToTop
             />
           ))}
         </div>

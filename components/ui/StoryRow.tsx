@@ -56,7 +56,9 @@ export function StoryRow({
 
   return (
     <article
-      {...(onSelect ? { 'data-pane-row': '', 'data-story-id': story.id } : {})}
+      data-flow=""
+      data-story-id={story.id}
+      {...(onSelect ? { 'data-pane-row': '' } : {})}
       className={cx(
         'relative grid gap-x-3.5 gap-y-1.5 border-b border-hairline py-4 last:border-b-0 [overflow-wrap:anywhere]',
         hasThumb ? (compact ? 'grid-cols-[minmax(0,1fr)_88px]' : 'grid-cols-[minmax(0,1fr)_104px]') : 'grid-cols-1',

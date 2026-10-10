@@ -14,6 +14,8 @@ export type PaneApi = {
   currentId: string | null
   /** Show this story in the pane. */
   select: (story: StoryWithRelations) => void
+  /** Show the story of a row on the list, by id (Mark read moves the pane to the next one). */
+  selectId: (id: string) => void
   /** The list's first story, shown until one is picked. */
   setFallback: (story: StoryWithRelations) => void
   clearFallback: (id: string) => void
@@ -47,6 +49,7 @@ export function ReadingPaneProvider({ enabled, scope, children }: { enabled: boo
   useEffect(() => { currentIdRef.current = currentId })
 
   const select = useCallback((s: StoryWithRelations) => setPicked(s), [])
+  const selectId = useCallback((id: string) => { const s = rows.current.get(id); if (s) setPicked(s) }, [])
   const setFallback = useCallback((s: StoryWithRelations) => setFallbackState(s), [])
   const clearFallback = useCallback((id: string) => setFallbackState(f => (f?.id === id ? null : f)), [])
   const register = useCallback((s: StoryWithRelations) => {
@@ -77,8 +80,8 @@ export function ReadingPaneProvider({ enabled, scope, children }: { enabled: boo
   }, [enabled])
 
   const api = useMemo<PaneApi | null>(
-    () => (enabled ? { currentId, select, setFallback, clearFallback, register } : null),
-    [enabled, currentId, select, setFallback, clearFallback, register],
+    () => (enabled ? { currentId, select, selectId, setFallback, clearFallback, register } : null),
+    [enabled, currentId, select, selectId, setFallback, clearFallback, register],
   )
   // The pane reads the story object itself.
   const current = picked ?? fallback

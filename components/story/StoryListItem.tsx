@@ -5,6 +5,7 @@ import type { ReactNode } from 'react'
 import type { StoryWithRelations } from '@/lib/types'
 import { StoryRow } from '@/components/ui'
 import { useReadingPane } from '@/components/reader/ReadingPane'
+import { afterPaint, flowItemOf, toTop } from '@/lib/reader/flow'
 import { ShortBody } from './ShortBody'
 import type { StoryActions } from './types'
 
@@ -14,7 +15,7 @@ import type { StoryActions } from './types'
  *  the chapters. In the Reader on a desktop window (the reading pane) the row picks the
  *  story for the pane instead of opening in place; `paneFallback` marks the list's first
  *  story, which the pane shows until one is picked. */
-export function StoryListItem({ story, sourceName, showCategory, compact, highlight, kickerExtra, actions, paneFallback }: {
+export function StoryListItem({ story, sourceName, showCategory, compact, highlight, kickerExtra, actions, paneFallback, collapseToTop }: {
   story: StoryWithRelations
   sourceName?: string
   showCategory?: boolean
@@ -23,6 +24,8 @@ export function StoryListItem({ story, sourceName, showCategory, compact, highli
   kickerExtra?: ReactNode
   actions: StoryActions
   paneFallback?: boolean
+  /** Closing the row puts it at the top of the screen (the catch-up, Ash 10 Oct 2026). */
+  collapseToTop?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [sectionsOpen, setSectionsOpen] = useState(false)
@@ -66,7 +69,10 @@ export function StoryListItem({ story, sourceName, showCategory, compact, highli
       isRead={actions.isRead}
       saved={actions.saved}
       expanded={open}
-      onToggle={() => setOpen(v => !v)}
+      onToggle={() => {
+        setOpen(!open)
+        if (open && collapseToTop) afterPaint(() => { const el = flowItemOf(story.id); if (el) toTop(el) })
+      }}
     >
       <ShortBody
         story={story}

@@ -7,6 +7,8 @@ import { useSnackbar } from '@/components/ui'
 import { useListen } from '@/lib/listen/ListenProvider'
 import { copyText } from '@/lib/clipboard'
 import { geminiPrompt, storySummaryText } from '@/lib/format'
+import { afterPaint, flowItemOf, keepFlow } from '@/lib/reader/flow'
+import { useReadingPane } from '@/components/reader/ReadingPane'
 import type { StoryActions } from './types'
 
 /** Share the summary, not just the link (roadmap session 8): the native share sheet on
@@ -29,6 +31,7 @@ export function useStoryActions({ canMute = false }: { canMute?: boolean } = {})
   const r = useReader()
   const listen = useListen()
   const snackbar = useSnackbar()
+  const pane = useReadingPane()
   return useCallback((story: StoryWithRelations): StoryActions => {
     const topics = story.matched_topics ?? []
     const sourceName = r.sources[story.source_id]?.name
@@ -36,7 +39,22 @@ export function useStoryActions({ canMute = false }: { canMute?: boolean } = {})
     return {
       isRead: r.readIds.has(story.id),
       reaction: r.reactions.get(story.id),
-      onRead: () => { void r.markReadUndoable(story.id) },
+      // Done with it: the story leaves the list and the next one comes to the top of the
+      // screen (Ash, 10 Oct 2026). On a desktop the pane moves on to the next row's story.
+      onRead: () => {
+        const item = flowItemOf(story.id)
+        const bringNext = keepFlow(item)
+        const rows = pane && item ? Array.from(document.querySelectorAll<HTMLElement>('[data-pane-row]')) : []
+        const at = rows.indexOf(item as HTMLElement)
+        const nextRow = at >= 0 ? rows[at + 1] ?? null : null
+        void r.markReadUndoable(story.id)
+        afterPaint(() => {
+          if (!pane) return bringNext()
+          if (item?.isConnected || !nextRow?.isConnected) return
+          pane.selectId(nextRow.dataset.storyId ?? '')
+          nextRow.scrollIntoView({ block: 'nearest' })
+        })
+      },
       onUnread: () => { void r.markUnread(story.id) },
       onReact: reaction => r.react(story.id, reaction),
       onShare: () => { shareStory(story, sourceName); void r.sendEngagement('share', story.id) },
@@ -53,5 +71,5 @@ export function useStoryActions({ canMute = false }: { canMute?: boolean } = {})
         : undefined,
       listening,
     }
-  }, [r, listen, snackbar, canMute])
+  }, [r, listen, snackbar, canMute, pane])
 }

@@ -12,6 +12,7 @@ export function StorylineRow({ entry, onOpen }: { entry: StorylineEntry; onOpen:
       aria-expanded={false}
       onClick={onOpen}
       data-storyline-id={entry.storyline.id}
+      data-flow
       className="grid min-h-16 w-full grid-cols-[minmax(0,1fr)_24px] items-center gap-3 border-b border-hairline py-3.5 text-left active:opacity-70"
     >
       <span className="flex min-w-0 flex-col gap-1.5">

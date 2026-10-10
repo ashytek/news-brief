@@ -19,12 +19,17 @@ export function useReadState(supabase: Supabase, userId: string, enabled: boolea
   // past the dwell threshold was unmounted the moment it scrolled below
   // half-visible, pulling everything under it up (Ash, 3 & 14 Sep 2026).
   const [heldIds, setHeldIds] = useState<Set<string>>(new Set())
+  // Stories marked read with a tap (Ash, 10 Oct 2026: "when I'm done with an article
+  // it needs to disappear"). Unlike held cards they leave the lists at once; the only
+  // place they keep is their slot in Today's brief, so the brief's 12 don't reshuffle
+  // and "3 of 12 read" still counts them. Released with the held ones.
+  const [doneIds, setDoneIds] = useState<Set<string>>(new Set())
   // True once the read marks have been fetched at least once. Anything that counts
   // unread stories (the catch-up trigger) must wait for it: before then every
   // story looks unread.
   const [loaded, setLoaded] = useState(false)
 
-  const clearHeld = useCallback(() => setHeldIds(new Set()), [])
+  const clearHeld = useCallback(() => { setHeldIds(new Set()); setDoneIds(new Set()) }, [])
 
   // Load read item IDs once on mount — independent of active tab
   const loadReadIds = useCallback(async () => {
@@ -65,13 +70,14 @@ export function useReadState(supabase: Supabase, userId: string, enabled: boolea
 
   /** Resolves true if the story is now saved as read, false if the write failed
    *  (and was rolled back) or there was nothing to do. */
-  const markRead = useCallback(async (storyId?: string, opts?: { hold?: boolean }): Promise<boolean> => {
+  const markRead = useCallback(async (storyId?: string, opts?: { hold?: boolean; done?: boolean }): Promise<boolean> => {
     if (!storyId) return false
     if (readIds.has(storyId)) return false
 
     // Optimistic update first so the UI reacts even if the network is slow
     setReadIds(prev => new Set(prev).add(storyId))
     if (opts?.hold) setHeldIds(prev => new Set(prev).add(storyId))
+    if (opts?.done) setDoneIds(prev => new Set(prev).add(storyId))
 
     // Plain insert — Postgres unique index (user_id,story_id) prevents real
     // duplicates. PostgREST's `upsert(... onConflict)` was failing silently
@@ -87,6 +93,7 @@ export function useReadState(supabase: Supabase, userId: string, enabled: boolea
       // Roll back so the card isn't shown as read when the DB disagrees.
       setReadIds(prev => { const n = new Set(prev); n.delete(storyId); return n })
       if (opts?.hold) setHeldIds(prev => { const n = new Set(prev); n.delete(storyId); return n })
+      if (opts?.done) setDoneIds(prev => { const n = new Set(prev); n.delete(storyId); return n })
       return false
     }
     return true
@@ -170,6 +177,7 @@ export function useReadState(supabase: Supabase, userId: string, enabled: boolea
     const drop = (set: Set<string>) => { const n = new Set(set); ids.forEach(id => n.delete(id)); return n }
     setReadIds(drop)
     setHeldIds(drop)
+    setDoneIds(drop)
     // The ids travel in the URL (`story_id=in.(…)`), so a very long list goes in chunks.
     let failed = false
     for (let i = 0; i < ids.length; i += UNDO_CHUNK) {
@@ -197,5 +205,14 @@ export function useReadState(supabase: Supabase, userId: string, enabled: boolea
     return next
   }, [readIds, heldIds])
 
-  return { readIds, loaded, heldIds, layoutReadIds, clearHeld, loadReadIds, markRead, markManyRead, markUnread }
+  // Today's brief only: held and tapped-read stories keep their slot in the 12 (see
+  // doneIds). What is *shown* still comes from `layoutReadIds`.
+  const briefReadIds = useMemo(() => {
+    if (doneIds.size === 0) return layoutReadIds
+    const next = new Set(layoutReadIds)
+    doneIds.forEach(id => next.delete(id))
+    return next
+  }, [layoutReadIds, doneIds])
+
+  return { readIds, loaded, heldIds, layoutReadIds, briefReadIds, clearHeld, loadReadIds, markRead, markManyRead, markUnread }
 }

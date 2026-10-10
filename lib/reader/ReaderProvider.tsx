@@ -27,6 +27,7 @@ import { useSectionUnread } from './useSectionUnread'
 import { useCatchUp } from './useCatchUp'
 import { buildCatchUp, CATCHUP_AWAY_HOURS } from './catchUp'
 import { setSortMode, useSortMode } from '@/lib/sortMode'
+import { flowItemOf, revealAfterUndo } from './flow'
 
 /** A feed kept in memory from before a trip to Search/Archive/Sources is shown
  *  at once; if it is older than this when you come back it is revalidated in
@@ -118,6 +119,7 @@ function useReaderValue(userId: string) {
     sources: meta.sources,
     readIds: read.readIds,
     layoutReadIds: read.layoutReadIds,
+    briefReadIds: read.briefReadIds,
     showUnreadOnly,
     hasMutedTopic: muted.hasMutedTopic,
     prevVisit: visit.prevVisit,
@@ -128,28 +130,38 @@ function useReaderValue(userId: string) {
   })
 
   // Explicit "Mark read" taps get an Undo (the dwell timer's auto-mark does not:
-  // it happens while you are reading). Like the dwell mark, a tap *holds* the card
-  // in place, dimmed, instead of pulling it out of an Unread list from under your
-  // thumb; the next refresh or the Unread/All switch lets it go. (It also means the
-  // card is not torn down, so no "glanced and left" signal is reported for it.)
+  // it happens while you are reading). A tap means you are done with the story, so it
+  // leaves the list (Ash, 10 Oct 2026; session 4 had held it in place, dimmed).
+  // Bringing the next story to the top of the screen is the caller's job (see
+  // useStoryActions and flow.ts); Undo brings the story back into view. The dwell
+  // timer's own mark still holds the card: that one happens mid-read.
   const markReadUndoable = useCallback(async (storyId: string) => {
-    const ok = await read.markRead(storyId, { hold: true })
-    if (!ok) return   // already read, or the write failed and was rolled back
+    const ok = await read.markRead(storyId, { done: true })
+    if (!ok) {
+      // Already read (nothing to say), or the write failed and the card came back.
+      if (!read.readIds.has(storyId)) {
+        snackbar.show({ message: "Couldn't mark as read. Try again." })
+        revealAfterUndo(() => flowItemOf(storyId))
+      }
+      return
+    }
     snackbar.show({
       message: 'Marked as read',
       actionLabel: 'Undo',
       onAction: () => {
         void read.markUnread([storyId]).then(done => { if (!done) snackbar.show({ message: "Couldn't undo. Try again." }) })
+        revealAfterUndo(() => flowItemOf(storyId))
       },
     })
   }, [read, snackbar])
 
   /** `hold` keeps the cards in place, dimmed, like a dwell mark (a storyline read by
    *  its recap); without it they leave the list (Mark all read, Mark day read).
+   *  `reveal` finds what an Undo brings back (a day, a storyline), to show it.
    *  Saved stories are exempt from every bulk mark (Ash, roadmap session 8): they stay
    *  unread, and the message says how many were kept. */
   const savedIds = saved.ids
-  const markManyReadUndoable = useCallback(async (storyIds: string[], opts?: { hold?: boolean }) => {
+  const markManyReadUndoable = useCallback(async (storyIds: string[], opts?: { hold?: boolean; reveal?: () => Element | null }) => {
     const keptSaved = storyIds.filter(id => savedIds.has(id) && !read.readIds.has(id)).length
     const ids = keptSaved > 0 ? storyIds.filter(id => !savedIds.has(id)) : storyIds
     const kept = keptSaved > 0 ? ` · ${keptSaved} saved kept` : ''
@@ -170,6 +182,7 @@ function useReaderValue(userId: string) {
       actionLabel: 'Undo',
       onAction: () => {
         void read.markUnread(done).then(ok => { if (!ok) snackbar.show({ message: "Couldn't undo. Try again." }) })
+        if (opts?.reveal) revealAfterUndo(opts.reveal)
       },
     })
   }, [read, snackbar, savedIds])

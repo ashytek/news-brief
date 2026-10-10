@@ -10,7 +10,7 @@ import type { ActiveTab } from './types'
  *  feed and the "since you left" counts. Pure derivation — ranking order,
  *  filtering and counts are exactly what ReaderClient computed inline. */
 export function useFeedView({
-  activeTab, soloStories, todayStories, sources, readIds, layoutReadIds, showUnreadOnly,
+  activeTab, soloStories, todayStories, sources, readIds, layoutReadIds, briefReadIds, showUnreadOnly,
   hasMutedTopic, prevVisit, sourceWeights, topicWeights, sortMode, timeBudget,
 }: {
   activeTab: ActiveTab
@@ -19,6 +19,8 @@ export function useFeedView({
   sources: Record<string, Source>
   readIds: Set<string>
   layoutReadIds: Set<string>
+  /** `layoutReadIds` with the tapped-read stories kept as unread: Today's slots only. */
+  briefReadIds: Set<string>
   showUnreadOnly: boolean
   hasMutedTopic: (topics: string[] | null | undefined) => boolean
   prevVisit: number | null
@@ -62,12 +64,19 @@ export function useFeedView({
     [todayStories, isActiveSource, hasMutedTopic]
   )
 
-  // The brief itself: the top 12 by ranking. Held (dwell-read) cards still rank as
-  // unread so they stay put; the count and the progress bar use the real read set.
+  // The brief itself: the top 12 by ranking. Held (dwell-read) and tapped-read cards
+  // still rank as unread so the 12 stay put; the count and the progress bar use the
+  // real read set.
   const todayRanked = useMemo(
-    () => rankItems(activeTodayStories, layoutReadIds, sourceWeights, topicWeights, 12,
+    () => rankItems(activeTodayStories, briefReadIds, sourceWeights, topicWeights, 12,
       s => isIGRSource(sources[s.source_id])),
-    [activeTodayStories, layoutReadIds, sourceWeights, topicWeights, sources],
+    [activeTodayStories, briefReadIds, sourceWeights, topicWeights, sources],
+  )
+  // What the brief shows: the unread stories and the held ones (dimmed, auto-read while
+  // on screen). A story you are done with is not shown (Ash, 10 Oct 2026).
+  const todayShown = useMemo(
+    () => todayRanked.filter(item => !layoutReadIds.has(item.data.id)),
+    [todayRanked, layoutReadIds],
   )
 
   // The Today badge counts what the brief shows (not every story from the last 24 h),
@@ -159,7 +168,7 @@ export function useFeedView({
   }, [mergedFeed, isNewSinceVisit])
 
   return {
-    visibleSolos, unreadCount, activeTodayStories, todayRanked, todayUnread, isEmpty,
+    visibleSolos, unreadCount, activeTodayStories, todayRanked, todayShown, todayUnread, isEmpty,
     pinnedMix, mergedFeed, newSinceVisit, newLeadCount, isActiveSource,
     unreadMinutes, budget,
   }

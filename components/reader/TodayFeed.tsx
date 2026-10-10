@@ -18,8 +18,11 @@ export function TodayFeed() {
   const r = useReader()
   const actionsFor = useStoryActions({ canMute: true })
 
-  // Ranked in useFeedView (so the nav badge and this brief agree).
+  // Ranked in useFeedView (so the nav badge and this brief agree). The brief is all 12
+  // (the masthead counts them); the list shows the ones still to read, plus any the dwell
+  // timer marked while they were on screen (dimmed until the next refresh).
   const ranked = r.todayRanked
+  const shown = r.todayShown
 
   const readCount = ranked.filter(item => r.readIds.has(item.data.id)).length
   const unreadCount = ranked.length - readCount
@@ -87,7 +90,7 @@ export function TodayFeed() {
       </TodayMasthead>
 
       <div className="mt-3">
-        {ranked.map(({ data: story }, i) => (
+        {shown.map(({ data: story }, i) => (
           <FeedStory
             key={story.id}
             first={i === 0}
@@ -103,7 +106,7 @@ export function TodayFeed() {
       </div>
 
       {/* End of the brief — a real stopping point, not just a list that stops */}
-      <div data-endcap role="status" className="px-2 pb-2 pt-8 text-center">
+      <div data-endcap data-flow role="status" className="px-2 pb-2 pt-8 text-center">
         <div className="mb-3 inline-grid size-12 place-items-center rounded-panel bg-ok/10 text-ok ring-1 ring-ok/30">
           <CircleCheck className="size-6" aria-hidden="true" />
         </div>

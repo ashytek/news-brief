@@ -40,7 +40,7 @@ export function TopBar({ children }: { children?: ReactNode }) {
   const info = describePipeline(r.lastPipelineRun, r.pipelineStruggling)
 
   return (
-    <div className={cx('sticky top-0 z-40 border-b border-hairline bg-canvas pt-[env(safe-area-inset-top,0px)]', !children && 'desk:border-b-0')}>
+    <div data-topbar className={cx('sticky top-0 z-40 border-b border-hairline bg-canvas pt-[env(safe-area-inset-top,0px)]', !children && 'desk:border-b-0')}>
       {/* On desktop the rail carries the brand, the status and Settings. */}
       <header className="mx-auto flex h-topbar max-w-2xl items-center gap-2 pl-gutter pr-1 desk:hidden">
         <Brand />
