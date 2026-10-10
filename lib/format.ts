@@ -77,3 +77,101 @@ export function displayHeadline(headline: string): string {
   if (upper / letters.length <= 0.6) return headline
   return headline.toLowerCase().replace(/(^|[\s"(\[\u201c\u2018\u2014\u2013-])([a-z])/g, (_, lead: string, ch: string) => lead + ch.toUpperCase())
 }
+
+// ── Reading time, the round-up flag, share text (roadmap session 8) ─────────────
+
+type Readable = { short?: ShortVersion | null; summary: string }
+
+/** Minutes to read what the card shows by default (the short version, else the long
+ *  overview): the same number as the card's "N min read". */
+export function storyMinutes(s: Readable): number {
+  const short = readShort(s.short)
+  return estimateReadMinutes(short ? [short.lead, ...short.keyPoints] : [s.summary])
+}
+
+/** A round-up video covers several unrelated stories under one headline; the pipeline
+ *  marks it by opening the short lead with "Round-up" (it never joins a storyline). */
+export function isRoundUp(s: { short?: ShortVersion | null }): boolean {
+  return /^round-?up\b/i.test(readShort(s.short)?.lead ?? '')
+}
+
+/** Stories from the front of `items`, in order, until their reading times add up to
+ *  `budgetMin`; always at least the first one (a 20-minute read is still the next thing
+ *  to read when you have 5). */
+export function trimToBudget<T>(items: T[], minutesOf: (t: T) => number, budgetMin: number): T[] {
+  const out: T[] = []
+  let used = 0
+  for (const it of items) {
+    const m = minutesOf(it)
+    if (out.length > 0 && used + m > budgetMin) break
+    out.push(it)
+    used += m
+  }
+  return out
+}
+
+type Shareable = { headline: string; summary: string; short?: ShortVersion | null; videos?: { url?: string | null } | null }
+
+/** The story as plain text for sharing or pasting elsewhere: headline, channel, the short
+ *  version (lead and key points; the long overview if there is none), and the video link. */
+export function storySummaryText(story: Shareable, sourceName?: string): { body: string; url: string | null } {
+  const short = readShort(story.short)
+  const lines = [story.headline, `${sourceName ? `${sourceName} · ` : ''}AI summary of the video`, '']
+  if (short) {
+    lines.push(short.lead)
+    for (const p of short.keyPoints) lines.push(`• ${p}`)
+  } else {
+    lines.push(story.summary)
+  }
+  return { body: lines.join('\n'), url: story.videos?.url ?? null }
+}
+
+/** One paste into Gemini to cross-check a summary against the video. */
+export function geminiPrompt(story: Shareable, sourceName?: string): string {
+  const { body, url } = storySummaryText(story, sourceName)
+  return [
+    'Cross-check this AI summary of a YouTube video. Go through the video itself and tell me anything the summary gets wrong, leaves out or overstates, quoting the video where it matters.',
+    '',
+    body,
+    ...(url ? ['', `Video: ${url}`] : []),
+  ].join('\n')
+}
+
+/** The most characters in one spoken piece. Chrome's speech engine can stop in the middle of
+ *  a long utterance (a known fault, around 15 s of speech), and short pieces also give
+ *  pause/skip somewhere clean to land. */
+export const LISTEN_CHUNK_MAX = 200
+
+/**
+ * What Listen reads for a story, as spoken pieces in order: the headline, then the short
+ * version's lead and key points (the long overview if there is no short version). Each is
+ * a sentence or two, ends in a full stop so the voice falls, and none is longer than
+ * `LISTEN_CHUNK_MAX`; a longer sentence is cut at its last comma or space under the limit.
+ */
+export function listenChunks(story: { headline: string; summary: string; short?: ShortVersion | null }): string[] {
+  const short = readShort(story.short)
+  const parts = [story.headline, ...(short ? [short.lead, ...short.keyPoints] : [story.summary])]
+  const out: string[] = []
+  for (const raw of parts) {
+    const text = raw.replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim()
+    if (!text) continue
+    // sentences, each kept with its own ending
+    const sentences = text.match(/[^.!?]+[.!?]+["')\]]*|[^.!?]+$/g) ?? [text]
+    let cur = ''
+    for (const sentence of sentences.map(x => x.trim()).filter(Boolean)) {
+      if (cur && cur.length + 1 + sentence.length <= LISTEN_CHUNK_MAX) { cur += ` ${sentence}`; continue }
+      if (cur) out.push(cur)
+      cur = sentence
+      while (cur.length > LISTEN_CHUNK_MAX) {
+        const window = cur.slice(0, LISTEN_CHUNK_MAX)
+        const cut = Math.max(window.lastIndexOf(', '), window.lastIndexOf(' '))
+        const at = cut > 40 ? cut + 1 : LISTEN_CHUNK_MAX
+        out.push(cur.slice(0, at).trim())
+        cur = cur.slice(at).trim()
+      }
+    }
+    if (cur) out.push(cur)
+  }
+  // the voice should fall at the end of every piece
+  return out.map(c => (/[.!?]["')\]]*$/.test(c) ? c : `${c}.`))
+}

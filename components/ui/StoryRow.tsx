@@ -1,9 +1,9 @@
 'use client'
 
 import { useMemo, type ReactNode } from 'react'
-import { Check } from 'lucide-react'
+import { Bookmark, Check } from 'lucide-react'
 import type { StoryWithRelations } from '@/lib/types'
-import { displayHeadline, estimateReadMinutes, formatRelativeDate, minutesSince, readShort } from '@/lib/format'
+import { displayHeadline, estimateReadMinutes, formatRelativeDate, isRoundUp, minutesSince, readShort } from '@/lib/format'
 import { CategoryMark } from './CategoryMark'
 import { StoryThumb } from './StoryThumb'
 import { Highlight } from './Highlight'
@@ -16,11 +16,13 @@ import { cx } from './cx'
  *  reveals `children` (the short card) below the row; while open the dek is
  *  dropped, because the short card's lead says the same thing. */
 export function StoryRow({
-  story, sourceName, isRead = false, showCategory = false, compact = false, kickerExtra, highlight, expanded, onToggle, selected, onSelect, children,
+  story, sourceName, isRead = false, saved = false, showCategory = false, compact = false, kickerExtra, highlight, expanded, onToggle, selected, onSelect, children,
 }: {
   story: StoryWithRelations
   sourceName?: string
   isRead?: boolean
+  /** Saved for later: a small bookmark in the meta line. */
+  saved?: boolean
   showCategory?: boolean
   /** The catch-up headline list: no two-line dek and an 88 px thumbnail, so a long
    *  list scans quickly. Tapping still opens the short card. */
@@ -70,6 +72,7 @@ export function StoryRow({
           <span className="truncate text-xs font-medium leading-4 text-fg-3">{sourceName}</span>
         )}
         {isNew && <span className="t-kicker flex-none text-accent">New</span>}
+        {isRoundUp(story) && <span className="t-kicker flex-none text-fg-2">Round-up</span>}
       </div>
       {kickerExtra && <div className="col-span-full -mt-0.5 text-xs leading-4 text-fg-3">{kickerExtra}</div>}
 
@@ -119,6 +122,12 @@ export function StoryRow({
           {video?.published_at && <time dateTime={video.published_at}>{formatRelativeDate(video.published_at)}</time>}
           <span aria-hidden="true">·</span>
           <span>{readMins} min read</span>
+          {saved && (
+            <>
+              <span aria-hidden="true">·</span>
+              <span className="inline-flex items-center gap-1 text-fg-2"><Bookmark className="size-3.5 fill-current" aria-hidden="true" />Saved</span>
+            </>
+          )}
           {sections > 0 && (
             <>
               <span aria-hidden="true">·</span>

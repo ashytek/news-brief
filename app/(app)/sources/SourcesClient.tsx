@@ -10,6 +10,8 @@ import { Button, IconButton, LocalTime, Sheet, cx } from '@/components/ui'
 import { RunNow } from '@/components/shell/StatusSheet'
 import { useReader } from '@/lib/reader/ReaderProvider'
 import { describePipeline } from '@/lib/reader/pipelineStatus'
+import { useSourceStats } from '@/lib/reader/useSourceStats'
+import { describeSourceStat, type SourceStat } from '@/lib/reader/sourceStats'
 
 
 const LOOKBACK_OPTIONS = [
@@ -217,6 +219,14 @@ function AddSourceForm({ onAdded }: { onAdded: () => void }) {
   )
 }
 
+const NO_STORIES: SourceStat = { stories: 0, read: 0, likes: 0, dislikes: 0 }
+
+/** "18 of 40 read · 3 liked · weight 1.2": what the source is worth to you (nothing while loading). */
+function StatLine({ stat, weight }: { stat?: SourceStat; weight?: number }) {
+  const text = describeSourceStat(stat, weight)
+  return text ? <p className="t-meta">{text}</p> : null
+}
+
 const SOURCE_TYPE: Record<string, string> = {
   youtube_channel: 'YouTube channel',
   google_news_rss: 'News feed',
@@ -234,6 +244,8 @@ export default function SourcesClient({ sources: initialSources, recentRuns }: P
   const [adding, setAdding] = useState(false)
   const supabase = createClient()
   const r = useReader()
+  // What each source is worth to you: read rate, likes, ranking weight (last 30 days).
+  const { stats, weights } = useSourceStats(supabase, r.userId, r.readIds, r.readLoaded)
   const last = recentRuns[0]
   // The provider's health loads a moment after a cold open; the server already
   // sent the recent runs, so the card never has to say "no run seen" meanwhile.
@@ -340,6 +352,7 @@ export default function SourcesClient({ sources: initialSources, recentRuns }: P
                         ? <> · Last OK <LocalTime iso={source.last_success_at} variant="date" /></>
                         : ' · Not yet checked'}
                     </p>
+                    <StatLine stat={stats ? (stats[source.id] ?? NO_STORIES) : undefined} weight={weights[source.id]} />
                   </div>
                   {source.consecutive_failures > 0 && (
                     <span className="flex-none text-sm font-medium text-warn">

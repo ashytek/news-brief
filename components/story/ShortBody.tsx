@@ -1,9 +1,10 @@
 'use client'
 
 import { useMemo } from 'react'
-import { BellOff, Check, ChevronDown, ChevronUp, Share2, ThumbsDown, ThumbsUp } from 'lucide-react'
+import { BellOff, Bookmark, BookmarkCheck, Check, ChevronDown, ChevronUp, Headphones, Share2, Square, ThumbsDown, ThumbsUp } from 'lucide-react'
 import type { StoryWithRelations } from '@/lib/types'
-import { readShort } from '@/lib/format'
+import { isRoundUp, readShort } from '@/lib/format'
+import { formatDuration } from '@/lib/constants'
 import { Button, cx } from '@/components/ui'
 import { StoryMenu } from './StoryMenu'
 import { TimestampChip } from './TimestampChip'
@@ -31,6 +32,9 @@ export function ShortBody({ story, actions, sectionsOpen, onToggleSections }: {
   const titled = !!sections[0]?.title
   const videoUrl = story.videos?.url ?? null
   const read = actions.isRead
+  const roundUp = isRoundUp(story)
+  const dur = story.videos?.duration_seconds
+  const duration = dur ? (dur >= 3600 ? formatDuration(dur) : `${Math.max(1, Math.round(dur / 60))} min`) : null
 
   // Titled sections (the post-July-2026 walkthrough format) and legacy bullets
   // behind a short version stay behind "More"; a legacy story with no short version
@@ -101,11 +105,28 @@ export function ShortBody({ story, actions, sectionsOpen, onToggleSections }: {
       {/* Labelled actions, once the card is open */}
       {sectionsOpen && (
         <div className="mt-6">
+          {/* What this is, said plainly (roadmap session 8). Every story's transcript is the
+              video's captions (transcript_status is "fetched" for all of them), so there is no
+              status to badge; this is the honest label, plus the length and the round-up note. */}
+          <p className="t-meta mb-3">
+            AI summary of the video&apos;s captions{duration ? ` · ${duration} video` : ''}. Check the video for exact names and figures.
+            {roundUp && ' A round-up: it covers several stories, and the headline names only the first.'}
+          </p>
           {topics.length > 0 && <p className="t-meta mb-3">Matches your topics: {topics.join(', ')}</p>}
           <div className="flex flex-wrap gap-2">
             <ActionButton icon={ThumbsUp} pressed={actions.reaction === 'like'} onClick={() => actions.onReact('like')}>More like this</ActionButton>
             <ActionButton icon={ThumbsDown} pressed={actions.reaction === 'dislike'} onClick={() => actions.onReact('dislike')}>Less like this</ActionButton>
             {actions.onMute && <ActionButton icon={BellOff} onClick={actions.onMute}>Mute topic</ActionButton>}
+            {actions.onListen && (
+              <ActionButton icon={actions.listening ? Square : Headphones} pressed={actions.listening} onClick={actions.onListen}>
+                {actions.listening ? 'Stop listening' : 'Listen'}
+              </ActionButton>
+            )}
+            {actions.onSave && (
+              <ActionButton icon={actions.saved ? BookmarkCheck : Bookmark} pressed={actions.saved} onClick={actions.onSave}>
+                {actions.saved ? 'Saved' : 'Save for later'}
+              </ActionButton>
+            )}
             <ActionButton icon={Share2} onClick={actions.onShare}>Share</ActionButton>
           </div>
         </div>

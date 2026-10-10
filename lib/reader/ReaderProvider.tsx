@@ -21,10 +21,12 @@ import { useResume } from './useResume'
 import { useHiddenTimeShift } from './useHiddenTimeShift'
 import { decideResume } from './resume'
 import { useReactions } from './useReactions'
+import { useSaved } from './useSaved'
 import { useFeedView } from './useFeedView'
 import { useSectionUnread } from './useSectionUnread'
 import { useCatchUp } from './useCatchUp'
 import { buildCatchUp, CATCHUP_AWAY_HOURS } from './catchUp'
+import { setSortMode, useSortMode } from '@/lib/sortMode'
 
 /** A feed kept in memory from before a trip to Search/Archive/Sources is shown
  *  at once; if it is older than this when you come back it is revalidated in
@@ -45,11 +47,18 @@ function useReaderValue(userId: string) {
 
   const { activeTab, lastSection, tabReady, handleTabChange, openSections } = useActiveTab(active)
   const [showUnreadOnly, setShowUnreadOnly] = useState(true)
+  // Sections: newest first or ranked for you (kept on the device), and "I have N minutes" (this visit only).
+  const sortMode = useSortMode()
+  const [timeBudget, setTimeBudget] = useState<number | null>(null)
 
   // Read marks and pipeline health are needed on every signed-in screen (the
   // top bar's status chip, the read dots in Search and Archive), so they load
   // as soon as the provider mounts. The feed itself still waits for the Reader.
   const read = useReadState(supabase, userId, true)
+  // Save for later: loaded on every screen (the Archive's Saved view and the card buttons
+  // need it); inert until the table exists. See useSaved.
+  const saySaved = useCallback((message: string) => snackbar.show({ message }), [snackbar])
+  const saved = useSaved(supabase, userId, true, saySaved)
   const muted = useMutedTopics(supabase, userId, active)
   const weights = useRankingWeights(supabase, userId, active)
   const meta = useFeedMeta(supabase, active)
@@ -114,6 +123,8 @@ function useReaderValue(userId: string) {
     prevVisit: visit.prevVisit,
     sourceWeights: weights.sourceWeights,
     topicWeights: weights.topicWeights,
+    sortMode,
+    timeBudget,
   })
 
   // Explicit "Mark read" taps get an Undo (the dwell timer's auto-mark does not:
@@ -134,10 +145,16 @@ function useReaderValue(userId: string) {
   }, [read, snackbar])
 
   /** `hold` keeps the cards in place, dimmed, like a dwell mark (a storyline read by
-   *  its recap); without it they leave the list (Mark all read, Mark day read). */
+   *  its recap); without it they leave the list (Mark all read, Mark day read).
+   *  Saved stories are exempt from every bulk mark (Ash, roadmap session 8): they stay
+   *  unread, and the message says how many were kept. */
+  const savedIds = saved.ids
   const markManyReadUndoable = useCallback(async (storyIds: string[], opts?: { hold?: boolean }) => {
-    const wanted = storyIds.filter(id => !read.readIds.has(id)).length
-    const done = await read.markManyRead(storyIds, opts)
+    const keptSaved = storyIds.filter(id => savedIds.has(id) && !read.readIds.has(id)).length
+    const ids = keptSaved > 0 ? storyIds.filter(id => !savedIds.has(id)) : storyIds
+    const kept = keptSaved > 0 ? ` · ${keptSaved} saved kept` : ''
+    const wanted = ids.filter(id => !read.readIds.has(id)).length
+    const done = await read.markManyRead(ids, opts)
     if (done === null) {
       snackbar.show({ message: "Couldn't mark as read. Try again." })
       return
@@ -145,16 +162,17 @@ function useReaderValue(userId: string) {
     if (done.length === 0) {
       // Everything asked for was already read (in another tab, say): nothing to undo.
       if (wanted > 0) snackbar.show({ message: 'Already marked as read' })
+      else if (keptSaved > 0) snackbar.show({ message: `Nothing to mark: ${keptSaved} saved ${keptSaved === 1 ? 'story' : 'stories'} kept unread` })
       return
     }
     snackbar.show({
-      message: done.length === 1 ? 'Marked as read' : `Marked ${done.length} as read`,
+      message: (done.length === 1 ? 'Marked as read' : `Marked ${done.length} as read`) + kept,
       actionLabel: 'Undo',
       onAction: () => {
         void read.markUnread(done).then(ok => { if (!ok) snackbar.show({ message: "Couldn't undo. Try again." }) })
       },
     })
-  }, [read, snackbar])
+  }, [read, snackbar, savedIds])
 
   const markUnread = useCallback(async (storyId: string) => {
     const ok = await read.markUnread([storyId])
@@ -203,9 +221,10 @@ function useReaderValue(userId: string) {
 
   // One-tap "clear the deck" for the current Sections feed
   const markAllVisibleRead = useCallback(() => {
-    const storyIds = view.visibleSolos.filter(s => !read.readIds.has(s.id)).map(s => s.id)
+    // What is on the list, which with "I have N minutes" on is only the stories that fit.
+    const storyIds = [...view.pinnedMix, ...view.mergedFeed].filter(s => !read.readIds.has(s.id)).map(s => s.id)
     return markManyReadUndoable(storyIds)
-  }, [view.visibleSolos, read.readIds, markManyReadUndoable])
+  }, [view.pinnedMix, view.mergedFeed, read.readIds, markManyReadUndoable])
 
   // Refresh = reload what is on screen in the background (the feed stays put),
   // the read marks, and the pipeline status. Button, pull-to-refresh and the
@@ -276,6 +295,7 @@ function useReaderValue(userId: string) {
     activeTab, lastSection, tabReady, handleTabChange, openSections,
     catchUp, catchUpView, startStorylineDwell, endStorylineDwell, sectionUnread,
     showUnreadOnly, toggleUnreadOnly, showAllStories,
+    sortMode, setSortMode, timeBudget, setTimeBudget,
     // data
     sources: meta.sources, topicCount: meta.topicCount, activeCategoryKeys: meta.activeCategoryKeys,
     sourceWeights: weights.sourceWeights, topicWeights: weights.topicWeights,
@@ -284,9 +304,10 @@ function useReaderValue(userId: string) {
     savedAt: content.savedAt,
     loadContent: content.loadContent, refresh,
     // read state
-    readIds: read.readIds, layoutReadIds: read.layoutReadIds, loadReadIds: read.loadReadIds,
+    readIds: read.readIds, readLoaded: read.loaded, layoutReadIds: read.layoutReadIds, loadReadIds: read.loadReadIds,
     markRead: read.markRead, markReadUndoable, markManyReadUndoable, markUnread, markAllVisibleRead,
     reactions: reactions.reactions, react: reactions.react,
+    saved: { ids: saved.ids, available: saved.available, toggle: saved.toggle, reload: saved.reload },
     muteTopics: muted.muteTopics,
     sendEngagement, startDwell, endDwell,
     // pipeline

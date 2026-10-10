@@ -6,6 +6,7 @@ import { FeedStory } from '@/components/story/FeedStory'
 import { StorySkeleton } from '@/components/story/StorySkeleton'
 import { useStoryActions } from '@/components/story/useStoryActions'
 import { Button, ButtonLink, StateMessage } from '@/components/ui'
+import { ListenBrief } from '@/components/listen/ListenBrief'
 import { estimateReadMinutes, readShort } from '@/lib/format'
 import { useReader } from '@/lib/reader/ReaderProvider'
 import { TodayMasthead } from './TodayMasthead'
@@ -82,6 +83,7 @@ export function TodayFeed() {
             {unreadCount === 0 ? <span className="inline-flex items-center gap-1 text-ok"><Check className="size-3.5" aria-hidden="true" />All read</span> : `${readCount} of ${ranked.length} read`}
           </span>
         </div>
+        <ListenBrief stories={ranked.filter(i => !r.readIds.has(i.data.id)).map(i => i.data)} label="Listen to the brief" className="mt-3 self-start" />
       </TodayMasthead>
 
       <div className="mt-3">

@@ -1,11 +1,12 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { CalendarDays, Inbox, TriangleAlert } from 'lucide-react'
+import { Bookmark, CalendarDays, Inbox, TriangleAlert } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import type { StoryWithRelations, Source } from '@/lib/types'
 import { STORY_SELECT } from '@/lib/constants'
-import { Chip, StateMessage, cx } from '@/components/ui'
+import { Chip, Segmented, StateMessage, cx } from '@/components/ui'
+import { useReader } from '@/lib/reader/ReaderProvider'
 import { PageHead } from '@/components/shell/PageHead'
 import { TopBar } from '@/components/shell/TopBar'
 import { StoryListItem } from '@/components/story/StoryListItem'
@@ -48,6 +49,7 @@ const STRIP_DAYS = 6
 export default function ArchiveClient() {
   const supabase = createClient()
   const actionsFor = useStoryActions()
+  const r = useReader()
 
   const today = formatDate(new Date())
   const yesterday = shiftDate(today, -1)
@@ -58,6 +60,36 @@ export default function ArchiveClient() {
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState(false)
   const [filterCategory, setFilterCategory] = useState<string>('all')
+
+  // Saved for later (roadmap session 8): a second view of the Archive, newest saved first.
+  const [view, setView] = useState<'day' | 'saved'>('day')
+  const [savedStories, setSavedStories] = useState<StoryWithRelations[] | null>(null)
+  const [savedError, setSavedError] = useState(false)
+  const savedAvailable = r.saved.available
+  const userId = r.userId
+  const loadSaved = useCallback(async () => {
+    setSavedError(false)
+    const { data, error } = await supabase
+      .from('saved_items')
+      .select(`saved_at, stories(${STORY_SELECT})`)
+      .eq('user_id', userId)
+      .order('saved_at', { ascending: false })
+      .limit(200)
+    if (error) {
+      console.error('archive loadSaved failed', error)
+      setSavedError(true)
+      return
+    }
+    // The embedded story comes back as one object (many-to-one); tolerate an array too.
+    const rows = (data ?? []) as unknown as { stories: StoryWithRelations | StoryWithRelations[] | null }[]
+    setSavedStories(rows.flatMap(row => (Array.isArray(row.stories) ? row.stories : row.stories ? [row.stories] : [])))
+  }, [userId]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-change: loadSaved raises the error flag, then awaits the query
+    if (view === 'saved' && savedAvailable) loadSaved()
+  }, [view, savedAvailable, loadSaved])
+  // Taking a story off the list (from its menu) removes its row at once.
+  const savedShown = (savedStories ?? []).filter(s => r.saved.ids.has(s.id))
 
   // Load sources
   useEffect(() => {
@@ -114,7 +146,47 @@ export default function ArchiveClient() {
       <TopBar />
 
       <main className="mx-auto max-w-2xl px-gutter pb-[calc(var(--spacing-navbar)+env(safe-area-inset-bottom,0px)+1.5rem)]">
-        <PageHead title="Archive" meta={`${dayLabel} · ${loading ? '…' : stories.length} stories`} />
+        <PageHead
+          title="Archive"
+          meta={view === 'saved' && savedAvailable ? `${savedStories === null ? '…' : savedShown.length} saved` : `${dayLabel} · ${loading ? '…' : stories.length} stories`}
+        />
+
+        {savedAvailable && (
+          <Segmented
+            label="Archive view"
+            value={view}
+            onChange={setView}
+            options={[{ value: 'day', label: 'By day' }, { value: 'saved', label: 'Saved' }]}
+            className="mt-3"
+          />
+        )}
+
+        {view === 'saved' && savedAvailable ? (
+          savedError ? (
+            <StateMessage tone="error" icon={TriangleAlert} title="Couldn't load your saved stories" action={{ label: 'Try again', onClick: () => { void loadSaved() } }}>
+              Something went wrong fetching them. Check your connection and try again.
+            </StateMessage>
+          ) : savedStories === null ? (
+            <StorySkeleton count={3} />
+          ) : savedShown.length === 0 ? (
+            <StateMessage icon={Bookmark} title="Nothing saved yet">
+              Choose Save for later in a story&apos;s menu (the ⋯) or once it is open. Saved stories stay unread when you mark everything read.
+            </StateMessage>
+          ) : (
+            <div className="mt-2 border-t border-hairline">
+              {savedShown.map(story => (
+                <StoryListItem
+                  key={story.id}
+                  story={story}
+                  sourceName={sources[story.source_id]?.name}
+                  showCategory
+                  actions={actionsFor(story)}
+                />
+              ))}
+            </div>
+          )
+        ) : (
+        <>
 
         {/* Day strip */}
         <div role="group" aria-label="Day" className="mt-3 grid grid-cols-7 gap-1.5">
@@ -188,6 +260,8 @@ export default function ArchiveClient() {
               />
             ))}
           </div>
+        )}
+        </>
         )}
       </main>
     </div>

@@ -1,5 +1,7 @@
 import { useCallback, useMemo } from 'react'
 import { interleaveLead, isIGRSource, rankItems } from '@/lib/ranking'
+import { storyMinutes, trimToBudget } from '@/lib/format'
+import type { SortMode } from '@/lib/sortMode'
 import type { Source, StoryWithRelations } from '@/lib/types'
 import type { ActiveTab } from './types'
 
@@ -9,7 +11,7 @@ import type { ActiveTab } from './types'
  *  filtering and counts are exactly what ReaderClient computed inline. */
 export function useFeedView({
   activeTab, soloStories, todayStories, sources, readIds, layoutReadIds, showUnreadOnly,
-  hasMutedTopic, prevVisit, sourceWeights, topicWeights,
+  hasMutedTopic, prevVisit, sourceWeights, topicWeights, sortMode, timeBudget,
 }: {
   activeTab: ActiveTab
   soloStories: StoryWithRelations[]
@@ -22,6 +24,10 @@ export function useFeedView({
   prevVisit: number | null
   sourceWeights: Record<string, number>
   topicWeights: Record<string, number>
+  /** Sections order: newest first, or ranked by your weights ("For you"). */
+  sortMode: SortMode
+  /** "I have N minutes": show only the first unread stories that fit, or null for all. */
+  timeBudget: number | null
 }) {
   const isActiveSource = useCallback((sourceId: string) =>
     sources[sourceId]?.is_active !== false,
@@ -87,7 +93,7 @@ export function useFeedView({
   // IGR + Vantage pinned to the top, IGR-led: two IGR per Vantage, each
   // newest first (Ash, Oct 2026). A time-based head start for IGR was tried
   // on real data and came out as solid blocks, since both post in bursts.
-  const pinnedMix = useMemo(() => {
+  const pinnedMixAll = useMemo(() => {
     const newestFirst = (a: StoryWithRelations, b: StoryWithRelations) =>
       new Date(b.videos?.published_at ?? b.created_at).getTime() -
       new Date(a.videos?.published_at ?? a.created_at).getTime()
@@ -97,19 +103,41 @@ export function useFeedView({
     )
   }, [visibleSolos, isIGR, isVantage])
 
-  // Feed sorted latest→oldest, with read items sunk below unread in "Show All" mode
-  const mergedFeed = useMemo(
-    () => visibleSolos
-      .filter(s => !isVantage(s) && !isIGR(s))
-      .sort((a, b) => {
-        const aRead = layoutReadIds.has(a.id)
-        const bRead = layoutReadIds.has(b.id)
-        if (aRead !== bRead) return aRead ? 1 : -1
-        const da = new Date(a.videos?.published_at ?? a.created_at).getTime()
-        const db = new Date(b.videos?.published_at ?? b.created_at).getTime()
-        return db - da
-      }),
-    [visibleSolos, isVantage, isIGR, layoutReadIds]
+  // Feed sorted latest→oldest, with read items sunk below unread in "Show All" mode.
+  // "For you" (roadmap session 8) orders the same stories by rankItems instead: recency
+  // × your source weight × your topic weights, read ones still at the bottom.
+  const mergedFeedAll = useMemo(() => {
+    const rest = visibleSolos.filter(s => !isVantage(s) && !isIGR(s))
+    if (sortMode === 'foryou') {
+      return rankItems(rest, layoutReadIds, sourceWeights, topicWeights, rest.length).map(i => i.data)
+    }
+    return rest.sort((a, b) => {
+      const aRead = layoutReadIds.has(a.id)
+      const bRead = layoutReadIds.has(b.id)
+      if (aRead !== bRead) return aRead ? 1 : -1
+      const da = new Date(a.videos?.published_at ?? a.created_at).getTime()
+      const db = new Date(b.videos?.published_at ?? b.created_at).getTime()
+      return db - da
+    })
+  }, [visibleSolos, isVantage, isIGR, layoutReadIds, sortMode, sourceWeights, topicWeights])
+
+  // Reading time (roadmap session 8): what is still unread in this feed adds up to this
+  // many minutes, and "I have N minutes" keeps the first unread stories, in the order
+  // shown, that fit (always at least the first one). Read stories drop out while it is on.
+  const unreadOrder = useMemo(
+    () => [...pinnedMixAll, ...mergedFeedAll].filter(s => !layoutReadIds.has(s.id)),
+    [pinnedMixAll, mergedFeedAll, layoutReadIds],
+  )
+  const unreadMinutes = useMemo(() => unreadOrder.reduce((sum, s) => sum + storyMinutes(s), 0), [unreadOrder])
+  const budgetShown = useMemo(
+    () => (timeBudget === null ? null : new Set(trimToBudget(unreadOrder, storyMinutes, timeBudget).map(s => s.id))),
+    [timeBudget, unreadOrder],
+  )
+  const pinnedMix = useMemo(() => (budgetShown ? pinnedMixAll.filter(s => budgetShown.has(s.id)) : pinnedMixAll), [pinnedMixAll, budgetShown])
+  const mergedFeed = useMemo(() => (budgetShown ? mergedFeedAll.filter(s => budgetShown.has(s.id)) : mergedFeedAll), [mergedFeedAll, budgetShown])
+  const budget = useMemo(
+    () => (budgetShown ? { limit: timeBudget as number, shown: budgetShown.size, total: unreadOrder.length, minutes: unreadOrder.filter(s => budgetShown.has(s.id)).reduce((m, s) => m + storyMinutes(s), 0) } : null),
+    [budgetShown, timeBudget, unreadOrder],
   )
 
   // "Since you left": stories that arrived (created_at) after the previous
@@ -133,5 +161,6 @@ export function useFeedView({
   return {
     visibleSolos, unreadCount, activeTodayStories, todayRanked, todayUnread, isEmpty,
     pinnedMix, mergedFeed, newSinceVisit, newLeadCount, isActiveSource,
+    unreadMinutes, budget,
   }
 }

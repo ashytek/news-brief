@@ -48,6 +48,7 @@ export function StoryListItem({ story, sourceName, showCategory, compact, highli
         highlight={highlight}
         kickerExtra={kickerExtra}
         isRead={actions.isRead}
+        saved={actions.saved}
         selected={pane.currentId === story.id}
         onSelect={() => pane.select(story)}
       />
@@ -63,6 +64,7 @@ export function StoryListItem({ story, sourceName, showCategory, compact, highli
       highlight={highlight}
       kickerExtra={kickerExtra}
       isRead={actions.isRead}
+      saved={actions.saved}
       expanded={open}
       onToggle={() => setOpen(v => !v)}
     >

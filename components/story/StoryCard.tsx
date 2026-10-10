@@ -1,11 +1,11 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check } from 'lucide-react'
+import { Bookmark, Check } from 'lucide-react'
 import type { Source, StoryWithRelations } from '@/lib/types'
 import { CategoryMark, StoryThumb, cx } from '@/components/ui'
 import { useDwellVisibility } from '@/lib/useDwellVisibility'
-import { displayHeadline, estimateReadMinutes, formatRelativeDate, minutesSince, readShort } from '@/lib/format'
+import { displayHeadline, estimateReadMinutes, formatRelativeDate, isRoundUp, minutesSince, readShort } from '@/lib/format'
 import { ShortBody } from './ShortBody'
 import type { StoryActions } from './types'
 
@@ -71,6 +71,7 @@ export function StoryCard({
       {showCategory && <CategoryMark category={story.category} />}
       <span className="truncate text-xs font-medium leading-4 text-fg-3">{source?.name ?? 'Unknown'}</span>
       {isNew && <span className="t-kicker flex-none text-accent">New</span>}
+      {isRoundUp(story) && <span className="t-kicker flex-none text-fg-2">Round-up</span>}
     </div>
   )
 
@@ -94,6 +95,12 @@ export function StoryCard({
         </>
       )}
       <span>{baseMins} min read</span>
+      {actions.saved && (
+        <>
+          <span aria-hidden="true">·</span>
+          <span className="inline-flex items-center gap-1 text-fg-2"><Bookmark className="size-3.5 fill-current" aria-hidden="true" />Saved</span>
+        </>
+      )}
       {withSections && (
         <>
           <span aria-hidden="true">·</span>
