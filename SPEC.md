@@ -67,5 +67,15 @@ When Ash skips a day or more, 100–160 stories pile up (160 in the 5 days to 3 
 
 ## Out of scope (noticed, not part of this)
 - Round-up videos get a headline about one item while their sections cover others (e.g. "Indian markets face worst losing streak…" on 1 Oct, whose sections are about Flydubai and the UPSC centenary).
-- Dwell timer (120 s) may feel long on short cards — revisit after use.
-- PWA doesn't refresh on resume (already in CLAUDE.md).
+- ~~Dwell timer (120 s) may feel long on short cards~~ (9 Oct: 40 s on a short card, 120 s once its sections are open).
+- ~~PWA doesn't refresh on resume~~ (built in roadmap session 7: refresh after 10 min away, a fresh start after 24 h).
+
+## Session 8 (feature backlog): interview answers, 10 October 2026
+Asked before building (roadmap rule 4); the build followed them. See CLAUDE.md "Feature backlog (roadmap session 8)" for what was built and the decisions made on top.
+| Question | Ash's answer |
+|---|---|
+| What should Listen do? | **Per card + "Listen to the brief"**: a Listen action on every card, and a control on Today / Sections that plays the unread list in order with a mini player (pause, next, stop); screen kept awake while it plays (phones stop browser speech when they lock). |
+| After a card has been read aloud | **Leave it unread.** Listening is a preview; sends no signal. |
+| Where does the Saved list live? | **The Archive gets a Saved view** (By day \| Saved). No sixth tab (five bottom tabs is a standing decision). Save is on the card (⋯ menu, opened card). |
+| What should Share send? | **The summary in Share** (headline, channel, short version, link) **plus "Copy for Gemini"** (a cross-check instruction on top) for one paste. |
+Also from the roadmap: Saved stories are exempt from "Mark all" (bulk marks leave them unread).
