@@ -1,7 +1,7 @@
 @AGENTS.md
 
 # NewsBrief — Real Project Home
-**Last updated:** 10 October 2026 (sessions 7 and 8 shipped; session 10 "done means gone" built)
+**Last updated:** 10 October 2026 (sessions 7, 8 and 10 shipped)
 
 ## What this is
 NewsBrief: Ash's personal news briefing app. Next.js, deployed to Netlify (`netlify.toml` in this folder). Git remote: `ashytek/news-brief`.
@@ -434,8 +434,9 @@ Built on branch `session8-backlog` (worktree `~/Documents/News App/newsapp-s8`, 
 
 **Deploy status: SHIPPED 10 October 2026, together with session 7** (one fast-forward push to `origin/main` `707b741`, Netlify deploy `6ac9cb7e769320d959a44041`): the live check, signed out and signed in, is written out in the "Polish (session 7)" section above. Save for later waits for `saved_items.sql` (Ash runs it); Listen's sound and the lock-screen behaviour wait for a real phone.
 
-## Done means gone (roadmap session 10): BUILT 10 October 2026
+## Done means gone (roadmap session 10): SHIPPED 10 October 2026
 Ash, 10 Oct: "when I have read an article and marked it as read, it greys out … it needs to disappear, and the next article needs to be on the top of my screen"; Mark day read brings the next day to the top; folding a developing story puts it at the top; its Mark all read brings the next item to the top. Branch `session10-read-flow` (worktree `~/Documents/News App/newsapp-s10`), off `origin/main` `d5ff8f5`. **Gemini $0**, frontend only.
+**Deploy status: SHIPPED 10 October 2026, with Ash's OK.** `origin/main` fast-forwarded `d5ff8f5` → `ea66c88`, then `npm run deploy` from a clean detached worktree of that commit (`../newsapp-deploy`, `.env.local` + `.netlify/state.json` copied in, removed afterwards): Netlify deploy **`6aca79792bf07122b4c329aa`**, build stamp **`ea66c88`**. **Verified live:** signed out, `/reader /archive /search /sources /dev-ui` 307 to `/auth`, `/auth` and `/sw.js` 200, `POST /api/pipeline/trigger` 401, the production chunk carries `data-topbar`. Signed in (the desktop app's built-in browser, read-only: 16 Supabase reads, **0 writes**; no taps that write, tab closed before any dwell could fire): the status sheet says **Build ea66c88**, the catch-up came on ("Away 1 day · 5 new", 3 developing stories, all `data-flow`), the only console error is the expected `saved_items` 404 (table not created; Save stays hidden). **Not tried live (would write to the real account):** Mark read, Mark day read, Mark all read; the harness covers them. **Verify next:** Ash on the phone: Mark read, Mark day read, collapse.
 - **Mark read (a tap) = done:** the story leaves Today, Sections (Unread), compact rows and the catch-up list, and the item that followed it is scrolled to just under the sticky top bar. `useReadState` has a third set, **`doneIds`** (tapped-read), beside `heldIds` (dwell-read): `markRead(id, { done: true })`. Done stories are plain read for every list, except **Today's ranking** (`briefReadIds` = `layoutReadIds` minus `doneIds`), so the brief's 12 don't reshuffle and "3 of 12 read" still counts them. Today now **shows** `todayShown` = the 12 minus anything read and not held: earlier-read stories that used to sit dimmed at the bottom of the brief are no longer shown either (the masthead still counts them). Released with the held ones (next load, Unread/All switch).
 - **Dwell auto-read is unchanged:** still held in place, dimmed, until the next refresh (the 14 Sep 2026 fix for cards vanishing mid-read). A recap read by dwell is still held too.
 - **Sections All view:** a tapped story sinks to the bottom (All lists read stories); the next one comes to the top.
