@@ -118,12 +118,12 @@ export function ShortBody({ story, actions, sectionsOpen, onToggleSections }: {
             <ActionButton icon={ThumbsDown} pressed={actions.reaction === 'dislike'} onClick={() => actions.onReact('dislike')}>Less like this</ActionButton>
             {actions.onMute && <ActionButton icon={BellOff} onClick={actions.onMute}>Mute topic</ActionButton>}
             {actions.onListen && (
-              <ActionButton icon={actions.listening ? Square : Headphones} pressed={actions.listening} onClick={actions.onListen}>
+              <ActionButton icon={actions.listening ? Square : Headphones} active={actions.listening} onClick={actions.onListen}>
                 {actions.listening ? 'Stop listening' : 'Listen'}
               </ActionButton>
             )}
             {actions.onSave && (
-              <ActionButton icon={actions.saved ? BookmarkCheck : Bookmark} pressed={actions.saved} onClick={actions.onSave}>
+              <ActionButton icon={actions.saved ? BookmarkCheck : Bookmark} active={actions.saved} onClick={actions.onSave}>
                 {actions.saved ? 'Saved' : 'Save for later'}
               </ActionButton>
             )}
@@ -172,9 +172,12 @@ export function ShortBody({ story, actions, sectionsOpen, onToggleSections }: {
   )
 }
 
-function ActionButton({ icon, pressed, onClick, children }: {
+/** `pressed` is a real toggle (More/Less like this): announced as pressed. `active` only
+ *  highlights a button whose label already says its state ("Saved", "Stop listening"). */
+function ActionButton({ icon, pressed, active, onClick, children }: {
   icon: typeof ThumbsUp
   pressed?: boolean
+  active?: boolean
   onClick: () => void
   children: React.ReactNode
 }) {
@@ -184,7 +187,7 @@ function ActionButton({ icon, pressed, onClick, children }: {
       icon={icon}
       aria-pressed={pressed ?? undefined}
       onClick={onClick}
-      className={cx('px-3.5', pressed && 'bg-accent-soft text-accent')}
+      className={cx('px-3.5', (pressed || active) && 'bg-accent-soft text-accent')}
     >
       {children}
     </Button>
