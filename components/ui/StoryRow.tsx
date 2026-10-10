@@ -41,7 +41,7 @@ export function StoryRow({
 }) {
   const video = story.videos
   const title = displayHeadline(story.headline)
-  const clamp = !expanded && !selected ? 'line-clamp-3' : ''
+  const clamp = !expanded && !selected ? 'line-clamp-6' : ''
   const short = useMemo(() => readShort(story.short), [story.short])
   const dek = short?.lead ?? story.summary
   const readMins = useMemo(
@@ -74,7 +74,8 @@ export function StoryRow({
       {kickerExtra && <div className="col-span-full -mt-0.5 text-xs leading-4 text-fg-3">{kickerExtra}</div>}
 
       <div className="flex min-w-0 flex-col gap-1.5">
-        {/* Three lines in a list; the whole headline once the row is open (or in the pane).
+        {/* Six lines at most in a list (real headlines run to about 105 characters, so this only guards
+            against a pathological title); the whole headline once the row is open (or in the pane).
             The clamp sits on the button when there is one: a button is an atomic inline box,
             so a clamp on the heading would count it as a single line. */}
         <h3 className={cx('t-head', isRead ? 'font-medium text-fg-3' : 'text-fg-1', !(onSelect || onToggle) && clamp)}>
