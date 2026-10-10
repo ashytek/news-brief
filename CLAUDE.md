@@ -386,6 +386,9 @@ Built on branch `session7-polish` (worktree `~/Documents/News App/newsapp-s7`, o
 - Node's type stripping (`node --experimental-strip-types`) rejects constructor parameter properties and `tsc` rejects `.ts` import paths, so the pure modules the tests load are import-free (`resume.ts` takes the 24 h as an argument).
 - Harness: `new Date()` ignores the `Date.now` skew, `visibilityState` is overridden to simulate hiding (`VIS`), and a fresh browser context per scenario means "saved feed" tests need a first online load in the same page.
 
+- **Real proxy, signed out** (the harness copy strips `proxy.ts`, so this was checked on a production build of the real tree): `/sw.js` 200 `application/javascript` with no cookies; `/manifest.json` and the icons 200; `/reader /archive /search /sources /dev-ui /authors` all 307 to `/auth`; `POST /api/pipeline/trigger` 401.
+- **If the worker ever misbehaves:** ship a `public/sw.js` that calls `self.skipWaiting()`, deletes every `nb-*` cache and `self.registration.unregister()`; every phone picks it up on its next open (the browser re-checks `/sw.js` each time, and `netlify.toml` serves it `no-cache`). Sign-out also clears the caches; DevTools → Application → Service workers → Unregister does it by hand.
+
 **Noticed, not fixed**: `formatSince` says "0 min ago" for a copy saved seconds ago; the catch-up pool is not part of the first-install warm-up; left/right safe-area insets (landscape iPhone); the 12 px / 44 px scans run on the first screen only.
 
 **Deploy status: BUILT, NOT DEPLOYED** (waiting for Ash's OK; `origin/main` is still `2f32c54`).
