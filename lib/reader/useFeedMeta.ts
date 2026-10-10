@@ -33,13 +33,13 @@ export function useFeedMeta(supabase: Supabase, enabled: boolean) {
     if (!enabled) return
 
     // Load sources into a lookup map
-    supabase.from('sources').select('id, name, category, source_type, is_active').then(({ data }) => {
+    supabase.from('sources').select('id, name, category, source_type, is_active').then(({ data, status }) => {
       if (data) {
         const map: Record<string, Source> = {}
         data.forEach(s => { map[s.id] = s as unknown as Source })
         setSources(map)
         saveFeed('sources', map)
-      } else {
+      } else if (status === 0) {
         // No signal: the channel names and flags from the last time it worked (a saved
         // feed would otherwise show every channel as "Unknown").
         const saved = loadFeed('sources', isRecord)

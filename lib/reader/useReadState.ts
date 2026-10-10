@@ -32,7 +32,7 @@ export function useReadState(supabase: Supabase, userId: string, enabled: boolea
     // of .limit(), and an unordered query returns a nondeterministic subset
     // once past it. Ordering by most-recent-first means old reads are what
     // silently drop off (they may resurface as unread), not a random slice.
-    const { data } = await supabase
+    const { data, status } = await supabase
       .from('read_items')
       .select('story_id, cluster_id')
       .eq('user_id', userId)
@@ -47,8 +47,8 @@ export function useReadState(supabase: Supabase, userId: string, enabled: boolea
       setReadIds(ids)
       setLoaded(true)
       saveFeed('read_ids', Array.from(ids))
-    } else {
-      // The request failed (no signal): use the copy from the last time it worked, so a
+    } else if (status === 0) {
+      // No answer at all (no signal): use the copy from the last time it worked, so a
       // saved feed doesn't show every story as unread. Never over what is already known.
       const saved = loadFeed('read_ids', isStringArray)
       if (saved) {

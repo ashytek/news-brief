@@ -73,7 +73,8 @@ export function useFeedContent(
       if (!res.ok) {
         console.error('loadContent (catch-up) failed', res.error)
         if (!opts?.background) {   // a failed background refresh keeps what is on screen
-          const saved = loadFeed(name, isCatchUpData)
+          // Only when the request never got an answer: a server that answers with an error keeps its error screen.
+          const saved = res.offline ? loadFeed(name, isCatchUpData) : null
           if (saved) {
             setCatchUpData(saved.data)
             setSavedAt(saved.at)
@@ -104,7 +105,7 @@ export function useFeedContent(
       if (storyRes.error) {
         console.error('loadContent (today) failed', storyRes.error)
         if (!opts?.background) {   // a failed background refresh keeps what is on screen
-          const saved = loadFeed('today', isArray)
+          const saved = storyRes.status === 0 ? loadFeed('today', isArray) : null   // no answer at all (no signal)
           if (saved) {
             setTodayStories(saved.data as StoryWithRelations[])
             setSavedAt(saved.at)
@@ -134,7 +135,7 @@ export function useFeedContent(
     if (storyRes.error) {
       console.error('loadContent failed', storyRes.error)
       if (!opts?.background) {   // a failed background refresh keeps what is on screen
-        const saved = loadFeed(name, isArray)
+        const saved = storyRes.status === 0 ? loadFeed(name, isArray) : null   // no answer at all (no signal)
         if (saved) {
           setSoloStories(saved.data as StoryWithRelations[])
           setSavedAt(saved.at)

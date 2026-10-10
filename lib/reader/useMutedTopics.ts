@@ -19,11 +19,11 @@ export function useMutedTopics(supabase: Supabase, userId: string, enabled: bool
       .select('keyword')
       .eq('user_id', userId)
       .gt('expires_at', new Date().toISOString())
-      .then(({ data }) => {
+      .then(({ data, status }) => {
         if (data) {
           setMutedKeywords(new Set(data.map(r => r.keyword)))
           saveFeed('muted', data.map(r => r.keyword))
-        } else {
+        } else if (status === 0) {
           const saved = loadFeed('muted', isStringArray)   // no signal: the last list, so a saved feed hides what you muted
           if (saved) setMutedKeywords(new Set(saved.data))
         }

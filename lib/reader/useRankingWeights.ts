@@ -15,13 +15,13 @@ export function useRankingWeights(supabase: Supabase, userId: string, enabled: b
       .from('source_weights')
       .select('source_id, weight')
       .eq('user_id', userId)
-      .then(({ data }) => {
+      .then(({ data, status }) => {
         if (data) {
           const map: Record<string, number> = {}
           data.forEach(r => { map[r.source_id] = r.weight })
           setSourceWeights(map)
           saveFeed('source_weights', map)
-        } else {
+        } else if (status === 0) {
           const saved = loadFeed('source_weights', isNumberMap)   // no signal: the last weights, so the order matches
           if (saved) setSourceWeights(saved.data)
         }
@@ -30,13 +30,13 @@ export function useRankingWeights(supabase: Supabase, userId: string, enabled: b
       .from('topic_weights')
       .select('kw, weight')
       .eq('user_id', userId)
-      .then(({ data }) => {
+      .then(({ data, status }) => {
         if (data) {
           const map: Record<string, number> = {}
           data.forEach(r => { map[r.kw] = r.weight })
           setTopicWeights(map)
           saveFeed('topic_weights', map)
-        } else {
+        } else if (status === 0) {
           const saved = loadFeed('topic_weights', isNumberMap)
           if (saved) setTopicWeights(saved.data)
         }

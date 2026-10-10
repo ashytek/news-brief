@@ -26,12 +26,12 @@ const ID_CHUNK = 50
 export async function fetchCatchUp(
   supabase: Supabase,
   tab: 'today' | SectionKey,
-): Promise<{ ok: true; data: CatchUpData } | { ok: false; error: unknown }> {
+): Promise<{ ok: true; data: CatchUpData } | { ok: false; error: unknown; /** the request never got an answer (no signal), as opposed to the server refusing it */ offline: boolean }> {
   const since = new Date(Date.now() - CATCHUP_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString()
   let query = supabase.from('stories').select(STORY_SELECT).gte('created_at', since)
   if (tab !== 'today' && tab !== 'all') query = query.eq('category', tab)
   const poolRes = await query.order('created_at', { ascending: false }).limit(CATCHUP_POOL_LIMIT)
-  if (poolRes.error) return { ok: false, error: poolRes.error }
+  if (poolRes.error) return { ok: false, error: poolRes.error, offline: poolRes.status === 0 }
   const pool = (poolRes.data ?? []) as unknown as StoryWithRelations[]
 
   const ids = [...new Set(pool.map(s => s.storyline_id).filter((id): id is string => !!id))]
