@@ -56,7 +56,9 @@ export function movedByAppRecently(): boolean {
 export function toTop(el: Element) {
   const y = window.scrollY + el.getBoundingClientRect().top - barBottom()
   movedAt = Date.now()
-  window.scrollTo({ top: Math.max(0, Math.round(y)), behavior: 'instant' })
+  // The two-argument form: no `behavior` (older Safari rejects 'instant'); the page has no
+  // smooth scroll-behavior, so this jumps, which is what we want (the list already changed).
+  window.scrollTo(0, Math.max(0, Math.round(y)))
 }
 
 /** Runs `fn` once React has committed the change just made and the browser has laid it out. */
