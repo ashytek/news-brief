@@ -3,6 +3,7 @@ import type { StoryWithRelations } from '@/lib/types'
 import { DWELL_LONG_SECONDS, DWELL_SHORT_SECONDS } from '@/lib/constants'
 import type { Supabase } from './types'
 import { useHiddenTimeShift } from './useHiddenTimeShift'
+import { movedByAppRecently } from './flow'
 
 /** Likes/dislikes/shares and their effect on source weights. */
 export function useEngagement(
@@ -82,7 +83,7 @@ export function useDwellTracking(
     if (elapsed > (longForm ? DWELL_LONG_SECONDS : DWELL_SHORT_SECONDS)) {
       sendEngagement('dwell_long', storyId)
       markRead(storyId, { hold: true }) // auto-mark-read after sufficient reading time
-    } else if (elapsed < 3 && !(storyId && isRead(storyId))) {
+    } else if (elapsed < 3 && !(storyId && isRead(storyId)) && !movedByAppRecently()) {
       sendEngagement('dwell_short', storyId)
     }
   }, [sendEngagement, markRead, viewActive, isRead])

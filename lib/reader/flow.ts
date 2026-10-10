@@ -43,9 +43,19 @@ function barBottom(): number {
   return bar ? Math.max(0, bar.getBoundingClientRect().bottom) : 0
 }
 
+let movedAt = 0
+
+/** True just after the app itself scrolled the page (below). Cards that left the screen
+ *  because of that move were not glanced at and skipped, so the dwell timer must not
+ *  report them as `dwell_short` (it lowers their topic's weight). */
+export function movedByAppRecently(): boolean {
+  return Date.now() - movedAt < 1500
+}
+
 /** Scroll the window so `el` starts right under the top bar. */
 export function toTop(el: Element) {
   const y = window.scrollY + el.getBoundingClientRect().top - barBottom()
+  movedAt = Date.now()
   window.scrollTo({ top: Math.max(0, Math.round(y)), behavior: 'instant' })
 }
 
