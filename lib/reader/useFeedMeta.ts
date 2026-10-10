@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { CATEGORIES } from '@/lib/categories'
 import type { Source } from '@/lib/types'
 import type { Supabase } from './types'
+import { isRecord, loadFeed, saveFeed } from './feedCache'
 
 /** Just enough of a story to count it: what the unread numbers on the Sections
  *  chips need, without loading the stories themselves. */
@@ -37,6 +38,12 @@ export function useFeedMeta(supabase: Supabase, enabled: boolean) {
         const map: Record<string, Source> = {}
         data.forEach(s => { map[s.id] = s as unknown as Source })
         setSources(map)
+        saveFeed('sources', map)
+      } else {
+        // No signal: the channel names and flags from the last time it worked (a saved
+        // feed would otherwise show every channel as "Unknown").
+        const saved = loadFeed('sources', isRecord)
+        if (saved) setSources(saved.data as Record<string, Source>)
       }
     })
 

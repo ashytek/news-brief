@@ -51,3 +51,4 @@ export function clearFeeds(): void {
 }
 
 export const isArray = (d: unknown): d is unknown[] => Array.isArray(d)
+export const isRecord = (d: unknown): d is Record<string, unknown> => typeof d === 'object' && d !== null && !Array.isArray(d)

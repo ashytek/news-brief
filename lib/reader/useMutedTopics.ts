@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { Supabase } from './types'
+import { loadFeed, saveFeed } from './feedCache'
+
+const isStringArray = (d: unknown): d is string[] => Array.isArray(d) && d.every(x => typeof x === 'string')
 
 /** Topics the user muted (14-day expiry) and the write that adds them. */
 export function useMutedTopics(supabase: Supabase, userId: string, enabled: boolean) {
@@ -17,7 +20,13 @@ export function useMutedTopics(supabase: Supabase, userId: string, enabled: bool
       .eq('user_id', userId)
       .gt('expires_at', new Date().toISOString())
       .then(({ data }) => {
-        if (data) setMutedKeywords(new Set(data.map(r => r.keyword)))
+        if (data) {
+          setMutedKeywords(new Set(data.map(r => r.keyword)))
+          saveFeed('muted', data.map(r => r.keyword))
+        } else {
+          const saved = loadFeed('muted', isStringArray)   // no signal: the last list, so a saved feed hides what you muted
+          if (saved) setMutedKeywords(new Set(saved.data))
+        }
         setLoaded(true)
       })
   }, [enabled, supabase, userId])
