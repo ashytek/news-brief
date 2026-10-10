@@ -2,6 +2,7 @@ import { useCallback, useRef, type Dispatch, type SetStateAction } from 'react'
 import type { StoryWithRelations } from '@/lib/types'
 import { DWELL_LONG_SECONDS, DWELL_SHORT_SECONDS } from '@/lib/constants'
 import type { Supabase } from './types'
+import { useHiddenTimeShift } from './useHiddenTimeShift'
 
 /** Likes/dislikes/shares and their effect on source weights. */
 export function useEngagement(
@@ -59,6 +60,7 @@ export function useDwellTracking(
   isRead: (storyId: string) => boolean = () => false,
 ) {
   const dwellTimers = useRef<Map<string, number>>(new Map())
+  useHiddenTimeShift(dwellTimers)   // a locked phone is not reading
 
   const startDwell = useCallback((id: string) => {
     dwellTimers.current.set(id, Date.now())

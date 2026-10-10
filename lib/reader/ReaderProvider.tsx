@@ -18,6 +18,7 @@ import { usePipelineTrigger } from './usePipelineTrigger'
 import { useDwellTracking, useEngagement } from './useEngagement'
 import { useSinceVisit } from './useSinceVisit'
 import { useResume } from './useResume'
+import { useHiddenTimeShift } from './useHiddenTimeShift'
 import { decideResume } from './resume'
 import { useReactions } from './useReactions'
 import { useFeedView } from './useFeedView'
@@ -185,6 +186,7 @@ function useReaderValue(userId: string) {
   // reading 22 times towards the topic weights). Callbacks are bound once by the
   // dwell hook, so the current marking function is read through a ref.
   const storylineDwell = useRef<Map<string, number>>(new Map())
+  useHiddenTimeShift(storylineDwell)
   const markManyRef = useRef(markManyReadUndoable)
   useLayoutEffect(() => { markManyRef.current = markManyReadUndoable })
   const startStorylineDwell = useCallback((id: string) => { storylineDwell.current.set(id, Date.now()) }, [])
