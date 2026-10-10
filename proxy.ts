@@ -66,7 +66,9 @@ export const config = {
   // so routing them through auth makes the proxy 307 them to /auth — Chrome
   // gets an HTML login page where it expects JSON/PNG and fails PWA
   // installability entirely. Exclude static/manifest assets from the gate.
+  // sw.js (the offline-shell service worker) is fetched by the browser's update check
+  // without the page's cookies either, and must come back as JavaScript, not a login page.
   matcher: [
-    '/((?!_next/static|_next/image|favicon\\.ico|api/|manifest\\.json|icons/|.*\\.(?:png|svg|ico|webmanifest)$).*)',
+    '/((?!_next/static|_next/image|favicon\\.ico|api/|manifest\\.json|sw\\.js|icons/|.*\\.(?:png|svg|ico|webmanifest)$).*)',
   ],
 }

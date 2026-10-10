@@ -11,6 +11,7 @@ import { TopBar } from '@/components/shell/TopBar'
 import { SectionsBar } from '@/components/reader/SectionsBar'
 import { FeedToolbar } from '@/components/reader/FeedToolbar'
 import { SinceVisitNotice } from '@/components/reader/SinceVisitNotice'
+import { SavedFeedNotice } from '@/components/reader/SavedFeedNotice'
 import { FeedList } from '@/components/reader/FeedList'
 import { TodayFeed } from '@/components/reader/TodayFeed'
 import { TodayMasthead } from '@/components/reader/TodayMasthead'
@@ -58,6 +59,7 @@ export default function ReaderClient() {
             onMarkAllRead={r.markAllVisibleRead}
           />
         )}
+        {activeTab !== 'topics' && <SavedFeedNotice />}
         {showNotice && r.prevVisit !== null && (
           <SinceVisitNotice count={r.newSinceVisit} since={r.prevVisit} onDismiss={r.dismissSinceNotice} />
         )}

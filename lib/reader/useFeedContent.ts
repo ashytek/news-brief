@@ -3,6 +3,7 @@ import type { StoryWithRelations } from '@/lib/types'
 import { STORY_SELECT } from '@/lib/constants'
 import { FEED_SIZE } from './useFeedMeta'
 import { fetchCatchUp, type CatchUpData } from './catchUpQuery'
+import { isArray, loadFeed, saveFeed } from './feedCache'
 import type { CatchUpMode } from './useCatchUp'
 import { isSection, type ActiveTab, type Supabase } from './types'
 
@@ -28,6 +29,9 @@ export function useFeedContent(
   // A background reload is in flight (stories stay on screen meanwhile).
   const [refreshing, setRefreshing] = useState(false)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  // When the stories on screen were saved, if they are the app's own copy of an
+  // earlier load because the network failed (null = they are fresh).
+  const [savedAt, setSavedAt] = useState<number | null>(null)
   // Bumped on every loadContent() call; a response only commits state if it's
   // still the latest in-flight request — otherwise rapid tab switching can
   // let an older, slower response land after a newer one and show the wrong
@@ -65,12 +69,22 @@ export function useFeedContent(
     if (catchUpMode === 'on' && (activeTab === 'today' || isSection(activeTab))) {
       const res = await fetchCatchUp(supabase, activeTab)
       if (isStale()) return
+      const name = `catchup_${activeTab}`
       if (!res.ok) {
         console.error('loadContent (catch-up) failed', res.error)
-        if (!opts?.background) setLoadError(true)   // a failed background refresh keeps what is on screen
+        if (!opts?.background) {   // a failed background refresh keeps what is on screen
+          const saved = loadFeed(name, isCatchUpData)
+          if (saved) {
+            setCatchUpData(saved.data)
+            setSavedAt(saved.at)
+            lastLoadedAt.current = saved.at
+          } else setLoadError(true)
+        }
       } else {
         setCatchUpData(res.data)
+        setSavedAt(null)
         lastLoadedAt.current = Date.now()
+        saveFeed(name, res.data)
       }
       setLastUpdated(new Date())
       setLoading(false)
@@ -89,10 +103,19 @@ export function useFeedContent(
       if (isStale()) return
       if (storyRes.error) {
         console.error('loadContent (today) failed', storyRes.error)
-        if (!opts?.background) setLoadError(true)   // a failed background refresh keeps what is on screen
+        if (!opts?.background) {   // a failed background refresh keeps what is on screen
+          const saved = loadFeed('today', isArray)
+          if (saved) {
+            setTodayStories(saved.data as StoryWithRelations[])
+            setSavedAt(saved.at)
+            lastLoadedAt.current = saved.at
+          } else setLoadError(true)
+        }
       } else if (storyRes.data) {
         setTodayStories(storyRes.data as unknown as StoryWithRelations[])
+        setSavedAt(null)
         lastLoadedAt.current = Date.now()
+        saveFeed('today', storyRes.data)
       }
       setLastUpdated(new Date())
       setLoading(false)
@@ -107,12 +130,22 @@ export function useFeedContent(
       .limit(FEED_SIZE)
 
     if (isStale()) return
+    const name = `tab_${activeTab}`
     if (storyRes.error) {
       console.error('loadContent failed', storyRes.error)
-      if (!opts?.background) setLoadError(true)   // a failed background refresh keeps what is on screen
+      if (!opts?.background) {   // a failed background refresh keeps what is on screen
+        const saved = loadFeed(name, isArray)
+        if (saved) {
+          setSoloStories(saved.data as StoryWithRelations[])
+          setSavedAt(saved.at)
+          lastLoadedAt.current = saved.at
+        } else setLoadError(true)
+      }
     } else if (storyRes.data) {
       setSoloStories(storyRes.data as unknown as StoryWithRelations[])
+      setSavedAt(null)
       lastLoadedAt.current = Date.now()
+      saveFeed(name, storyRes.data)
     }
     setLastUpdated(new Date())
     setLoading(false)
@@ -125,5 +158,21 @@ export function useFeedContent(
     if (tabReady) loadContent()
   }, [tabReady, activeTab, loadContent])
 
-  return { soloStories, todayStories, catchUpData, loading, refreshing, loadError, lastUpdated, lastLoadedAt, loadContent }
+  // Showing the app's own copy because the network failed: when the connection
+  // comes back, fetch the real thing (in the background; the copy stays until then).
+  useEffect(() => {
+    if (savedAt === null) return
+    const retry = () => { void loadContent({ background: true }) }
+    window.addEventListener('online', retry)
+    return () => window.removeEventListener('online', retry)
+  }, [savedAt, loadContent])
+
+  return { soloStories, todayStories, catchUpData, loading, refreshing, loadError, lastUpdated, savedAt, lastLoadedAt, loadContent }
+}
+
+/** A saved catch-up pool is only used if it has the three collections the view reads. */
+function isCatchUpData(d: unknown): d is CatchUpData {
+  if (typeof d !== 'object' || d === null) return false
+  const o = d as Record<string, unknown>
+  return Array.isArray(o.pool) && Array.isArray(o.members) && Array.isArray(o.storylines)
 }

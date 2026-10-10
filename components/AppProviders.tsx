@@ -5,6 +5,7 @@ import { SnackbarProvider } from '@/components/ui'
 import { AppNavProvider } from '@/components/nav/AppNav'
 import { ReaderProvider } from '@/lib/reader/ReaderProvider'
 import { BottomNav } from '@/components/shell/BottomNav'
+import { ServiceWorker } from '@/components/ServiceWorker'
 
 /** Client-side state that outlives a single screen. Mounted once, by the
  *  (app) layout, so it survives navigation between Reader, Search, Archive
@@ -16,6 +17,7 @@ export function AppProviders({ userId, children }: { userId: string; children: R
         <ReaderProvider userId={userId}>
           {children}
           <BottomNav />
+          <ServiceWorker />
         </ReaderProvider>
       </AppNavProvider>
     </SnackbarProvider>

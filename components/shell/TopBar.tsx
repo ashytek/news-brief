@@ -15,7 +15,8 @@ const DOT: Record<PipelineTone, string> = { ok: 'bg-ok', warn: 'bg-warn', bad: '
  *  age) that opens the status sheet, and one settings button. Sticky, with an
  *  offline notice and a thin refresh bar hanging under it; `children` (the
  *  Sections chip row) stick with it. No backdrop-blur: it re-samples the feed on
- *  every scroll frame on mid-range Android. */
+ *  every scroll frame on mid-range Android. Pads the top safe-area inset (iOS
+ *  standalone draws under the status bar: `black-translucent` + `viewport-fit=cover`). */
 export function TopBar({ children }: { children?: ReactNode }) {
   const r = useReader()
   const [sheet, setSheet] = useState<'status' | 'settings' | null>(null)
@@ -37,7 +38,7 @@ export function TopBar({ children }: { children?: ReactNode }) {
   const info = describePipeline(r.lastPipelineRun, r.pipelineStruggling)
 
   return (
-    <div className="sticky top-0 z-40 border-b border-hairline bg-canvas">
+    <div className="sticky top-0 z-40 border-b border-hairline bg-canvas pt-[env(safe-area-inset-top,0px)]">
       <header className="mx-auto flex h-topbar max-w-2xl items-center gap-2 pl-gutter pr-1">
         <Brand />
         <div className="flex-1" />

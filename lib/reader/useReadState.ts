@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { PostgrestError } from '@supabase/supabase-js'
 import type { Supabase } from './types'
+import { loadFeed, saveFeed } from './feedCache'
+
+const isStringArray = (d: unknown): d is string[] => Array.isArray(d) && d.every(x => typeof x === 'string')
 
 /** Ids per DELETE when taking read marks back (keeps the request URL short). */
 const UNDO_CHUNK = 100
@@ -43,6 +46,15 @@ export function useReadState(supabase: Supabase, userId: string, enabled: boolea
       })
       setReadIds(ids)
       setLoaded(true)
+      saveFeed('read_ids', Array.from(ids))
+    } else {
+      // The request failed (no signal): use the copy from the last time it worked, so a
+      // saved feed doesn't show every story as unread. Never over what is already known.
+      const saved = loadFeed('read_ids', isStringArray)
+      if (saved) {
+        setReadIds(prev => (prev.size > 0 ? prev : new Set(saved.data)))
+        setLoaded(true)
+      }
     }
   }, [supabase, userId])
 

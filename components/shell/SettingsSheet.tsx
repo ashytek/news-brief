@@ -5,6 +5,7 @@ import { LogOut, RefreshCw, Rss } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { Sheet } from '@/components/ui'
 import { createClient } from '@/lib/supabase/client'
+import { clearDeviceCopy } from '@/lib/offline'
 import { useReader } from '@/lib/reader/ReaderProvider'
 
 const ROW = 'flex min-h-14 w-full items-center gap-3.5 rounded-panel px-3 text-left text-base font-medium text-fg-1 hover:bg-surface-2 active:bg-surface-2'
@@ -25,6 +26,7 @@ export function SettingsSheet({ open, onClose }: { open: boolean; onClose: () =>
 
   const signOut = async () => {
     await createClient().auth.signOut()
+    await clearDeviceCopy()   // the saved feeds and the offline pages go with the session
     // A full page load on purpose: it drops all in-memory feed state with the session.
     // eslint-disable-next-line @next/next/no-location-assign-relative-destination
     window.location.href = '/auth'

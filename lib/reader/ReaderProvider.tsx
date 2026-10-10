@@ -279,6 +279,7 @@ function useReaderValue(userId: string) {
     sourceWeights: weights.sourceWeights, topicWeights: weights.topicWeights,
     soloStories: content.soloStories, todayStories: content.todayStories,
     loading: content.loading, refreshing: content.refreshing, loadError: content.loadError, lastUpdated: content.lastUpdated,
+    savedAt: content.savedAt,
     loadContent: content.loadContent, refresh,
     // read state
     readIds: read.readIds, layoutReadIds: read.layoutReadIds, loadReadIds: read.loadReadIds,

@@ -21,3 +21,11 @@
     Referrer-Policy = "strict-origin-when-cross-origin"
     Strict-Transport-Security = "max-age=31536000; includeSubDomains"
     Permissions-Policy = "camera=(), microphone=(), geolocation=()"
+
+# The service worker (public/sw.js) must never be served from a cache: the browser's
+# update check is how a changed worker reaches the phone.
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache, max-age=0, must-revalidate"
+    Service-Worker-Allowed = "/"
