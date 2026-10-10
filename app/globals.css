@@ -72,6 +72,12 @@
   --spacing-gutter: 16px;
   --spacing-topbar: 56px;
   --spacing-navbar: 64px;
+  /* Desktop (roadmap session 7): from 1180 px the bottom nav becomes a left rail and the
+     Reader splits into list + reading pane. Below it nothing changes. 1180 = the rail,
+     the list and a reading pane of at least ~490 px. */
+  --breakpoint-desk: 1180px;
+  --spacing-rail: 248px;
+  --spacing-list: 440px;
   --shadow-snackbar: 0 6px 24px rgb(0 0 0 / 0.35);
   --ease-emphasized: cubic-bezier(0.05, 0.7, 0.1, 1);
   --animate-sheet-in: sheet-in 240ms var(--ease-emphasized) both;

@@ -5,21 +5,25 @@ import { Check } from 'lucide-react'
 import type { Source, StoryWithRelations } from '@/lib/types'
 import { CategoryMark, StoryThumb, cx } from '@/components/ui'
 import { useDwellVisibility } from '@/lib/useDwellVisibility'
-import { estimateReadMinutes, formatRelativeDate, minutesSince, readShort } from '@/lib/format'
+import { displayHeadline, estimateReadMinutes, formatRelativeDate, minutesSince, readShort } from '@/lib/format'
 import { ShortBody } from './ShortBody'
 import type { StoryActions } from './types'
 
 /** The story card of the feeds: headline-first, short version by default.
  *  `lead` (the first story of Today) has the full-width image; `standard` has the
- *  104 px thumbnail beside a serif headline. Cards are separated by hairlines,
- *  not boxes. The dwell timer (40 s on the short version, 120 s once the sections
- *  have been opened) runs on the whole article, as before. */
+ *  104 px thumbnail beside a serif headline; `pane` is the story view of the desktop
+ *  reading pane (big image, `t-title` headline, sections open from the start with
+ *  `defaultOpen`). Cards are separated by hairlines, not boxes. The dwell timer (40 s
+ *  on the short version, 120 s once the sections have been opened) runs on the whole
+ *  article, as before. */
 export function StoryCard({
-  story, source, variant = 'standard', showCategory = false, actions, onDwellStart, onDwellEnd,
+  story, source, variant = 'standard', defaultOpen = false, showCategory = false, actions, onDwellStart, onDwellEnd,
 }: {
   story: StoryWithRelations
   source?: Source
-  variant?: 'lead' | 'standard'
+  variant?: 'lead' | 'standard' | 'pane'
+  /** Start with the sections open (the reading pane). */
+  defaultOpen?: boolean
   /** Show the category as a dot + name in the kicker (Today mixes them). */
   showCategory?: boolean
   actions: StoryActions
@@ -31,7 +35,7 @@ export function StoryCard({
   const video = story.videos
   const videoUrl = video?.url ?? null
   const isRead = actions.isRead
-  const [sectionsOpen, setSectionsOpen] = useState(false)
+  const [sectionsOpen, setSectionsOpen] = useState(defaultOpen)
 
   const short = useMemo(() => readShort(story.short), [story.short])
   const sections = useMemo(() => story.bullets ?? [], [story.bullets])
@@ -59,6 +63,7 @@ export function StoryCard({
   )
 
   const isLead = variant === 'lead'
+  const isPane = variant === 'pane'
   const isNew = minutesSince(video?.published_at) < 60
 
   const kicker = (
@@ -98,17 +103,25 @@ export function StoryCard({
     </p>
   )
 
+  const title = displayHeadline(story.headline)
   const headline = videoUrl ? (
-    <a href={videoUrl} target="_blank" rel="noopener noreferrer" className="active:opacity-70">{story.headline}</a>
-  ) : story.headline
+    <a href={videoUrl} target="_blank" rel="noopener noreferrer" className="active:opacity-70">{title}</a>
+  ) : title
 
   return (
     <article
       ref={dwellRef}
       data-story-id={story.id}
-      className={cx('story-card card-cv flex flex-col border-b border-hairline py-5', isLead && 'pt-1')}
+      className={cx('story-card card-cv flex flex-col border-b border-hairline py-5', isLead && 'pt-1', isPane && 'border-b-0 py-0')}
     >
-      {isLead ? (
+      {isPane ? (
+        <>
+          <StoryThumb story={story} isRead={isRead} size="lead" className="mb-5" />
+          <div className="mb-2">{kicker}</div>
+          <h2 className={cx('t-title mb-3', isRead ? 'font-medium text-fg-3' : 'text-fg-1')}>{headline}</h2>
+          {meta}
+        </>
+      ) : isLead ? (
         <>
           <StoryThumb story={story} isRead={isRead} size="lead" className="mb-3.5" />
           <div className="mb-2">{kicker}</div>
@@ -120,7 +133,7 @@ export function StoryCard({
           <div className="mb-2">{kicker}</div>
           <div className={cx('grid items-start gap-3.5', video?.thumbnail_url ? 'grid-cols-[minmax(0,1fr)_104px]' : 'grid-cols-1')}>
             <div className="flex min-w-0 flex-col gap-2">
-              <h2 className={cx('font-serif text-[19px] font-semibold leading-[25px] text-pretty', isRead ? 'font-medium text-fg-3' : 'text-fg-1')}>
+              <h2 className={cx('line-clamp-6 font-serif text-[19px] font-semibold leading-[25px] text-pretty', isRead ? 'font-medium text-fg-3' : 'text-fg-1')}>
                 {headline}
               </h2>
               {meta}

@@ -41,11 +41,11 @@ export function SnackbarProvider({ children }: { children: ReactNode }) {
     <Ctx.Provider value={api}>
       {children}
       {/* The live region exists before its content does, so screen readers
-          announce the message when it appears. Sits above the bottom nav. */}
+          announce the message when it appears. Sits above the bottom nav (on desktop there is none: bottom of the page, clear of the rail). */}
       <div
         role="status"
         aria-live="polite"
-        className="pointer-events-none fixed inset-x-gutter bottom-[calc(var(--spacing-navbar)+env(safe-area-inset-bottom,0px))] z-[60] mb-3 flex justify-center"
+        className="pointer-events-none fixed inset-x-gutter bottom-[calc(var(--spacing-navbar)+env(safe-area-inset-bottom,0px))] z-[60] mb-3 flex justify-center desk:bottom-0 desk:left-[calc(var(--spacing-rail)+var(--spacing-gutter))]"
       >
         {item && (
           <div className="pointer-events-auto flex min-h-12 w-full max-w-md items-center gap-3 rounded-panel bg-fg-1 py-1 pl-4 pr-1 shadow-snackbar">

@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react'
 import { Check, CircleCheck, Inbox, TriangleAlert } from 'lucide-react'
-import { StoryCard } from '@/components/story/StoryCard'
+import { FeedStory } from '@/components/story/FeedStory'
 import { StorySkeleton } from '@/components/story/StorySkeleton'
 import { useStoryActions } from '@/components/story/useStoryActions'
 import { Button, ButtonLink, StateMessage } from '@/components/ui'
@@ -86,8 +86,9 @@ export function TodayFeed() {
 
       <div className="mt-3">
         {ranked.map(({ data: story }, i) => (
-          <StoryCard
+          <FeedStory
             key={story.id}
+            first={i === 0}
             story={story}
             source={r.sources[story.source_id]}
             variant={i === 0 ? 'lead' : 'standard'}

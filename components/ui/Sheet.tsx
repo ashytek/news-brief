@@ -48,6 +48,8 @@ export function Sheet({ open, onClose, title, children, className }: {
       className={cx(
         'fixed inset-x-0 bottom-0 top-auto m-0 max-h-[85dvh] w-full max-w-none overflow-y-auto overscroll-contain',
         'rounded-t-2xl border-0 bg-surface-1 p-0 text-fg-1 backdrop:bg-black/60 open:animate-sheet-in',
+        // Desktop: a centred dialog, not a sheet across a 1,400 px window.
+        'desk:inset-y-0 desk:m-auto desk:h-fit desk:w-[480px] desk:rounded-2xl',
         className,
       )}
     >

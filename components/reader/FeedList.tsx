@@ -1,7 +1,7 @@
 'use client'
 
 import { Fragment } from 'react'
-import { StoryCard } from '@/components/story/StoryCard'
+import { FeedStory } from '@/components/story/FeedStory'
 import { useStoryActions } from '@/components/story/useStoryActions'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { DividerLabel } from '@/components/ui'
@@ -16,9 +16,11 @@ export function FeedList() {
   const r = useReader()
   const actionsFor = useStoryActions({ canMute: true })
 
+  const firstId = (r.pinnedMix[0] ?? r.mergedFeed[0])?.id   // what the desktop pane opens on
   const card = (story: (typeof r.mergedFeed)[number]) => (
-    <StoryCard
+    <FeedStory
       key={story.id}
+      first={story.id === firstId}
       story={story}
       source={r.sources[story.source_id]}
       actions={actionsFor(story)}

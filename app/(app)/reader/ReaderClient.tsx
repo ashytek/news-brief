@@ -17,6 +17,8 @@ import { TodayFeed } from '@/components/reader/TodayFeed'
 import { TodayMasthead } from '@/components/reader/TodayMasthead'
 import { CatchUpFeed } from '@/components/catchup/CatchUpFeed'
 import { CatchUpToggle } from '@/components/catchup/CatchUpToggle'
+import { ReadingPane, ReadingPaneProvider } from '@/components/reader/ReadingPane'
+import { useDesk } from '@/lib/useDesk'
 
 /** The Reader screen: a thin view over the state held by <ReaderProvider>
  *  (lib/reader). Today, Sections and Topics are three views of this one route,
@@ -44,12 +46,15 @@ export default function ReaderClient() {
     && activeTab !== 'topics' && !r.catchUp.on
   const catchUp = r.catchUp.on
   const settled = !r.catchUp.pending   // the toggle and toolbar wait for the automatic decision
+  const desk = useDesk()
 
   return (
-    <div className="min-h-screen">
+    <ReadingPaneProvider enabled={desk} scope={`${activeTab}:${catchUp}`}>
+    {/* From 1180 px: this is the list column (440 px, beside the rail); the story opens in the pane. */}
+    <div className="min-h-screen desk:w-list desk:border-r desk:border-hairline">
       <TopBar>{inSections && <SectionsBar />}</TopBar>
 
-      <main className="mx-auto max-w-2xl px-gutter pb-[calc(var(--spacing-navbar)+env(safe-area-inset-bottom,0px)+1.5rem)]">
+      <main className="mx-auto max-w-2xl px-gutter pb-[calc(var(--spacing-navbar)+env(safe-area-inset-bottom,0px)+1.5rem)] desk:max-w-none desk:pb-10">
         {inSections && settled && <CatchUpToggle feedLabel="Feed" className="mt-3" />}
         {inSections && settled && !catchUp && (
           <FeedToolbar
@@ -72,5 +77,7 @@ export default function ReaderClient() {
       </main>
       <InstallPrompt />
     </div>
+    {desk && <ReadingPane />}
+    </ReadingPaneProvider>
   )
 }

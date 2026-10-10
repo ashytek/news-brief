@@ -15,7 +15,9 @@ const DOT: Record<PipelineTone, string> = { ok: 'bg-ok', warn: 'bg-warn', bad: '
  *  age) that opens the status sheet, and one settings button. Sticky, with an
  *  offline notice and a thin refresh bar hanging under it; `children` (the
  *  Sections chip row) stick with it. No backdrop-blur: it re-samples the feed on
- *  every scroll frame on mid-range Android. Pads the top safe-area inset (iOS
+ *  every scroll frame on mid-range Android. On desktop widths the bar itself is gone (the
+ *  rail has all three) and only the offline notice, the Sections chips and the refresh bar
+ *  remain. Pads the top safe-area inset (iOS
  *  standalone draws under the status bar: `black-translucent` + `viewport-fit=cover`). */
 export function TopBar({ children }: { children?: ReactNode }) {
   const r = useReader()
@@ -38,8 +40,9 @@ export function TopBar({ children }: { children?: ReactNode }) {
   const info = describePipeline(r.lastPipelineRun, r.pipelineStruggling)
 
   return (
-    <div className="sticky top-0 z-40 border-b border-hairline bg-canvas pt-[env(safe-area-inset-top,0px)]">
-      <header className="mx-auto flex h-topbar max-w-2xl items-center gap-2 pl-gutter pr-1">
+    <div className={cx('sticky top-0 z-40 border-b border-hairline bg-canvas pt-[env(safe-area-inset-top,0px)]', !children && 'desk:border-b-0')}>
+      {/* On desktop the rail carries the brand, the status and Settings. */}
+      <header className="mx-auto flex h-topbar max-w-2xl items-center gap-2 pl-gutter pr-1 desk:hidden">
         <Brand />
         <div className="flex-1" />
         {info && (

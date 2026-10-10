@@ -57,7 +57,7 @@ export function InstallPrompt() {
     <div
       role="dialog"
       aria-label="Install the app"
-      className="fixed inset-x-gutter bottom-[calc(var(--spacing-navbar)+env(safe-area-inset-bottom,0px)+0.75rem)] z-40 mx-auto flex max-w-md items-start gap-3 rounded-panel bg-surface-2 p-4 shadow-snackbar"
+      className="fixed inset-x-gutter bottom-[calc(var(--spacing-navbar)+env(safe-area-inset-bottom,0px)+0.75rem)] z-40 desk:bottom-6 mx-auto flex max-w-md items-start gap-3 rounded-panel bg-surface-2 p-4 shadow-snackbar"
     >
       <span aria-hidden="true" className="grid size-10 flex-none place-items-center rounded-control bg-accent-fill font-serif text-lg font-bold text-on-accent">N</span>
       <div className="min-w-0 flex-1">

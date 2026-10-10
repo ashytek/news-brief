@@ -65,3 +65,15 @@ export function mastheadDate(d: Date = new Date()): string {
 export function nowDate(): Date {
   return new Date()
 }
+
+/** A headline as shown. The pipeline writes sentence-case headlines, but a prophetic
+ *  channel's occasional ALL-CAPS one (60 %+ of its letters upper-case) shouts across a
+ *  phone screen and is hard to read; those become Title Case. Everything else is returned
+ *  untouched. Display only: search, sharing and the database keep the original. */
+export function displayHeadline(headline: string): string {
+  const letters = headline.replace(/[^A-Za-z]/g, '')
+  if (letters.length < 8) return headline
+  const upper = letters.replace(/[^A-Z]/g, '').length
+  if (upper / letters.length <= 0.6) return headline
+  return headline.toLowerCase().replace(/(^|[\s"(\[\u201c\u2018\u2014\u2013-])([a-z])/g, (_, lead: string, ch: string) => lead + ch.toUpperCase())
+}

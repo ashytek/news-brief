@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Mail } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui'
@@ -12,6 +12,16 @@ export default function AuthPage() {
   const [error, setError] = useState<string | null>(null)
 
   const supabase = createClient()
+
+  // The address used last time, so a re-sign-in (an expired session) is one tap.
+  // Read after hydration: the server render can't see localStorage.
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('newsbrief_email')
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- post-hydration localStorage read
+      if (saved) setEmail(saved)
+    } catch { /* storage blocked: type it */ }
+  }, [])
 
   async function handleSignIn(e: React.FormEvent) {
     e.preventDefault()
@@ -32,6 +42,7 @@ export default function AuthPage() {
       setError(error.message)
     } else {
       setSent(true)
+      try { localStorage.setItem('newsbrief_email', email) } catch { /* not remembered */ }
     }
     setLoading(false)
   }
@@ -72,6 +83,11 @@ export default function AuthPage() {
               onChange={e => setEmail(e.target.value)}
               placeholder="you@example.com"
               autoComplete="email"
+              inputMode="email"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              enterKeyHint="send"
               required
               className="h-12 w-full rounded-panel bg-surface-2 px-3.5 text-base text-fg-1 placeholder:text-fg-3 focus:bg-surface-1 focus:outline-none focus:ring-1 focus:ring-accent"
             />
