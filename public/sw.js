@@ -1,9 +1,10 @@
 /* NewsBrief service worker (roadmap session 7): an offline shell, nothing more.
  *
  * What it does
- *  - /_next/static/* and /icons/*: cache-first. These files are content-hashed, so a
- *    cached copy is never stale; this is what lets the app's JavaScript and fonts load
- *    with no network.
+ *  - /_next/static/*: cache-first. These files are content-hashed, so a cached copy is
+ *    never stale; this is what lets the app's JavaScript, styles and fonts load with no
+ *    network. (Not /icons/*: their names don't change when the picture does, so a copy kept
+ *    for ever would show an old icon.)
  *  - Navigations to the four signed-in pages (/reader /search /archive /sources):
  *    network-first, falling back (offline, or no answer in 6 s) to the copy of that page
  *    last seen online, then to /reader, then to a one-line offline page. The stories
@@ -22,7 +23,7 @@
 'use strict'
 
 const SHELL = 'nb-shell-v1'    // HTML of the signed-in pages
-const STATIC = 'nb-static-v1'  // hashed JS/CSS/fonts and icons
+const STATIC = 'nb-static-v1'  // hashed JS/CSS/fonts
 const MAX_STATIC = 400         // oldest entries go first (insertion order)
 const PAGES = ['/reader', '/search', '/archive', '/sources']
 const NAVIGATE_TIMEOUT_MS = 6000
@@ -45,7 +46,7 @@ self.addEventListener('fetch', event => {
   const url = new URL(req.url)
   if (url.origin !== self.location.origin) return
 
-  if (url.pathname.startsWith('/_next/static/') || url.pathname.startsWith('/icons/')) {
+  if (url.pathname.startsWith('/_next/static/')) {
     event.respondWith(cacheFirst(req))
     return
   }
