@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 /** Previous visit time, for the "N new since you left" notice and the
  *  "Before you left" divider (F012). Read before this visit overwrites it.
@@ -26,5 +26,13 @@ export function useSinceVisit(enabled: boolean) {
   }, [enabled])
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  return { prevVisit, visitReady, dismissedSinceNotice: dismissed, dismissSinceNotice: () => setDismissed(true) }
+  /** The app came back from the background after a while (see resume.ts): the
+   *  visit that just ended is when it was hidden, and this one starts now. */
+  const reopen = useCallback((leftAt: number) => {
+    setPrevVisit(leftAt)
+    setDismissed(false)
+    try { localStorage.setItem('newsbrief_lastVisit', new Date().toISOString()) } catch { /* storage blocked */ }
+  }, [])
+
+  return { prevVisit, visitReady, dismissedSinceNotice: dismissed, dismissSinceNotice: () => setDismissed(true), reopen }
 }

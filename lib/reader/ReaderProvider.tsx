@@ -17,11 +17,13 @@ import { useFeedContent } from './useFeedContent'
 import { usePipelineTrigger } from './usePipelineTrigger'
 import { useDwellTracking, useEngagement } from './useEngagement'
 import { useSinceVisit } from './useSinceVisit'
+import { useResume } from './useResume'
+import { decideResume } from './resume'
 import { useReactions } from './useReactions'
 import { useFeedView } from './useFeedView'
 import { useSectionUnread } from './useSectionUnread'
 import { useCatchUp } from './useCatchUp'
-import { buildCatchUp } from './catchUp'
+import { buildCatchUp, CATCHUP_AWAY_HOURS } from './catchUp'
 
 /** A feed kept in memory from before a trip to Search/Archive/Sources is shown
  *  at once; if it is older than this when you come back it is revalidated in
@@ -212,6 +214,31 @@ function useReaderValue(userId: string) {
     () => Promise.all([loadContent({ background: true }), loadReadIds(), refreshPipelineHealth()]).then(() => undefined),
     [loadContent, loadReadIds, refreshPipelineHealth],
   )
+
+  // Coming back to the app after it sat in the background (it is not reloaded):
+  // see resume.ts for the rules. Only while a Reader screen is showing; on Search
+  // or Archive the Reader's own resume (`activate`, below) does its 10-minute check
+  // when you return to it.
+  const { reopen: reopenVisit } = visit
+  const { reset: resetCatchUp } = catchUp
+  const catchUpOn = catchUp.on
+  useResume({
+    enabled: active,
+    onResume: (awayMs, hiddenAt) => {
+      if (!viewActive.current) return
+      const d = decideResume({ awayMs, catchUpOn, reopenAfterMs: CATCHUP_AWAY_HOURS * 3_600_000 })
+      if (d.newVisit) reopenVisit(hiddenAt)
+      if (d.redecide) {
+        // Catch-up is decided afresh; the stories load from that decision. The read
+        // marks and the status chip are still brought up to date now.
+        resetCatchUp()
+        void loadReadIds()
+        void refreshPipelineHealth()
+      } else if (d.refresh) {
+        void refresh()
+      }
+    },
+  })
 
   /** Unread / All toggle. Releases held (dwell-read) cards, as before. */
   const toggleUnreadOnly = useCallback(() => {

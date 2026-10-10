@@ -57,5 +57,9 @@ export function useCatchUp({ enabled, visitReady, prevVisit, ready, unreadCount 
   const reason: CatchUpReason | null = mode !== 'on' ? null : decision?.on ? decision.reason ?? 'manual' : 'manual'
 
   const setOn = useCallback((on: boolean) => setOverride(on), [])
-  return { mode, reason, on: mode === 'on', pending: mode === 'pending', setOn }
+  /** Forget the decision and any toggle, as if the app had just been opened (the
+   *  app came back after 24 h or more: see resume.ts). It is made again from the
+   *  previous visit, which the caller has already moved. */
+  const reset = useCallback(() => { setDecision(null); setOverride(null) }, [])
+  return { mode, reason, on: mode === 'on', pending: mode === 'pending', setOn, reset }
 }
