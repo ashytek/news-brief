@@ -54,7 +54,7 @@ export default function ReaderClient() {
     <div className="min-h-screen desk:w-list desk:border-r desk:border-hairline">
       <TopBar>{inSections && <SectionsBar />}</TopBar>
 
-      <main className="mx-auto max-w-2xl px-gutter pb-[calc(var(--spacing-navbar)+env(safe-area-inset-bottom,0px)+1.5rem)] desk:max-w-none desk:pb-10">
+      <main className="mx-auto max-w-2xl px-gutter pb-[calc(var(--spacing-navbar)+env(safe-area-inset-bottom,0px)+1.5rem+var(--player-h,0px))] desk:max-w-none desk:pb-[calc(2.5rem+var(--player-h,0px))]">
         {inSections && settled && <CatchUpToggle feedLabel="Feed" className="mt-3" />}
         {inSections && settled && !catchUp && (
           <FeedToolbar

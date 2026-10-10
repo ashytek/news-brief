@@ -106,7 +106,7 @@ export function ReadingPane() {
       {story ? (
         // Keyed by story: opening another one starts at its top, with fresh sections state.
         <div key={story.id} className="h-full overflow-y-auto overscroll-contain">
-          <div className="mx-auto max-w-[680px] px-8 pb-16 pt-6">
+          <div className="mx-auto max-w-[680px] px-8 pb-[calc(4rem+var(--player-h,0px))] pt-6">
             <StoryCard
               variant="pane"
               defaultOpen

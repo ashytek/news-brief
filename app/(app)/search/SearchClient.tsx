@@ -173,7 +173,7 @@ export default function SearchClient() {
         </div>
       </div>
 
-      <main className="mx-auto max-w-2xl px-gutter pb-[calc(var(--spacing-navbar)+env(safe-area-inset-bottom,0px)+1.5rem)]">
+      <main className="mx-auto max-w-2xl px-gutter pb-[calc(var(--spacing-navbar)+env(safe-area-inset-bottom,0px)+1.5rem+var(--player-h,0px))]">
         {loading && <StorySkeleton count={3} />}
 
         {/* No query yet */}

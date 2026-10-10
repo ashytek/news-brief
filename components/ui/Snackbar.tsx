@@ -45,7 +45,7 @@ export function SnackbarProvider({ children }: { children: ReactNode }) {
       <div
         role="status"
         aria-live="polite"
-        className="pointer-events-none fixed inset-x-gutter bottom-[calc(var(--spacing-navbar)+env(safe-area-inset-bottom,0px))] z-[60] mb-3 flex justify-center desk:bottom-0 desk:left-[calc(var(--spacing-rail)+var(--spacing-gutter))]"
+        className="pointer-events-none fixed inset-x-gutter bottom-[calc(var(--spacing-navbar)+env(safe-area-inset-bottom,0px)+var(--player-h,0px))] z-[60] mb-3 flex justify-center desk:bottom-[var(--player-h,0px)] desk:left-[calc(var(--spacing-rail)+var(--spacing-gutter))]"
       >
         {item && (
           <div className="pointer-events-auto flex min-h-12 w-full max-w-md items-center gap-3 rounded-panel bg-fg-1 py-1 pl-4 pr-1 shadow-snackbar">

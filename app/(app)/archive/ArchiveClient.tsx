@@ -145,7 +145,7 @@ export default function ArchiveClient() {
     <div className="min-h-screen">
       <TopBar />
 
-      <main className="mx-auto max-w-2xl px-gutter pb-[calc(var(--spacing-navbar)+env(safe-area-inset-bottom,0px)+1.5rem)]">
+      <main className="mx-auto max-w-2xl px-gutter pb-[calc(var(--spacing-navbar)+env(safe-area-inset-bottom,0px)+1.5rem+var(--player-h,0px))]">
         <PageHead
           title="Archive"
           meta={view === 'saved' && savedAvailable ? `${savedStories === null ? '…' : savedShown.length} saved` : `${dayLabel} · ${loading ? '…' : stories.length} stories`}

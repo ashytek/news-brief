@@ -135,7 +135,7 @@ export function ListenProvider({ children }: { children: ReactNode }) {
   // The mini player is a fixed bar: pages add this to their bottom padding.
   useEffect(() => {
     const root = document.documentElement
-    root.style.setProperty('--player-h', active ? '64px' : '0px')
+    root.style.setProperty('--player-h', active ? '65px' : '0px')
     return () => { root.style.removeProperty('--player-h') }
   }, [active])
 
