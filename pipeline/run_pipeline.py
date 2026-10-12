@@ -89,6 +89,7 @@ def process_transcripts_and_summarise(items, stats, source_map, retry_delay_rang
     """
     processed = []
     consecutive_failures = 0
+    waiting_count = 0
     MAX_CONSECUTIVE_FAILURES = 3  # abort early if YouTube is 429-ing everything
 
     # The long-recap skip below needs a real duration. Retry items come from
@@ -134,9 +135,18 @@ def process_transcripts_and_summarise(items, stats, source_map, retry_delay_rang
         else:
             transcript_text, status, segments = get_transcripts.fetch_transcript(item, retry_delay_range)
 
-        if status == "failed" and not deferred:
+        # A fresh video Apify says has no captions YET is stored as 'failed' (so the
+        # retry pass picks it up each run until captions appear or it is 48 h old)
+        # but it is an authoritative answer, not an outage: it must not count
+        # towards the abort below, and like any non-failure it resets the streak.
+        waiting = status == get_transcripts.WAITING_FOR_CAPTIONS
+        if waiting:
+            status = "failed"
+            waiting_count += 1
+
+        if status == "failed" and not deferred and not waiting:
             # Only true fetch failures (IP block, network) count toward abort.
-            # skipped_short and no_transcript are intentional outcomes, not errors.
+            # skipped_short, no_transcript and waiting-for-captions are not errors.
             consecutive_failures += 1
             if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
                 print(f"  ⚠ {consecutive_failures} consecutive failures — aborting batch (likely IP rate-limited)")
@@ -198,14 +208,19 @@ def process_transcripts_and_summarise(items, stats, source_map, retry_delay_rang
 
         if transcript_text:
             stats["transcripts_fetched"] += 1
+            if item.get("video_id"):
+                print(f"    ↻ Retry succeeded")
             processed.append({
                 **item,
                 "video_id": video_id,
                 "transcript_text": transcript_text,
                 "segments": segments,
             })
-        else:
+        elif not waiting:
             print(f"    ✗ No transcript")
+
+    if waiting_count:
+        print(f"\n  ⏳ {waiting_count} fresh video(s) waiting for captions (retried once per run)")
 
     # Summarise
     print(f"\n  Summarising {len(processed)} items with Gemini ({GEMINI_FLASH_MODEL})…")
@@ -366,26 +381,52 @@ def recover_missing_stories(stats, source_map):
     return stats
 
 
+# How many 'failed' videos one retry pass may re-fetch. Newest first. Sized so the
+# fresh videos waiting for captions (up to ~16 at a heavy 8/day) can't push the
+# other retryable ones out, while a bad day still costs at most 25 Apify
+# fetches (~$0.025) per run.
+RETRY_PASS_LIMIT = 25
+
+
+def _failed_videos_to_retry(limit: int = RETRY_PASS_LIMIT) -> list:
+    """The videos the retry pass should re-fetch, newest first.
+
+    A fresh video found to have no captions yet EARLIER IN THIS RUN is left
+    out: it was fetched minutes ago and has just been written as 'failed', so
+    fetching it again would be a second paid call for the same answer. Hence at
+    most one Apify fetch per waiting video per run. The database is asked for
+    more than `limit` so those skipped don't shrink the batch.
+    """
+    rows = db.get_failed_videos(limit=max(50, limit))
+    return [v for v in rows if not get_transcripts.already_tried_waiting(v.get("url"))][:limit]
+
+
+def _retry_item(v: dict) -> dict:
+    """A `videos` row in the shape process_transcripts_and_summarise expects."""
+    return {
+        "video_id": v["id"],
+        "source_id": v["source_id"],
+        "external_id": v["external_id"],
+        "title": v["title"],
+        "url": v["url"],
+        "published_at": v["published_at"],
+        "created_at": v.get("created_at"),   # first-seen time: the age fallback if published_at is missing
+        "transcript_status": v["transcript_status"],
+    }
+
+
 def retry_failed():
     """Re-process all videos that previously failed transcript extraction."""
     print(f"\n{'='*60}")
     print(f"🔄 Retrying failed transcripts at {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}")
     print(f"{'='*60}")
 
-    failed = db.get_failed_videos(limit=50)
+    failed = _failed_videos_to_retry(limit=50)
     if failed:
         print(f"  Found {len(failed)} failed videos to retry\n")
         source_map = {s["id"]: s for s in db.get_active_sources()}
         stats = {"transcripts_fetched": 0, "stories_created": 0}
-        items = [{
-            "video_id": v["id"],
-            "source_id": v["source_id"],
-            "external_id": v["external_id"],
-            "title": v["title"],
-            "url": v["url"],
-            "published_at": v["published_at"],
-            "transcript_status": v["transcript_status"],
-        } for v in failed]
+        items = [_retry_item(v) for v in failed]
         stats = process_transcripts_and_summarise(items, stats, source_map)
         print(f"\n✅ Retry done! {stats['stories_created']} stories created")
     else:
@@ -497,18 +538,10 @@ def run_once():
         # ── Step 5: Retry previously failed transcripts (AFTER new items) ─
         # Moved to end so fresh videos are never starved by the retry burst.
         # Uses a longer jitter (10-20s) to avoid re-triggering IP rate limits.
-        failed = db.get_failed_videos(limit=10)
+        failed = _failed_videos_to_retry()
         if failed:
             print(f"\n[5/5] Retrying {len(failed)} previously failed transcripts…")
-            retry_items = [{
-                "video_id": v["id"],
-                "source_id": v["source_id"],
-                "external_id": v["external_id"],
-                "title": v["title"],
-                "url": v["url"],
-                "published_at": v["published_at"],
-                "transcript_status": v["transcript_status"],
-            } for v in failed]
+            retry_items = [_retry_item(v) for v in failed]
             # Explicit override, not a monkey-patch of the global `random`
             # module — the old approach also stretched unrelated jitter in
             # llm.py/cluster.py's backoff sleeps for the duration of the

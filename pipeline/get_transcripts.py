@@ -24,6 +24,7 @@ import os
 import re
 import time
 import random
+from datetime import datetime, timezone
 import requests
 from bs4 import BeautifulSoup
 
@@ -36,6 +37,7 @@ import db
 from config import (
     ASSEMBLYAI_API_KEY, YOUTUBE_COOKIES_FILE, YOUTUBE_BROWSER,
     MIN_VIDEO_DURATION_SECONDS, APIFY_TOKEN, APIFY_TRANSCRIPT_ACTOR, APIFY_CAPTION_LANGUAGES,
+    NO_CAPTIONS_RETRY_HOURS,
 )
 
 # ---------------------------------------------------------------------------
@@ -109,15 +111,24 @@ _fetcher_success_counts: dict[str, int] = {}
 # So the "local fetchers skipped" note prints once per run, not once per video.
 _local_skip_noted = False
 
+# YouTube ids of fresh videos that Apify said have no captions YET, handled in
+# this run. run_pipeline's retry pass skips them (see already_tried_waiting) so a
+# waiting video costs at most ONE Apify fetch per run: it is fetched when first
+# seen, written as 'failed', and would otherwise be fetched again straight away
+# by the retry pass of the same run.
+_waiting_this_run: set[str] = set()
+
 
 def reset_run_state():
     """Reset per-run counters. Called by run_pipeline at the start of each cycle."""
     global _rate_limit_streak, _last_rate_limit_at, _audio_fallback_count, _fetcher_success_counts, _local_skip_noted
+    global _waiting_this_run
     _rate_limit_streak = 0
     _last_rate_limit_at = 0.0
     _audio_fallback_count = 0
     _fetcher_success_counts = {}
     _local_skip_noted = False
+    _waiting_this_run = set()
 
 
 def _on_ci() -> bool:
@@ -263,6 +274,17 @@ class PermanentNoTranscript(Exception):
     """Raised when a video will never have a usable transcript."""
 
 
+class NoCaptionsAvailable(PermanentNoTranscript):
+    """Apify's NO_CAPTIONS_AVAILABLE: the video has no caption track right now.
+
+    Permanent for an old video, but a fresh one often gets auto-captions some
+    hours after upload, so fetch_transcript keeps a video younger than
+    NO_CAPTIONS_RETRY_HOURS retryable instead of marking it permanent.
+    Subclasses PermanentNoTranscript so every other caller still treats it as
+    a permanent verdict.
+    """
+
+
 def is_permanent_error(msg: str) -> bool:
     msg_lower = msg.lower()
     # If it looks retryable (IP block, rate limit), never treat as permanent
@@ -343,7 +365,10 @@ def _parse_vtt(vtt: str) -> tuple[str, list]:
 #   returns (plain, segments)      → success
 #   returns None                   → transport/temporary error (retry later,
 #                                    caller falls through to local fetchers)
-#   raises PermanentNoTranscript   → actor confirmed the video has no captions
+#   raises NoCaptionsAvailable     → actor says the video has no captions (a
+#   (a PermanentNoTranscript)        PermanentNoTranscript; fetch_transcript keeps
+#                                    it retryable while the video is < 48 h old)
+#   raises PermanentNoTranscript   → the transcript came back empty
 
 def _get_transcript_apify(video_id: str) -> tuple[str, list] | None:
     if not APIFY_TOKEN:
@@ -398,10 +423,11 @@ def _get_transcript_apify(video_id: str) -> tuple[str, list] | None:
     error_code = item.get("error_code")
     if error_code:
         if error_code == "NO_CAPTIONS_AVAILABLE":
-            # Professional scraper confirmed: video has no caption tracks.
-            # (Fresh videos may grow auto-captions later — the audio fallback
-            # for <48h videos catches those before we mark permanent.)
-            raise PermanentNoTranscript(f"Apify: {error_code}")
+            # Professional scraper confirmed: the video has no caption track.
+            # Fresh videos often grow auto-captions some hours later, so
+            # fetch_transcript decides by age whether this is final (the audio
+            # fallback that used to be the second chance can't run on Actions).
+            raise NoCaptionsAvailable(f"Apify: {error_code}")
         # LANGUAGE_NOT_FOUND = captions exist but not in our requested
         # languages — yt-dlp's android path can often grab YouTube's
         # auto-TRANSLATED English track, so fall through rather than kill.
@@ -787,15 +813,55 @@ def get_article_text(url: str, title: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# Fresh videos with no captions yet
+# ---------------------------------------------------------------------------
+
+# In-memory status fetch_transcript returns for such a video (see its docstring).
+WAITING_FOR_CAPTIONS = "waiting_captions"
+
+
+def _parse_timestamp(value) -> datetime | None:
+    """ISO-8601 string (or datetime) → aware UTC datetime; None if unusable."""
+    if not value:
+        return None
+    try:
+        dt = value if isinstance(value, datetime) else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _video_age_hours(video: dict) -> float | None:
+    """Hours since the video was published; falls back to when we first saw it
+    (created_at) if published_at is missing. None when neither is usable."""
+    for key in ("published_at", "created_at"):
+        dt = _parse_timestamp(video.get(key))
+        if dt is not None:
+            return max(0.0, (datetime.now(timezone.utc) - dt).total_seconds() / 3600)
+    return None
+
+
+def already_tried_waiting(url: str) -> bool:
+    """True if this run already fetched the video at `url` and found it has no
+    captions yet — the retry pass skips it so it costs one Apify fetch per run."""
+    vid = extract_video_id(url or "")
+    return bool(vid) and vid in _waiting_this_run
+
+
+# ---------------------------------------------------------------------------
 # Entry point called by run_pipeline.py
 # ---------------------------------------------------------------------------
 
 def fetch_transcript(video: dict, retry_delay_range: tuple[float, float] | None = None) -> tuple:
     """
     Returns (transcript_text, status, segments).
-    status: fetched | not_applicable | failed | no_transcript
+    status: fetched | not_applicable | failed | no_transcript | skipped_short | waiting_captions
       'failed'        → retryable (IP block, network error)
       'no_transcript' → permanent (captions disabled on this video)
+      'waiting_captions' → NOT a database status: a fresh video that has no captions
+                        YET. The caller stores it as 'failed' (so the retry pass picks
+                        it up) but must not count it towards the 3-failure abort — it
+                        is an authoritative answer from Apify, not an outage.
 
     retry_delay_range overrides the pre-request jitter window (e.g. a wider
     window when retrying previously-failed videos) — see
@@ -851,6 +917,17 @@ def fetch_transcript(video: dict, retry_delay_range: tuple[float, float] | None 
         audio = _try_audio_fallback(url, reason="no captions")
         if audio is not None:
             return audio
+        # A FRESH video with no caption track may simply not have its
+        # auto-captions yet (YouTube adds them some hours after upload). Keep
+        # it retryable instead of losing it for good; the retry pass tries it
+        # once per run until captions appear or it is NO_CAPTIONS_RETRY_HOURS old.
+        if isinstance(e, NoCaptionsAvailable):
+            age_h = _video_age_hours(video)
+            if age_h is not None and age_h < NO_CAPTIONS_RETRY_HOURS:
+                _waiting_this_run.add(vid_id)
+                print(f"    ⏳ No captions yet, published {age_h:.0f}h ago: will retry "
+                      f"(until {NO_CAPTIONS_RETRY_HOURS:.0f}h)")
+                return None, WAITING_FOR_CAPTIONS, []
         if video_id:
             db.mark_video_permanent_failure(video_id)
         return None, "no_transcript", []

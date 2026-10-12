@@ -54,6 +54,17 @@ MIN_VIDEO_DURATION_SECONDS = 120
 # skip check in run_pipeline.py's process_transcripts_and_summarise().
 MAX_VANTAGE_RECAP_SECONDS = 20 * 60
 
+# A video that Apify reports as NO_CAPTIONS_AVAILABLE is only marked permanent
+# once it is at least this many hours old. YouTube often adds auto-captions
+# some hours after upload, so a fresher video stays 'failed' (retried free of
+# the 3-failure abort, at most once per run) until captions appear or it ages
+# out. The audio fallback that used to be the second chance cannot run on
+# GitHub Actions. See get_transcripts.fetch_transcript.
+try:
+    NO_CAPTIONS_RETRY_HOURS = float(os.environ.get("NO_CAPTIONS_RETRY_HOURS", "48"))
+except ValueError:   # a typo in the env must not stop the pipeline importing; 0 restores the old behaviour
+    NO_CAPTIONS_RETRY_HOURS = 48.0
+
 # Max walkthrough sections per story. Sections are chronological beats
 # (~4-6 for a 5-min Vantage segment, 6-9 for a 10-min piece) — 10 leaves
 # headroom without letting Flash ramble.
