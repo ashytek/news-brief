@@ -52,10 +52,20 @@ export function movedByAppRecently(): boolean {
   return Date.now() - movedAt < 1500
 }
 
+/** Say that the app itself is moving content (a swipe, a fade-out): see `movedByAppRecently`. */
+export function markMoved() {
+  movedAt = Date.now()
+}
+
+/** The reader asked their device for less motion: nothing animates, everything still works. */
+export function reducedMotion(): boolean {
+  return typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+}
+
 /** Scroll the window so `el` starts right under the top bar. */
 export function toTop(el: Element) {
   const y = window.scrollY + el.getBoundingClientRect().top - barBottom()
-  movedAt = Date.now()
+  markMoved()
   // The two-argument form: no `behavior` (older Safari rejects 'instant'); the page has no
   // smooth scroll-behavior, so this jumps, which is what we want (the list already changed).
   window.scrollTo(0, Math.max(0, Math.round(y)))
@@ -96,4 +106,140 @@ export function revealAfterUndo(find: () => Element | null) {
     if (r.top < barBottom() || r.top > window.innerHeight - 80) toTop(el)
   }
   afterPaint(look)
+}
+
+// ── Leaving (roadmap session 11) ─────────────────────────────────────────────
+
+/** How long an item takes to fade and fold away before the list changes. */
+export const LEAVE_MS = 180
+
+const leaving = new WeakMap<Element, Animation>()
+
+/** True while `leave` is fading this item (it has not been taken out of the list yet). */
+export function isLeaving(el: Element): boolean {
+  return leaving.has(el)
+}
+
+/** Put a faded or swiped item back as it was (the list did not take it away after all). */
+function restore(el: HTMLElement) {
+  leaving.get(el)?.cancel()
+  leaving.delete(el)
+  el.style.overflowY = ''
+  swipeReset(el)
+}
+
+/**
+ * Take an item out of the list gently: it fades and folds away (opacity and height, 180 ms),
+ * then `commit` runs (the state change that really removes it; callers bring the next item
+ * to the top after that, as before). With reduced motion, no Web Animations, or nothing to
+ * animate, `commit` runs at once. A second call for an item already leaving does nothing.
+ *
+ * The fold only happens when the item's top is on screen: an item you have scrolled into the
+ * middle of (its top above the bar) only fades, because folding it would slide everything
+ * below it up past the bar and the scroll to the next item would bring it back.
+ *
+ * If the list does not take the item away (it was already read, the write is refused, an
+ * Archive row), it is restored once the change has been painted.
+ */
+export function leave(el: HTMLElement | null, commit: () => void) {
+  if (!el || !el.isConnected || leaving.has(el) || reducedMotion() || typeof el.animate !== 'function') {
+    if (!el || !leaving.has(el)) commit()
+    return
+  }
+  markMoved()
+  const cs = getComputedStyle(el)
+  const rect = el.getBoundingClientRect()
+  const fold = rect.top >= barBottom() - 1
+  const from: Keyframe = { opacity: Number(cs.opacity) || 1 }
+  const to: Keyframe = { opacity: 0 }
+  if (fold) {
+    Object.assign(from, {
+      height: `${rect.height}px`, paddingTop: cs.paddingTop, paddingBottom: cs.paddingBottom,
+      marginTop: cs.marginTop, marginBottom: cs.marginBottom, borderTopWidth: cs.borderTopWidth, borderBottomWidth: cs.borderBottomWidth,
+    })
+    Object.assign(to, {
+      height: '0px', paddingTop: '0px', paddingBottom: '0px', marginTop: '0px', marginBottom: '0px', borderTopWidth: '0px', borderBottomWidth: '0px',
+    })
+    // `clip`, not `hidden`: hidden would also clip sideways and cut the swipe's "Mark read" layer.
+    el.style.overflowY = 'clip'
+  }
+  const anim = el.animate([from, to], { duration: LEAVE_MS, easing: 'ease-out', fill: 'forwards' })
+  leaving.set(el, anim)
+  let done = false
+  const finish = () => {
+    if (done) return
+    done = true
+    commit()
+    // The list has taken it away by now, or it never will: put back whatever is still here.
+    afterPaint(() => { if (el.isConnected) restore(el); else leaving.delete(el) })
+  }
+  anim.onfinish = finish
+  anim.oncancel = finish
+  setTimeout(finish, LEAVE_MS + 150)   // a hidden tab pauses animations: the tap still counts
+}
+
+// ── Swipe layer (roadmap session 11) ─────────────────────────────────────────
+
+const LAYER = ':scope > [data-swipe-layer]'
+
+/** Slide an item `tx` px (negative = left) and show the "Mark read" layer in the strip it
+ *  uncovers: the layer hangs off the item's right edge, so it is exactly as wide as the
+ *  strip plus the page gutter. */
+export function swipeApply(el: HTMLElement, tx: number, gutter: number, armed = false) {
+  el.style.transform = tx === 0 ? '' : `translate3d(${tx}px,0,0)`
+  const layer = el.querySelector<HTMLElement>(LAYER)
+  if (!layer) return
+  layer.style.display = 'flex'
+  layer.style.width = `${Math.max(0, -tx + gutter)}px`
+  layer.dataset.armed = armed ? 'true' : 'false'
+}
+
+/** Back to rest: no transform, no layer, text selectable again. */
+export function swipeReset(el: HTMLElement) {
+  el.style.transform = ''
+  el.style.willChange = ''
+  el.style.userSelect = ''
+  el.style.setProperty('-webkit-user-select', '')
+  const layer = el.querySelector<HTMLElement>(LAYER)
+  if (!layer) return
+  layer.style.display = ''
+  layer.style.width = ''
+  delete layer.dataset.armed
+}
+
+// ── Scrolling past (roadmap session 11) ──────────────────────────────────────
+
+/** Ids of the cards that are entirely above the visible area (their bottom is above the
+ *  top bar's bottom edge) and ask to be released (`data-release`: a dwell-read card). */
+export function scrolledPastIds(): string[] {
+  const bottom = barBottom()
+  const ids: string[] = []
+  for (const el of document.querySelectorAll<HTMLElement>('[data-release]')) {
+    if (el.getBoundingClientRect().bottom <= bottom) ids.push(...(el.dataset.release ?? '').split(' ').filter(Boolean))
+  }
+  return ids
+}
+
+/**
+ * Call just before something above the screen is taken out of the page. The returned function,
+ * called in a layout effect after the change (before the browser paints), scrolls by exactly
+ * as much as the content you are looking at moved, so nothing visibly jumps. Safari on iOS has
+ * no CSS scroll anchoring, so this is done by hand; where the browser has already compensated
+ * the difference is zero and nothing is done.
+ */
+export function anchorView(): () => void {
+  const bottom = barBottom()
+  let anchor: HTMLElement | null = null
+  for (const el of document.querySelectorAll<HTMLElement>(FLOW)) {
+    if (el.getBoundingClientRect().bottom > bottom + 1) { anchor = el; break }
+  }
+  if (!anchor) return () => {}
+  const sel = selectorOf(anchor)
+  const top = anchor.getBoundingClientRect().top
+  return () => {
+    const now = anchor.isConnected ? anchor : sel ? document.querySelector<HTMLElement>(sel) : null
+    if (!now) return
+    const delta = now.getBoundingClientRect().top - top
+    if (Math.abs(delta) >= 1) window.scrollTo(0, Math.max(0, Math.round(window.scrollY + delta)))
+  }
 }

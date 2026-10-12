@@ -9,7 +9,7 @@ import type { StoryActions } from '@/components/story/types'
 import { useReader } from '@/lib/reader/ReaderProvider'
 import { recapDate, sourceCounts, type StorylineEntry } from '@/lib/reader/catchUp'
 import { useDwellVisibility } from '@/lib/useDwellVisibility'
-import { afterPaint, keepFlow } from '@/lib/reader/flow'
+import { afterPaint, keepFlow, leave } from '@/lib/reader/flow'
 
 /** A developing story, open: kicker, title, who reported it, the recap (So far, by
  *  day; New on <latest day>; where the reports differ), then "See all N reports"
@@ -30,6 +30,7 @@ export function StorylineCard({ entry, actionsFor, showCategory, onCollapse }: {
   const [listOpen, setListOpen] = useState(!recap)
   const [fullDays, setFullDays] = useState<Set<string>>(new Set())
   const allRead = unreadIds.length === 0
+  const heldIds = members.filter(m => r.heldIds.has(m.id)).map(m => m.id)
   const counts = sourceCounts(members, id => r.sources[id]?.name)
 
   // The dwell hook binds its callbacks once, so what to mark is read through a ref.
@@ -46,10 +47,16 @@ export function StorylineCard({ entry, actionsFor, showCategory, onCollapse }: {
   // Mark all read: the story leaves the catch-up and the next item comes to the top of
   // the screen (Ash, 10 Oct 2026). Undo brings it back into view.
   const markAll = (e: MouseEvent<HTMLElement>) => {
-    const bringNext = keepFlow(e.currentTarget.closest('[data-flow]'))
+    const card = e.currentTarget.closest<HTMLElement>('[data-flow]')
+    const bringNext = keepFlow(card)
     const id = storyline.id
-    void r.markManyReadUndoable(unreadIds, { reveal: () => document.querySelector(`[data-flow][data-storyline-id="${CSS.escape(id)}"]`) })
-    afterPaint(bringNext)
+    const commit = () => {
+      void r.markManyReadUndoable(unreadIds, { reveal: () => document.querySelector(`[data-flow][data-storyline-id="${CSS.escape(id)}"]`) })
+      afterPaint(bringNext)
+    }
+    // It fades and folds away first, unless a saved story stays (exempt from bulk marks).
+    if (unreadIds.some(uid => r.saved.ids.has(uid))) commit()
+    else leave(card, commit)
   }
 
   const covers = recap && storyline.recap_story_count > 0 && storyline.recap_story_count < storyline.story_count
@@ -59,6 +66,8 @@ export function StorylineCard({ entry, actionsFor, showCategory, onCollapse }: {
       ref={dwellRef}
       data-storyline-id={storyline.id}
       data-flow
+      // Read by the recap's dwell and still shown, dimmed: let go once scrolled past (session 11).
+      {...(heldIds.length > 0 && allRead ? { 'data-release': heldIds.join(' ') } : {})}
       className="my-2 flex flex-col rounded-panel bg-surface-1 p-4"
     >
       <div className="mb-2 flex min-w-0 items-center gap-2">
@@ -135,12 +144,13 @@ export function StorylineCard({ entry, actionsFor, showCategory, onCollapse }: {
       </div>
 
       {listOpen && (
-        <div className="mt-3 border-t border-hairline">
+        <div data-keeps-read className="mt-3 border-t border-hairline">
           {members.map(m => (
             <StoryListItem
               key={m.id}
               story={m}
               compact
+              clock="daytime"
               sourceName={r.sources[m.source_id]?.name}
               showCategory={showCategory}
               actions={actionsFor(m)}

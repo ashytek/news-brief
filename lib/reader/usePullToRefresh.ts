@@ -21,11 +21,15 @@ export function usePullToRefresh({ loading, onRefresh }: { loading: boolean; onR
         onRefresh().finally(() => setPullRefreshing(false))
       }
     }
+    // A card swiped sideways (swipe to mark read) is not a pull, however far it drifted down.
+    const onSwipe = () => { pullStartY.current = null }
     window.addEventListener('touchstart', onTouchStart, { passive: true })
     window.addEventListener('touchend', onTouchEnd, { passive: true })
+    window.addEventListener('nb-swipe-lock', onSwipe)
     return () => {
       window.removeEventListener('touchstart', onTouchStart)
       window.removeEventListener('touchend', onTouchEnd)
+      window.removeEventListener('nb-swipe-lock', onSwipe)
     }
   }, [onRefresh, loading, pullRefreshing])
 

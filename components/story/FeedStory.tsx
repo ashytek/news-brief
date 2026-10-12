@@ -28,6 +28,7 @@ export function FeedStory({ first, ...card }: ComponentProps<typeof StoryCard> &
         showCategory={card.showCategory}
         compact={density === 'compact'}
         actions={card.actions}
+        swipeToRead
         paneFallback={first}
       />
     )

@@ -7,7 +7,10 @@ import { displayHeadline, estimateReadMinutes, formatRelativeDate, isRoundUp, mi
 import { CategoryMark } from './CategoryMark'
 import { StoryThumb } from './StoryThumb'
 import { Highlight } from './Highlight'
+import { LocalTime } from './LocalTime'
+import { SwipeLayer } from './SwipeLayer'
 import { cx } from './cx'
+import { useSwipeToRead } from '@/lib/useSwipeToRead'
 
 /** A story as one compact row: kicker, serif headline, two-line dek, meta (led by
  *  the unread dot or a "Read" tag), and a 104 px thumbnail. Used wherever a list of stories should scan quickly
@@ -16,7 +19,7 @@ import { cx } from './cx'
  *  reveals `children` (the short card) below the row; while open the dek is
  *  dropped, because the short card's lead says the same thing. */
 export function StoryRow({
-  story, sourceName, isRead = false, saved = false, showCategory = false, compact = false, kickerExtra, highlight, expanded, onToggle, selected, onSelect, children,
+  story, sourceName, isRead = false, saved = false, showCategory = false, compact = false, kickerExtra, highlight, clock, onSwipeRead, expanded, onToggle, selected, onSelect, children,
 }: {
   story: StoryWithRelations
   sourceName?: string
@@ -31,6 +34,13 @@ export function StoryRow({
   kickerExtra?: ReactNode
   /** Search words to mark in the headline and dek. */
   highlight?: string
+  /** Show when it was published as a time of day in the viewer's time zone ("14:05"), not
+   *  "23h ago": for rows that sit under a day heading in the catch-up. `daytime` adds the day
+   *  ("Yesterday 14:05") for a list that spans days (a developing story's reports). */
+  clock?: 'time' | 'daytime'
+  /** Swipe right to left marks the row read (touch only). Give it where reading takes the
+   *  row out of the list; omit it where the row stays (Search, Archive, a report list). */
+  onSwipeRead?: () => void
   /** Only meaningful with `onToggle`. */
   expanded?: boolean
   onToggle?: () => void
@@ -53,13 +63,19 @@ export function StoryRow({
   const sections = story.bullets?.[0]?.title ? story.bullets.length : 0
   const isNew = minutesSince(video?.published_at) < 60
   const hasThumb = !!video?.thumbnail_url
+  // The day the row is listed under is made from the same date (published, else created).
+  const when = video?.published_at ?? (clock ? story.created_at : undefined)
+  const swipeOn = !!onSwipeRead && !isRead && !onSelect
+  const swipe = useSwipeToRead({ enabled: swipeOn, onRead: onSwipeRead ?? (() => {}) })
 
   return (
     <article
       data-flow=""
       data-story-id={story.id}
       {...(onSelect ? { 'data-pane-row': '' } : {})}
+      {...(swipeOn ? swipe.handlers : {})}
       className={cx(
+        swipe.className,
         'relative grid gap-x-3.5 gap-y-1.5 border-b border-hairline py-4 last:border-b-0 [overflow-wrap:anywhere]',
         hasThumb ? (compact ? 'grid-cols-[minmax(0,1fr)_88px]' : 'grid-cols-[minmax(0,1fr)_104px]') : 'grid-cols-1',
         // A pane row is a button-like tile: padded so the selected background has room.
@@ -121,7 +137,9 @@ export function StoryRow({
               <span className="sr-only">Unread</span>
             </>
           )}
-          {video?.published_at && <time dateTime={video.published_at}>{formatRelativeDate(video.published_at)}</time>}
+          {when && (clock
+            ? <LocalTime iso={when} variant={clock} />
+            : video?.published_at && <time dateTime={video.published_at}>{formatRelativeDate(video.published_at)}</time>)}
           <span aria-hidden="true">·</span>
           <span>{readMins} min read</span>
           {saved && (
@@ -142,6 +160,7 @@ export function StoryRow({
       {hasThumb && <StoryThumb story={story} isRead={isRead} size={compact ? 'compact' : 'row'} className="relative z-10 mt-0.5 self-start" />}
 
       {expanded && children && <div className="col-span-full pt-2">{children}</div>}
+      {swipeOn && <SwipeLayer />}
     </article>
   )
 }

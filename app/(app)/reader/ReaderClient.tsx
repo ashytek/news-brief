@@ -47,12 +47,15 @@ export default function ReaderClient() {
   const catchUp = r.catchUp.on
   const settled = !r.catchUp.pending   // the toggle and toolbar wait for the automatic decision
   const desk = useDesk()
+  // Today's brief progress for the line on the top bar: read / 12, only while the brief is showing.
+  const briefShowing = activeTab === 'today' && !catchUp && settled && !r.loading && !r.loadError && r.todayRanked.length > 0
+  const briefProgress = briefShowing ? r.todayRanked.filter(item => r.readIds.has(item.data.id)).length / r.todayRanked.length : null
 
   return (
     <ReadingPaneProvider enabled={desk} scope={`${activeTab}:${catchUp}`}>
     {/* From 1180 px: this is the list column (440 px, beside the rail); the story opens in the pane. */}
     <div className="min-h-screen desk:w-list desk:border-r desk:border-hairline">
-      <TopBar>{inSections && <SectionsBar />}</TopBar>
+      <TopBar progress={briefProgress}>{inSections && <SectionsBar />}</TopBar>
 
       <main className="mx-auto max-w-2xl px-gutter pb-[calc(var(--spacing-navbar)+env(safe-area-inset-bottom,0px)+1.5rem+var(--player-h,0px))] desk:max-w-none desk:pb-[calc(2.5rem+var(--player-h,0px))]">
         {inSections && settled && <CatchUpToggle feedLabel="Feed" className="mt-3" />}

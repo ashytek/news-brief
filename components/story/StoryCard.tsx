@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Bookmark, Check } from 'lucide-react'
 import type { Source, StoryWithRelations } from '@/lib/types'
 import { CategoryMark, StoryThumb, cx } from '@/components/ui'
+import { SwipeLayer } from '@/components/ui/SwipeLayer'
+import { useSwipeToRead } from '@/lib/useSwipeToRead'
 import { useDwellVisibility } from '@/lib/useDwellVisibility'
 import { displayHeadline, estimateReadMinutes, formatRelativeDate, isRoundUp, minutesSince, readShort } from '@/lib/format'
 import { ShortBody } from './ShortBody'
@@ -64,6 +66,9 @@ export function StoryCard({
 
   const isLead = variant === 'lead'
   const isPane = variant === 'pane'
+  // Swipe right to left = Mark read (touch only; not the desktop pane, not a read card).
+  const swipeOn = !isPane && !isRead && !!actions.canSwipe
+  const swipe = useSwipeToRead({ enabled: swipeOn, onRead: actions.onRead })
   const isNew = minutesSince(video?.published_at) < 60
 
   const kicker = (
@@ -120,7 +125,9 @@ export function StoryCard({
       ref={dwellRef}
       data-story-id={story.id}
       {...(isPane ? {} : { 'data-flow': '' })}
-      className={cx('story-card card-cv flex flex-col border-b border-hairline py-5', isLead && 'pt-1', isPane && 'border-b-0 py-0')}
+      {...(!isPane && actions.held ? { 'data-release': story.id } : {})}
+      {...(swipeOn ? swipe.handlers : {})}
+      className={cx('story-card card-cv relative flex flex-col border-b border-hairline py-5', isLead && 'pt-1', isPane && 'border-b-0 py-0', swipe.className)}
     >
       {isPane ? (
         <>
@@ -157,6 +164,7 @@ export function StoryCard({
         sectionsOpen={sectionsOpen}
         onToggleSections={() => setSectionsOpen(v => !v)}
       />
+      {swipeOn && <SwipeLayer />}
     </article>
   )
 }

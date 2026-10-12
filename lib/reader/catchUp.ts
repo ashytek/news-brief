@@ -75,6 +75,19 @@ export function dayHeading(key: string, now: Date): string {
   return d ? `${WEEKDAYS[d.getDay()]} ${shortDate(d)}` : key
 }
 
+/** "14:05": the 24-hour time of day (the viewer's time zone), for the rows of the catch-up
+ *  that sit under a day heading (roadmap session 11). */
+export function clockTime(iso: string | number | Date): string {
+  const d = new Date(iso)
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+/** "Yesterday 14:05", "Sat 3 Oct 14:05": the day and the time, for a list that spans days
+ *  (a developing story's reports). */
+export function dayClock(iso: string | number | Date, now: Date = new Date()): string {
+  return `${dayHeading(localDayKey(iso), now)} ${clockTime(iso)}`
+}
+
 /** "29 Sep – 2 Oct", or "2 Oct" when it is one day. */
 export function dateRange(first: string | null | undefined, last: string | null | undefined): string {
   const a = first ? new Date(first) : null

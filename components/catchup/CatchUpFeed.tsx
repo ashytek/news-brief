@@ -7,7 +7,7 @@ import { StorySkeleton } from '@/components/story/StorySkeleton'
 import { useStoryActions } from '@/components/story/useStoryActions'
 import { Button, DividerLabel, StateMessage } from '@/components/ui'
 import { useReader } from '@/lib/reader/ReaderProvider'
-import { afterPaint, keepFlow, toTop } from '@/lib/reader/flow'
+import { afterPaint, keepFlow, leave, toTop } from '@/lib/reader/flow'
 import { CatchUpNotice } from './CatchUpNotice'
 import { StorylineCard } from './StorylineCard'
 import { StorylineRow } from './StorylineRow'
@@ -35,10 +35,16 @@ export function CatchUpFeed() {
     })
   }
   // Mark day read: the day leaves and the next day comes to the top of the screen.
+  // The day fades and folds away first (roadmap session 11), unless a saved story will stay
+  // in it (saved stories are exempt from bulk marks), when the day only shrinks.
   const markDay = (el: Element | null, key: string, ids: string[]) => {
     const bringNext = keepFlow(el)
-    void r.markManyReadUndoable(ids, { reveal: () => document.querySelector(`[data-flow][data-day="${CSS.escape(key)}"]`) })
-    afterPaint(bringNext)
+    const commit = () => {
+      void r.markManyReadUndoable(ids, { reveal: () => document.querySelector(`[data-flow][data-day="${CSS.escape(key)}"]`) })
+      afterPaint(bringNext)
+    }
+    if (ids.some(id => r.saved.ids.has(id))) commit()
+    else leave(el as HTMLElement | null, commit)
   }
 
   const body = (() => {
@@ -94,6 +100,8 @@ export function CatchUpFeed() {
                 key={story.id}
                 story={story}
                 compact
+                clock="time"
+                swipeToRead
                 sourceName={r.sources[story.source_id]?.name}
                 showCategory={showCategory}
                 actions={actionsFor(story)}

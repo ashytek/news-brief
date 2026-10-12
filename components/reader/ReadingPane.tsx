@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Newspaper } from 'lucide-react'
 import type { StoryWithRelations } from '@/lib/types'
 import { StoryCard } from '@/components/story/StoryCard'
@@ -101,6 +101,29 @@ export function ReadingPane() {
   const story = useContext(CurrentCtx)
   const actionsFor = useStoryActions({ canMute: true })
 
+  // m: mark the story in the pane read and move on to the next one: the very path of the
+  // pane's Mark read button (roadmap session 11). Like j / k it ignores typing, dialogs and
+  // modifier keys; it also ignores a held-down key (that would read the whole list) and a
+  // story that is already read.
+  const latest = useRef({ story, actionsFor })
+  useLayoutEffect(() => { latest.current = { story, actionsFor } })
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.repeat || e.metaKey || e.ctrlKey || e.altKey || e.key !== 'm') return
+      const t = e.target as HTMLElement | null
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return
+      if (document.querySelector('dialog[open]')) return
+      const { story: shown, actionsFor: actionsOf } = latest.current
+      if (!shown) return
+      const actions = actionsOf(shown)
+      if (actions.isRead) return
+      e.preventDefault()
+      actions.onRead()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   return (
     <section
       aria-label="Story"
@@ -129,7 +152,7 @@ export function ReadingPane() {
               <Newspaper className="size-6" />
             </span>
             <p className="t-h3">Pick a story</p>
-            <p className="t-meta mt-1">It opens here. Use j and k to move down and up the list.</p>
+            <p className="t-meta mt-1">It opens here. Use j and k to move down and up the list, and m to mark a story read.</p>
           </div>
         </div>
       )}

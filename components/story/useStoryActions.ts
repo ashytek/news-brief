@@ -1,13 +1,15 @@
 'use client'
 
 import { useCallback } from 'react'
+import { usePathname } from 'next/navigation'
 import type { StoryWithRelations } from '@/lib/types'
 import { useReader } from '@/lib/reader/ReaderProvider'
 import { useSnackbar } from '@/components/ui'
 import { useListen } from '@/lib/listen/ListenProvider'
 import { copyText } from '@/lib/clipboard'
 import { geminiPrompt, storySummaryText } from '@/lib/format'
-import { afterPaint, flowItemOf, keepFlow } from '@/lib/reader/flow'
+import { afterPaint, flowItemOf, keepFlow, leave } from '@/lib/reader/flow'
+import { isSection } from '@/lib/reader/types'
 import { useReadingPane } from '@/components/reader/ReadingPane'
 import type { StoryActions } from './types'
 
@@ -32,12 +34,21 @@ export function useStoryActions({ canMute = false }: { canMute?: boolean } = {})
   const listen = useListen()
   const snackbar = useSnackbar()
   const pane = useReadingPane()
+  // Where tapping Mark read takes the story out of the list: Today, the Unread view of a
+  // section, and the catch-up. It stays in the Sections All view (read stories sink), in
+  // Topics, in Search and Archive, and (`data-keeps-read`) in a developing story's report list.
+  const onReader = usePathname().startsWith('/reader')
+  const { activeTab, showUnreadOnly } = r
+  const catchUpOn = r.catchUp.on
+  const leaves = onReader && activeTab !== 'topics' && (catchUpOn || !isSection(activeTab) || showUnreadOnly)
   return useCallback((story: StoryWithRelations): StoryActions => {
     const topics = story.matched_topics ?? []
     const sourceName = r.sources[story.source_id]?.name
     const listening = listen.status !== 'idle' && listen.current?.story.id === story.id
     return {
       isRead: r.readIds.has(story.id),
+      held: !pane && leaves && r.heldIds.has(story.id),
+      canSwipe: !pane && leaves && !r.readIds.has(story.id),
       reaction: r.reactions.get(story.id),
       // Done with it: the story leaves the list and the next one comes to the top of the
       // screen (Ash, 10 Oct 2026). On a desktop the pane moves on to the next row's story.
@@ -47,13 +58,18 @@ export function useStoryActions({ canMute = false }: { canMute?: boolean } = {})
         const rows = pane && item ? Array.from(document.querySelectorAll<HTMLElement>('[data-pane-row]')) : []
         const at = rows.indexOf(item as HTMLElement)
         const nextRow = at >= 0 ? rows[at + 1] ?? null : null
-        void r.markReadUndoable(story.id)
-        afterPaint(() => {
-          if (!pane) return bringNext()
-          if (item?.isConnected || !nextRow?.isConnected) return
-          pane.selectId(nextRow.dataset.storyId ?? '')
-          nextRow.scrollIntoView({ block: 'nearest' })
-        })
+        const commit = () => {
+          void r.markReadUndoable(story.id)
+          afterPaint(() => {
+            if (!pane) return bringNext()
+            if (item?.isConnected || !nextRow?.isConnected) return
+            pane.selectId(nextRow.dataset.storyId ?? '')
+            nextRow.scrollIntoView({ block: 'nearest' })
+          })
+        }
+        // The story fades and folds away first (roadmap session 11), where it will leave.
+        if (leaves && item && !item.closest('[data-keeps-read]')) leave(item, commit)
+        else commit()
       },
       onUnread: () => { void r.markUnread(story.id) },
       onReact: reaction => r.react(story.id, reaction),
@@ -71,5 +87,5 @@ export function useStoryActions({ canMute = false }: { canMute?: boolean } = {})
         : undefined,
       listening,
     }
-  }, [r, listen, snackbar, canMute, pane])
+  }, [r, listen, snackbar, canMute, pane, leaves])
 }

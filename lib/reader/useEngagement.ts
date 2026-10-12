@@ -82,7 +82,11 @@ export function useDwellTracking(
     // place (see heldIds) rather than dropped from under the reader.
     if (elapsed > (longForm ? DWELL_LONG_SECONDS : DWELL_SHORT_SECONDS)) {
       sendEngagement('dwell_long', storyId)
-      markRead(storyId, { hold: true }) // auto-mark-read after sufficient reading time
+      // Auto-mark-read after sufficient reading time, unless the reader has just done it
+      // themselves: a tapped or swiped Mark read takes the card out of the list, and its
+      // teardown lands here. Holding it then (an old closure doesn't know it is read) put
+      // the card straight back, dimmed, and wrote a second read mark (roadmap session 11).
+      if (!(storyId && isRead(storyId))) markRead(storyId, { hold: true })
     } else if (elapsed < 3 && !(storyId && isRead(storyId)) && !movedByAppRecently()) {
       sendEngagement('dwell_short', storyId)
     }

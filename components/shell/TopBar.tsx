@@ -18,8 +18,10 @@ const DOT: Record<PipelineTone, string> = { ok: 'bg-ok', warn: 'bg-warn', bad: '
  *  every scroll frame on mid-range Android. On desktop widths the bar itself is gone (the
  *  rail has all three) and only the offline notice, the Sections chips and the refresh bar
  *  remain. Pads the top safe-area inset (iOS
- *  standalone draws under the status bar: `black-translucent` + `viewport-fit=cover`). */
-export function TopBar({ children }: { children?: ReactNode }) {
+ *  standalone draws under the status bar: `black-translucent` + `viewport-fit=cover`). With
+ *  `progress` (0 to 1) a thin accent line along its bottom edge shows how much of Today's brief
+ *  is read. */
+export function TopBar({ children, progress }: { children?: ReactNode; progress?: number | null }) {
   const r = useReader()
   const [sheet, setSheet] = useState<'status' | 'settings' | null>(null)
   const [offline, setOffline] = useState(false)
@@ -70,6 +72,14 @@ export function TopBar({ children }: { children?: ReactNode }) {
       )}
 
       {children}
+
+      {/* Today's brief only: how much of it is read, so it stays in sight once the masthead has
+          scrolled away (roadmap session 11). The masthead has the accessible progress bar. */}
+      {typeof progress === 'number' && (
+        <div aria-hidden="true" data-brief-progress className="absolute inset-x-0 bottom-0 h-[3px] bg-surface-2 desk:hidden">
+          <div className="h-full bg-accent transition-[width]" style={{ width: `${Math.round(progress * 100)}%` }} />
+        </div>
+      )}
 
       {/* A reload in the background (refresh button, pull-to-refresh, Run now finishing):
           the feed stays put and this bar says something is happening. */}

@@ -15,13 +15,18 @@ import type { StoryActions } from './types'
  *  the chapters. In the Reader on a desktop window (the reading pane) the row picks the
  *  story for the pane instead of opening in place; `paneFallback` marks the list's first
  *  story, which the pane shows until one is picked. */
-export function StoryListItem({ story, sourceName, showCategory, compact, highlight, kickerExtra, actions, paneFallback, collapseToTop }: {
+export function StoryListItem({ story, sourceName, showCategory, compact, highlight, kickerExtra, clock, swipeToRead, actions, paneFallback, collapseToTop }: {
   story: StoryWithRelations
   sourceName?: string
   showCategory?: boolean
   compact?: boolean
   highlight?: string
   kickerExtra?: ReactNode
+  /** Publish time as a time of day ("14:05") instead of "23h ago": rows under a catch-up day
+   *  heading. `daytime` adds the day, for a list that spans days. */
+  clock?: 'time' | 'daytime'
+  /** Swipe right to left marks it read, where reading takes the row out of the list. */
+  swipeToRead?: boolean
   actions: StoryActions
   paneFallback?: boolean
   /** Closing the row puts it at the top of the screen (the catch-up, Ash 10 Oct 2026). */
@@ -66,6 +71,8 @@ export function StoryListItem({ story, sourceName, showCategory, compact, highli
       compact={compact}
       highlight={highlight}
       kickerExtra={kickerExtra}
+      clock={clock}
+      onSwipeRead={swipeToRead && actions.canSwipe ? actions.onRead : undefined}
       isRead={actions.isRead}
       saved={actions.saved}
       expanded={open}

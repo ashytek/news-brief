@@ -24,6 +24,9 @@ export function useFeedContent(
   const [soloStories, setSoloStories] = useState<StoryWithRelations[]>([])
   const [todayStories, setTodayStories] = useState<StoryWithRelations[]>([])
   const [catchUpData, setCatchUpData] = useState<CatchUpData | null>(null)
+  // The last Today catch-up that landed, kept while another tab's catch-up is showing, so
+  // the Today badge can still say how many stories it would show (roadmap session 11).
+  const [todayCatchUpData, setTodayCatchUpData] = useState<CatchUpData | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
   // A background reload is in flight (stories stay on screen meanwhile).
@@ -77,12 +80,14 @@ export function useFeedContent(
           const saved = res.offline ? loadFeed(name, isCatchUpData) : null
           if (saved) {
             setCatchUpData(saved.data)
+            if (activeTab === 'today') setTodayCatchUpData(saved.data)
             setSavedAt(saved.at)
             lastLoadedAt.current = saved.at
           } else setLoadError(true)
         }
       } else {
         setCatchUpData(res.data)
+        if (activeTab === 'today') setTodayCatchUpData(res.data)
         setSavedAt(null)
         lastLoadedAt.current = Date.now()
         saveFeed(name, res.data)
@@ -168,7 +173,7 @@ export function useFeedContent(
     return () => window.removeEventListener('online', retry)
   }, [savedAt, loadContent])
 
-  return { soloStories, todayStories, catchUpData, loading, refreshing, loadError, lastUpdated, savedAt, lastLoadedAt, loadContent }
+  return { soloStories, todayStories, catchUpData, todayCatchUpData, loading, refreshing, loadError, lastUpdated, savedAt, lastLoadedAt, loadContent }
 }
 
 /** A saved catch-up pool is only used if it has the three collections the view reads. */

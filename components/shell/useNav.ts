@@ -22,7 +22,7 @@ export type NavItem = {
   icon: LucideIcon
   href: string
   isActive: boolean
-  /** Unread count shown on the item (Today: the brief), 0 for none. */
+  /** Unread count shown on the item (Today: the brief's, or the catch-up's while that is on), 0 for none. */
   badge: number
   onClick: (e: MouseEvent<HTMLAnchorElement>) => void
 }
@@ -58,7 +58,7 @@ export function useNav() {
   const items: NavItem[] = ITEMS.map(item => ({
     ...item,
     isActive: item.key === active,
-    badge: item.key === 'today' ? r.todayUnread : 0,
+    badge: item.key === 'today' ? r.todayBadge : 0,
     onClick: onSelect(item.key),
   }))
 

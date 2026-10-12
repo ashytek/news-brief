@@ -6,6 +6,11 @@ import type { Reaction } from '@/lib/reader/useReactions'
  *  topics and the screen can mute them. */
 export interface StoryActions {
   isRead: boolean
+  /** Read by the dwell timer and still shown (dimmed) until the next load or until it is
+   *  scrolled past; false where such a card is not let go (the All view, Topics, the desktop pane). */
+  held?: boolean
+  /** Swiping this story right to left marks it read: true where marking it takes it out of the list. */
+  canSwipe?: boolean
   reaction?: Reaction
   onRead: () => void
   onUnread: () => void

@@ -1,6 +1,7 @@
 'use client'
 
 import { useSyncExternalStore } from 'react'
+import { clockTime, dayClock } from '@/lib/reader/catchUp'
 
 const noSubscribe = () => () => {}
 
@@ -14,12 +15,15 @@ const FORMAT = {
  *  error #418. This prints nothing on the server and during hydration, then the local time
  *  straight after (`useSyncExternalStore` hands React the server snapshot while hydrating, so
  *  the first client render matches the server's HTML). `suppressHydrationWarning` is the wrong
- *  tool here: it would keep the server's UTC text on screen. */
-export function LocalTime({ iso, variant = 'datetime' }: { iso: string; variant?: keyof typeof FORMAT }) {
+ *  tool here: it would keep the server's UTC text on screen.
+ *
+ *  `time` is the 24-hour time of day ("14:05") and `daytime` adds the day ("Yesterday 14:05"):
+ *  the catch-up's rows (roadmap session 11). */
+export function LocalTime({ iso, variant = 'datetime' }: { iso: string; variant?: keyof typeof FORMAT | 'time' | 'daytime' }) {
   const client = useSyncExternalStore(noSubscribe, () => true, () => false)
-  return (
-    <time dateTime={iso}>
-      {client ? new Date(iso).toLocaleString('en-GB', FORMAT[variant]) : ''}
-    </time>
-  )
+  const text = !client ? ''
+    : variant === 'time' ? clockTime(iso)
+    : variant === 'daytime' ? dayClock(iso)
+    : new Date(iso).toLocaleString('en-GB', FORMAT[variant])
+  return <time dateTime={iso}>{text}</time>
 }

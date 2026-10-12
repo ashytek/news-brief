@@ -22,10 +22,12 @@ import { useHiddenTimeShift } from './useHiddenTimeShift'
 import { decideResume } from './resume'
 import { useReactions } from './useReactions'
 import { useSaved } from './useSaved'
+import { useReleaseHeld } from './useReleaseHeld'
 import { useFeedView } from './useFeedView'
 import { useSectionUnread } from './useSectionUnread'
 import { useCatchUp } from './useCatchUp'
 import { buildCatchUp, CATCHUP_AWAY_HOURS } from './catchUp'
+import type { CatchUpData } from './catchUpQuery'
 import { setSortMode, useSortMode } from '@/lib/sortMode'
 import { flowItemOf, revealAfterUndo } from './flow'
 
@@ -56,6 +58,8 @@ function useReaderValue(userId: string) {
   // top bar's status chip, the read dots in Search and Archive), so they load
   // as soon as the provider mounts. The feed itself still waits for the Reader.
   const read = useReadState(supabase, userId, true)
+  // Dwell-read cards you have scrolled right past are let go (roadmap session 11).
+  useReleaseHeld(read.heldIds, read.release)
   // Save for later: loaded on every screen (the Archive's Saved view and the card buttons
   // need it); inert until the table exists. See useSaved.
   const saySaved = useCallback((message: string) => snackbar.show({ message }), [snackbar])
@@ -193,22 +197,35 @@ function useReaderValue(userId: string) {
   }, [read, snackbar])
 
   // The catch-up view of the current tab (null when it is off or its data hasn't landed).
-  const { catchUpData } = content
+  const { catchUpData, todayCatchUpData } = content
   const { hasMutedTopic } = muted
-  const catchUpView = useMemo(() => {
-    if (!catchUp.on || !catchUpData) return null
-    return buildCatchUp({
-      pool: catchUpData.pool,
-      members: catchUpData.members,
-      storylines: catchUpData.storylines,
-      readIds: read.readIds,
-      layoutReadIds: read.layoutReadIds,
-      keep: s => meta.sources[s.source_id]?.is_active !== false && !hasMutedTopic(s.matched_topics),
-      isIGR: s => isIGRSource(meta.sources[s.source_id]),
-      now: nowDate(),
-      prevVisit: visit.prevVisit,
-    })
-  }, [catchUp.on, catchUpData, read.readIds, read.layoutReadIds, meta.sources, hasMutedTopic, visit.prevVisit])
+  const buildView = useCallback((data: CatchUpData) => buildCatchUp({
+    pool: data.pool,
+    members: data.members,
+    storylines: data.storylines,
+    readIds: read.readIds,
+    layoutReadIds: read.layoutReadIds,
+    keep: s => meta.sources[s.source_id]?.is_active !== false && !hasMutedTopic(s.matched_topics),
+    isIGR: s => isIGRSource(meta.sources[s.source_id]),
+    now: nowDate(),
+    prevVisit: visit.prevVisit,
+  }), [read.readIds, read.layoutReadIds, meta.sources, hasMutedTopic, visit.prevVisit])
+  const catchUpView = useMemo(
+    () => (catchUp.on && catchUpData ? buildView(catchUpData) : null),
+    [catchUp.on, catchUpData, buildView],
+  )
+  // The Today badge counts what Today shows: the brief's unread stories, or, while the
+  // catch-up is on, the unread stories of Today's catch-up (it was blank then, noted in
+  // roadmap session 5). Today's catch-up is kept when another tab's replaces it in memory,
+  // so the badge stays right on Sections. Nothing is shown while it loads, rather than a
+  // number that is about to change.
+  const todayCatchUpView = useMemo(() => {
+    if (!catchUp.on || !todayCatchUpData) return null
+    return todayCatchUpData === catchUpData ? catchUpView : buildView(todayCatchUpData)
+  }, [catchUp.on, todayCatchUpData, catchUpData, catchUpView, buildView])
+  const todayBadge = catchUp.on
+    ? (content.loading && activeTab === 'today' ? 0 : todayCatchUpView?.unreadCount ?? 0)
+    : view.todayUnread
 
   // Reading a storyline's recap reads its reports (Ash, 3 Oct 2026): the same dwell
   // rule as a card (40 s on screen), applied to all the reports at once, held in
@@ -306,7 +323,7 @@ function useReaderValue(userId: string) {
   return {
     userId, activate, setViewActive,
     activeTab, lastSection, tabReady, handleTabChange, openSections,
-    catchUp, catchUpView, startStorylineDwell, endStorylineDwell, sectionUnread,
+    catchUp, catchUpView, todayBadge, startStorylineDwell, endStorylineDwell, sectionUnread,
     showUnreadOnly, toggleUnreadOnly, showAllStories,
     sortMode, setSortMode, timeBudget, setTimeBudget,
     // data
@@ -317,7 +334,7 @@ function useReaderValue(userId: string) {
     savedAt: content.savedAt,
     loadContent: content.loadContent, refresh,
     // read state
-    readIds: read.readIds, readLoaded: read.loaded, layoutReadIds: read.layoutReadIds, loadReadIds: read.loadReadIds,
+    readIds: read.readIds, heldIds: read.heldIds, readLoaded: read.loaded, layoutReadIds: read.layoutReadIds, loadReadIds: read.loadReadIds,
     markRead: read.markRead, markReadUndoable, markManyReadUndoable, markUnread, markAllVisibleRead,
     reactions: reactions.reactions, react: reactions.react,
     saved: { ids: saved.ids, available: saved.available, toggle: saved.toggle, reload: saved.reload },

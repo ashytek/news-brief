@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { PostgrestError } from '@supabase/supabase-js'
 import type { Supabase } from './types'
 import { loadFeed, saveFeed } from './feedCache'
@@ -30,6 +30,19 @@ export function useReadState(supabase: Supabase, userId: string, enabled: boolea
   const [loaded, setLoaded] = useState(false)
 
   const clearHeld = useCallback(() => { setHeldIds(new Set()); setDoneIds(new Set()) }, [])
+
+  // A held (dwell-read) card the reader has scrolled right past is let go: it stops being
+  // shown, like a tapped one (roadmap session 11). It becomes a "done" story, which is what
+  // keeps its slot in Today's brief and its count in "N of 12 read". No signal is sent.
+  const heldNow = useRef(heldIds)
+  useLayoutEffect(() => { heldNow.current = heldIds }, [heldIds])
+  const release = useCallback((ids: string[]): string[] => {
+    const gone = ids.filter(id => heldNow.current.has(id))
+    if (gone.length === 0) return []
+    setHeldIds(prev => { const n = new Set(prev); gone.forEach(id => n.delete(id)); return n })
+    setDoneIds(prev => { const n = new Set(prev); gone.forEach(id => n.add(id)); return n })
+    return gone
+  }, [])
 
   // Load read item IDs once on mount — independent of active tab
   const loadReadIds = useCallback(async () => {
@@ -214,5 +227,5 @@ export function useReadState(supabase: Supabase, userId: string, enabled: boolea
     return next
   }, [layoutReadIds, doneIds])
 
-  return { readIds, loaded, heldIds, layoutReadIds, briefReadIds, clearHeld, loadReadIds, markRead, markManyRead, markUnread }
+  return { readIds, loaded, heldIds, layoutReadIds, briefReadIds, clearHeld, release, loadReadIds, markRead, markManyRead, markUnread }
 }
