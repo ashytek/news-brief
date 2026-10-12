@@ -1,6 +1,6 @@
 # News Brief — Ingestion Pipeline
 
-**Production runs in the cloud**, not on your Mac: GitHub Actions cron (`.github/workflows/news-pipeline.yml`) runs this pipeline 4×/day (03:17/09:17/15:17/21:17 UTC). Ash's Mac is retired from pipeline duty — the sections below are for local development and testing only.
+**Production runs in the cloud**, not on your Mac: GitHub Actions (`.github/workflows/news-pipeline.yml`) runs this pipeline 4×/day. A Netlify Scheduled Function (`netlify/functions/pipeline-schedule.mts`) starts it at 03:17/09:17/15:17/21:17 UTC; GitHub's own cron (30 min later, `47 3,9,15,21`) is only a backup that exits cleanly if a run already started in the last 3 hours. Ash's Mac is retired from pipeline duty — the sections below are for local development and testing only.
 
 ---
 

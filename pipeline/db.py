@@ -199,6 +199,18 @@ def start_pipeline_run(trigger_source: str = "schedule") -> str:
     return res.data[0]["id"]
 
 
+def get_recent_runs(since_iso: str, limit: int = 10) -> list:
+    """pipeline_runs rows (started_at, status) that started at or after
+    `since_iso`, newest first. Read by run_pipeline's backup-cron guard."""
+    db = get_db()
+    return db.table("pipeline_runs") \
+        .select("started_at, status") \
+        .gte("started_at", since_iso) \
+        .order("started_at", desc=True) \
+        .limit(limit) \
+        .execute().data
+
+
 def finish_pipeline_run(run_id: str, status: str, stats: dict):
     db = get_db()
     db.table("pipeline_runs").update({

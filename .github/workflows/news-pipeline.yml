@@ -6,6 +6,17 @@ name: news-pipeline
 # fetchers (yt-dlp, youtube-transcript-api, audio) are skipped here: YouTube
 # blocks GitHub's IPs, and every transcript in recent runs came from Apify.
 #
+# WHO STARTS A RUN (since roadmap session 11)
+#   1. PRIMARY: the Netlify Scheduled Function netlify/functions/pipeline-schedule.mts
+#      dispatches this workflow at 03:17 / 09:17 / 15:17 / 21:17 UTC with
+#      inputs.source = "schedule". GitHub's own cron proved unreliable (3-10 Oct:
+#      2-5 runs a day, often hours late), so it is no longer the primary.
+#   2. BACKUP: GitHub's cron below, 30 min after each slot. A run it starts sets
+#      PIPELINE_SKIP_IF_RECENT_HOURS=3, and run_pipeline.py then exits cleanly
+#      (no pipeline_runs row, no paid call) if any run started in the last 3 hours.
+#   3. MANUAL: the app's "Run now" button (inputs.source defaults to "manual")
+#      or the GitHub UI. Never skipped by the guard above.
+#
 # Required repo secrets (Settings → Secrets and variables → Actions):
 #   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, GOOGLE_API_KEY,
 #   YOUTUBE_API_KEY, APIFY_TOKEN
@@ -15,10 +26,20 @@ name: news-pipeline
 
 on:
   schedule:
-    # 4 runs/day. Offset from :00 — GitHub delays/skips on-the-hour crons
-    # under load. Times are UTC (≈ 04:17, 10:17, 16:17, 22:17 UK summer).
-    - cron: "17 3,9,15,21 * * *"
-  workflow_dispatch: {}   # manual "Run workflow" button for testing
+    # BACKUP cron (the primary is the Netlify function, see above). Offset from
+    # :00 — GitHub delays/skips on-the-hour crons under load — and 30 min after
+    # the Netlify slot so the guard in run_pipeline.py sees that run first.
+    # Times are UTC (≈ 04:47, 10:47, 16:47, 22:47 UK summer).
+    - cron: "47 3,9,15,21 * * *"
+  workflow_dispatch:   # the app's "Run now" button, the Netlify scheduler, the GitHub UI
+    inputs:
+      source:
+        description: "Who started this run: manual (Run now, GitHub UI) or schedule (the Netlify scheduler)"
+        type: choice
+        options:
+          - manual
+          - schedule
+        default: manual
 
 # Without this, the job token gets the repo's default permissions (often
 # read/write). This workflow only checks out code and calls external APIs —
@@ -65,9 +86,15 @@ jobs:
           # of a run's log carried one timestamp and nothing could be timed.
           PYTHONUNBUFFERED:          "1"
           # Lets run_pipeline.py tell a manual "Run now" trigger (app button,
-          # or the GitHub UI) apart from the scheduled cron — a scheduled run
+          # or the GitHub UI) apart from a scheduled run — a scheduled run
           # skips real work if a manual one already covered this window.
-          PIPELINE_TRIGGER_SOURCE:   ${{ github.event_name == 'workflow_dispatch' && 'manual' || 'schedule' }}
+          # `schedule` = GitHub's backup cron OR a dispatch with source=schedule
+          # (the Netlify scheduler); `manual` = any other dispatch (the input's
+          # default, also used if a dispatch sends no inputs at all).
+          PIPELINE_TRIGGER_SOURCE:   ${{ github.event_name == 'workflow_dispatch' && (inputs.source || 'manual') || 'schedule' }}
+          # Backup-cron guard: set ONLY for GitHub's own cron. run_pipeline.py exits
+          # cleanly if any run started within this many hours (see run_once).
+          PIPELINE_SKIP_IF_RECENT_HOURS: ${{ github.event_name == 'schedule' && '3' || '' }}
         run: python run_pipeline.py --once
 
       - name: Ping healthcheck on job failure

@@ -7,7 +7,7 @@ For architecture, current status, and working rules, see [`CLAUDE.md`](./CLAUDE.
 ## Stack
 
 - **App**: Next.js 16 (App Router), React 19, Tailwind CSS 4, Supabase (Postgres + auth)
-- **Pipeline**: Python, runs on a GitHub Actions cron (`.github/workflows/news-pipeline.yml`), 4×/day
+- **Pipeline**: Python, run by GitHub Actions (`.github/workflows/news-pipeline.yml`) 4×/day: a Netlify Scheduled Function (`netlify/functions/pipeline-schedule.mts`) starts it, GitHub's own cron is the backup
 - **Hosting**: Netlify (`netlify.toml`, `@netlify/plugin-nextjs`)
 
 ## Getting started

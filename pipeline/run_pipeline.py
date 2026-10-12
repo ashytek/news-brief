@@ -77,6 +77,52 @@ def _is_vantage_source(source: dict) -> bool:
     return "vantage" in name or "firstpost" in name
 
 
+# A `running` row older than this is a run that died without finishing (the workflow
+# times out at 45 min), not one still in progress. Same figure as the Run-now route.
+STALE_RUNNING_MINUTES = 50
+
+
+def _run_covers_window(row: dict, now: datetime) -> bool:
+    """Does this pipeline_runs row mean 'a run already covered this window'?
+
+    success / partial: yes. running: yes unless it is older than the workflow
+    timeout (a dead row). failed: no. A crashed run is exactly when the backup
+    cron should run, and the same rule keeps a failed manual trigger from
+    suppressing the next scheduled run (see the manual-trigger skip in run_once).
+    """
+    status = row.get("status")
+    if status == "failed":
+        return False
+    if status == "running":
+        try:
+            started = datetime.fromisoformat(str(row["started_at"]).replace("Z", "+00:00"))
+        except (KeyError, ValueError):
+            return False
+        if now - started > timedelta(minutes=STALE_RUNNING_MINUTES):
+            return False
+    return True
+
+
+def _recent_run_covering(hours: float, now: datetime | None = None) -> dict | None:
+    """The newest pipeline_runs row that started within `hours` and still counts
+    (see _run_covers_window), or None. Raises if the database can't be read:
+    the caller fails open."""
+    now = now or datetime.now(timezone.utc)
+    since = (now - timedelta(hours=hours)).isoformat()
+    for row in db.get_recent_runs(since):
+        if _run_covers_window(row, now):
+            return row
+    return None
+
+
+def _skip_if_recent_hours() -> float:
+    """PIPELINE_SKIP_IF_RECENT_HOURS as a positive float, else 0 (guard off)."""
+    try:
+        return max(0.0, float(os.environ.get("PIPELINE_SKIP_IF_RECENT_HOURS", "").strip() or 0))
+    except ValueError:
+        return 0.0
+
+
 def process_transcripts_and_summarise(items, stats, source_map, retry_delay_range=None):
     """
     Shared logic: fetch transcripts, summarise, embed, cluster.
@@ -462,9 +508,32 @@ def run_once():
     print(f"📰 Pipeline run starting at {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}")
     print(f"{'='*60}")
 
+    # ── Backup-cron guard: skip if a run already started recently ─────────
+    # The Netlify Scheduled Function is the primary scheduler (it dispatches
+    # this workflow at 03:17/09:17/15:17/21:17 UTC); GitHub's own cron is only
+    # a backup, 30 min later, and the workflow sets this variable ONLY for the
+    # `schedule` event. Manual and Netlify-dispatched runs never set it, so they
+    # are never skipped here. A skipped run writes no pipeline_runs row and makes
+    # no paid call.
+    skip_hours = _skip_if_recent_hours()
+    if skip_hours:
+        try:
+            covering = _recent_run_covering(skip_hours)
+            if covering:
+                print(f"⏭ Skipping backup scheduled run — a run already started at "
+                      f"{covering['started_at']} ({covering['status']}, within the last {skip_hours:g} h)")
+                _ping_healthcheck(success=True)   # a deliberate skip is healthy (see below)
+                return
+        except Exception as e:
+            # Fail open: a scheduled run that can't check must still run.
+            print(f"⚠ Recent-run guard error (non-fatal, running normally): {e}")
+
     # ── Skip if a manual trigger already covered this window ──────────────
-    # Set via GitHub Actions' github.event_name expression (news-pipeline.yml).
-    # Only scheduled runs are ever skipped — a manual trigger always runs.
+    # PIPELINE_TRIGGER_SOURCE comes from news-pipeline.yml: `manual` for the app's
+    # Run now button or the GitHub UI (the workflow_dispatch `source` input's
+    # default), `schedule` for GitHub's own cron AND for the dispatch the Netlify
+    # Scheduled Function sends with source=schedule. Only scheduled runs are ever
+    # skipped here — a manual trigger always runs.
     trigger_source = os.environ.get("PIPELINE_TRIGGER_SOURCE", "schedule")
     if trigger_source == "schedule":
         try:
