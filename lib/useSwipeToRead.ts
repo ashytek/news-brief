@@ -120,10 +120,11 @@ export function useSwipeToRead({ enabled, onRead }: { enabled: boolean; onRead: 
     busy.current = true
     if (!cancelled && live.current.enabled && (far || flick)) {
       tween(s.tx, -s.width, SLIDE_MS, v => swipeApply(s.el, v, s.gutter, true), () => {
-        live.current.onRead()
-        // The list normally takes the item away within a few frames (`leave`); if it did not,
-        // put it back rather than leave it parked off screen.
-        setTimeout(() => { busy.current = false; if (s.el.isConnected && !isLeaving(s.el)) swipeReset(s.el) }, 600)
+        try { live.current.onRead() } finally {
+          // The list normally takes the item away within a few frames (`leave`); if it did not,
+          // put it back rather than leave it parked off screen.
+          setTimeout(() => { busy.current = false; if (s.el.isConnected && !isLeaving(s.el)) swipeReset(s.el) }, 600)
+        }
       })
     } else {
       tween(s.tx, 0, SPRING_MS, v => swipeApply(s.el, v, s.gutter), () => { swipeReset(s.el); busy.current = false })
