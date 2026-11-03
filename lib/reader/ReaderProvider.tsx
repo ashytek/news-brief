@@ -341,7 +341,7 @@ function useReaderValue(userId: string) {
     muteTopics: muted.muteTopics,
     sendEngagement, startDwell, endDwell,
     // pipeline
-    lastPipelineRun: health.lastPipelineRun, pipelineStruggling: health.pipelineStruggling,
+    lastPipelineRun: health.lastPipelineRun, pipelineStruggling: health.pipelineStruggling, pipelineCreditOut: health.pipelineCreditOut,
     triggerState: trigger.triggerState, triggerError: trigger.triggerError, triggerMessage: trigger.triggerMessage,
     handleTriggerPipeline: trigger.handleTriggerPipeline, dismissTriggerMessage: trigger.dismissTriggerMessage,
     // since you left

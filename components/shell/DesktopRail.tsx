@@ -23,7 +23,7 @@ export function DesktopRail() {
   const r = useReader()
   const { items } = useNav()
   const [sheet, setSheet] = useState<'status' | 'settings' | null>(null)
-  const info = describePipeline(r.lastPipelineRun, r.pipelineStruggling)
+  const info = describePipeline(r.lastPipelineRun, r.pipelineStruggling, r.pipelineCreditOut)
 
   // Muted counts: Today's unread (the brief's, or the catch-up's while that is on), and the unread in the All feed (the same number as its chip).
   const counts: Partial<Record<string, number>> = { today: r.todayBadge, sections: r.sectionUnread?.all ?? 0 }

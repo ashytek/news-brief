@@ -40,7 +40,7 @@ export function RunNow({ size = 'default' }: { size?: 'default' | 'compact' }) {
 /** The status chip's sheet: pipeline health, Run now, refresh, build stamp. */
 export function StatusSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   const r = useReader()
-  const info = describePipeline(r.lastPipelineRun, r.pipelineStruggling)
+  const info = describePipeline(r.lastPipelineRun, r.pipelineStruggling, r.pipelineCreditOut)
   return (
     <Sheet open={open} onClose={onClose} title="Pipeline status">
       <div className="flex flex-col gap-5 px-1 pb-2 pt-3">

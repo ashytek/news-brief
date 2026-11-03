@@ -9,7 +9,7 @@ import { CATEGORIES } from '@/lib/categories'
 import { Button, IconButton, LocalTime, Sheet, cx } from '@/components/ui'
 import { RunNow } from '@/components/shell/StatusSheet'
 import { useReader } from '@/lib/reader/ReaderProvider'
-import { describePipeline } from '@/lib/reader/pipelineStatus'
+import { describePipeline, isCreditDepleted } from '@/lib/reader/pipelineStatus'
 import { useSourceStats } from '@/lib/reader/useSourceStats'
 import { describeSourceStat, type SourceStat } from '@/lib/reader/sourceStats'
 
@@ -30,6 +30,7 @@ interface PipelineRun {
   videos_found: number
   transcripts_fetched: number
   stories_created: number
+  error_log?: unknown
 }
 
 interface Props {
@@ -253,6 +254,7 @@ export default function SourcesClient({ sources: initialSources, recentRuns }: P
   const info = describePipeline(
     r.lastPipelineRun ?? (lastFinished?.finished_at ? new Date(lastFinished.finished_at) : null),
     r.pipelineStruggling,
+    r.lastPipelineRun ? r.pipelineCreditOut : isCreditDepleted(lastFinished),
   )
 
   const refreshSources = async () => {
@@ -325,7 +327,7 @@ export default function SourcesClient({ sources: initialSources, recentRuns }: P
                     </div>
                     <span className={cx('inline-flex items-center gap-1.5 text-sm font-medium', st?.tone ?? 'text-fg-3')}>
                       <Icon className={cx('size-[18px]', !st && 'animate-spin')} aria-hidden="true" />
-                      {st?.word ?? run.status}
+                      {isCreditDepleted(run) ? 'Gemini credit ran out' : st?.word ?? run.status}
                     </span>
                   </li>
                 )

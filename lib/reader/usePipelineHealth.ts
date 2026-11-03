@@ -1,19 +1,22 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { Supabase } from './types'
+import { isCreditDepleted } from './pipelineStatus'
 
 /** Pipeline health — last completed run of ANY status (a success-only
  *  query hides outages: the dot stayed green while runs were failing).
  *  "Struggling" = the last 3 runs found videos but produced 0 stories.
+ *  "Credit out" = the last run stopped because Gemini's prepaid credit ran out.
  *  `refreshPipelineHealth` is also re-run after a manually triggered run
  *  finishes (see usePipelineTrigger). */
 export function usePipelineHealth(supabase: Supabase, enabled: boolean) {
   const [lastPipelineRun, setLastPipelineRun] = useState<Date | null>(null)
   const [pipelineStruggling, setPipelineStruggling] = useState(false)
+  const [pipelineCreditOut, setPipelineCreditOut] = useState(false)
 
   const refreshPipelineHealth = useCallback(async () => {
     const { data } = await supabase
       .from('pipeline_runs')
-      .select('finished_at, status, stories_created, videos_found')
+      .select('finished_at, status, stories_created, videos_found, error_log')
       .not('finished_at', 'is', null)
       .order('finished_at', { ascending: false })
       .limit(3)
@@ -24,6 +27,7 @@ export function usePipelineHealth(supabase: Supabase, enabled: boolean) {
       data.every(r => (r.stories_created ?? 0) === 0) &&
       data.some(r => (r.videos_found ?? 0) > 0)
     setPipelineStruggling(struggling)
+    setPipelineCreditOut(isCreditDepleted(data[0]))
   }, [supabase])
 
   useEffect(() => {
@@ -31,5 +35,5 @@ export function usePipelineHealth(supabase: Supabase, enabled: boolean) {
     if (enabled) refreshPipelineHealth()
   }, [enabled, refreshPipelineHealth])
 
-  return { lastPipelineRun, pipelineStruggling, refreshPipelineHealth }
+  return { lastPipelineRun, pipelineStruggling, pipelineCreditOut, refreshPipelineHealth }
 }

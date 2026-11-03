@@ -39,7 +39,7 @@ export function TopBar({ children, progress }: { children?: ReactNode; progress?
     }
   }, [])
 
-  const info = describePipeline(r.lastPipelineRun, r.pipelineStruggling)
+  const info = describePipeline(r.lastPipelineRun, r.pipelineStruggling, r.pipelineCreditOut)
 
   return (
     <div data-topbar className={cx('sticky top-0 z-40 border-b border-hairline bg-canvas pt-[env(safe-area-inset-top,0px)]', !children && 'desk:border-b-0')}>
