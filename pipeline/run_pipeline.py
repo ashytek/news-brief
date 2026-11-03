@@ -332,6 +332,8 @@ def process_transcripts_and_summarise(items, stats, source_map, retry_delay_rang
                 summary=summary_text,
                 category=category,
             )
+        except llm.CreditsExhausted:
+            raise   # nothing else will work either: run_once stops the run
         except Exception as e:
             # One embedding failure (non-retryable 4xx, or a sustained outage
             # after cluster.get_embedding exhausts its own retries) must not
@@ -351,6 +353,8 @@ def process_transcripts_and_summarise(items, stats, source_map, retry_delay_rang
                     summary=s["summary"],
                     category=s["category"],
                 )
+            except llm.CreditsExhausted:
+                raise
             except Exception as e:
                 # Without this, a single poison row here re-wedges every
                 # future run at the same point — this query always serves
@@ -361,6 +365,20 @@ def process_transcripts_and_summarise(items, stats, source_map, retry_delay_rang
     return stats
 
 
+# The summary-recovery pass (recover_missing_stories): how far back it looks and
+# how many stranded videos it may summarise in one run.
+RECOVER_HOURS = 168
+RECOVER_LIMIT = 30
+
+
+def _env_int(name: str, default: int, lo: int, hi: int) -> int:
+    """An integer setting from the environment, clamped; blank or junk → default."""
+    try:
+        return max(lo, min(hi, int(float(os.environ.get(name, "").strip()))))
+    except ValueError:
+        return default
+
+
 def recover_missing_stories(stats, source_map):
     """Re-attempt summarisation for videos whose transcript was fetched
     successfully but never produced a story (summarise_video returned None —
@@ -369,8 +387,15 @@ def recover_missing_stories(stats, source_map):
     'fetched'. Segments aren't persisted, so recovered stories fall back to
     plain (non-timestamped) bullets — degraded but far better than silently
     dropped.
+
+    Looks back RECOVER_HOURS (7 days, so a week-long outage heals by itself)
+    and recovers up to RECOVER_LIMIT a run, newest first. A one-off dispatch can
+    widen both (workflow inputs recover_hours / recover_limit →
+    PIPELINE_RECOVER_HOURS / PIPELINE_RECOVER_LIMIT) to clear a backlog.
     """
-    orphans = db.get_videos_missing_stories(limit=30)
+    hours = _env_int("PIPELINE_RECOVER_HOURS", RECOVER_HOURS, 1, 24 * 30)
+    limit = _env_int("PIPELINE_RECOVER_LIMIT", RECOVER_LIMIT, 1, 200)
+    orphans = db.get_videos_missing_stories(limit=limit, lookback_hours=hours)
     if not orphans:
         return stats
 
@@ -421,6 +446,8 @@ def recover_missing_stories(stats, source_map):
                 summary=summary_data["summary"],
                 category=category,
             )
+        except llm.CreditsExhausted:
+            raise
         except Exception as e:
             print(f"    ✗ Recovery failed for {video.get('title', video.get('id'))[:50]}: {e}")
 
@@ -503,6 +530,7 @@ def run_once():
     # (streak=15 → 240s waits) poisons every subsequent run in the same
     # long-lived launchd process for the rest of the day.
     get_transcripts.reset_run_state()
+    llm.reset_credit_state()   # a top-up between runs must be seen
 
     print(f"\n{'='*60}")
     print(f"📰 Pipeline run starting at {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}")
@@ -624,6 +652,8 @@ def run_once():
         # summarised (e.g. Gemini quota exhausted mid-run) ─────────────────
         try:
             stats = recover_missing_stories(stats, source_map)
+        except llm.CreditsExhausted:
+            raise
         except Exception as e:
             print(f"  ⚠ Recovery pass error (non-fatal): {e}")
 
@@ -632,6 +662,11 @@ def run_once():
         # so a storyline that gained three reports this run is recapped once,
         # not three times. Fail-soft (never raises).
         storylines.refresh_recaps_live()
+
+        # A refusal that a fail-soft step swallowed (storyline assignment,
+        # recaps) still fails the run.
+        if llm.credits_exhausted():
+            raise llm.credit_refused()
 
         if not new_items and not failed:
             print("  Nothing new. Run complete.")
@@ -790,6 +825,21 @@ def run_once():
         if not soft_failed:
             _ping_healthcheck(success=True)
 
+    except llm.CreditsExhausted:
+        # Not a crash: stop at once, say why in pipeline_runs (the app shows it)
+        # and return False so main() exits 1 and the Actions run goes red.
+        # Transcripts fetched this run are already saved; the recovery pass
+        # summarises them after the top-up (it looks back RECOVER_HOURS).
+        # The daily jobs are skipped, so the transcripts aren't archived meanwhile.
+        print(f"\n{'!'*60}")
+        print("❌ Gemini prepaid credit is used up: every Gemini call is refused (402).")
+        print("   Top up in Google AI Studio → Billing. Stopping this run.")
+        print(f"   {stats['stories_created']} stories saved before the refusal.")
+        print(f"{'!'*60}")
+        db.finish_pipeline_run(run_id, "failed", {**stats, "error_log": [llm.CREDIT_DEPLETED_NOTE]})
+        _ping_healthcheck(success=False)
+        return False
+
     except Exception as e:
         print(f"\n❌ Pipeline error: {e}")
         traceback.print_exc()
@@ -840,7 +890,8 @@ def main():
         retry_failed()
     else:
         print(f"   Mode: run once")
-        run_once()
+        if run_once() is False:   # Gemini credit used up: show the run red
+            sys.exit(1)
 
 
 if __name__ == "__main__":

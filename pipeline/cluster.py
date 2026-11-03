@@ -21,6 +21,7 @@ import time
 
 import requests
 import db
+import llm
 import storylines
 from config import GOOGLE_API_KEY
 
@@ -33,7 +34,10 @@ _EMBED_URL = f"https://generativelanguage.googleapis.com/v1beta/{EMBEDDING_MODEL
 
 def get_embedding(text: str, max_retries: int = 3) -> list:
     """Get embedding vector via direct REST call to Google's v1beta API.
-    Retries with exponential backoff on transient errors (429/5xx/timeout)."""
+    Retries with exponential backoff on transient errors (429/5xx/timeout).
+    Raises llm.CreditsExhausted, without retrying, if the prepaid credit is used up."""
+    if llm.credits_exhausted():
+        raise llm.credit_refused()
     payload = {
         "model": EMBEDDING_MODEL,
         "content": {
@@ -51,6 +55,8 @@ def get_embedding(text: str, max_retries: int = 3) -> list:
             resp.raise_for_status()
             return resp.json()["embedding"]["values"]
         except requests.RequestException as e:
+            if llm.is_credit_error(e):
+                raise llm.credit_refused(e) from e
             status = getattr(e.response, "status_code", None)
             is_retryable = isinstance(e, (requests.Timeout, requests.ConnectionError)) or status in (
                 429, 500, 502, 503, 504

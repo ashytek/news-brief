@@ -40,6 +40,17 @@ on:
           - manual
           - schedule
         default: manual
+      # One-off backlog clearing (e.g. after the Gemini credit ran out): widen the
+      # summary-recovery pass for this run only. Blank = the defaults in
+      # run_pipeline.py (168 h, 30 videos). The scheduler never sends these.
+      recover_hours:
+        description: "Recovery pass: how many hours back to look for transcripts with no story (blank = 168)"
+        type: string
+        default: ""
+      recover_limit:
+        description: "Recovery pass: most stranded videos to summarise this run (blank = 30, max 200)"
+        type: string
+        default: ""
 
 # Without this, the job token gets the repo's default permissions (often
 # read/write). This workflow only checks out code and calls external APIs —
@@ -95,6 +106,9 @@ jobs:
           # Backup-cron guard: set ONLY for GitHub's own cron. run_pipeline.py exits
           # cleanly if any run started within this many hours (see run_once).
           PIPELINE_SKIP_IF_RECENT_HOURS: ${{ github.event_name == 'schedule' && '3' || '' }}
+          # Recovery-pass overrides (the dispatch inputs above; blank on every other run).
+          PIPELINE_RECOVER_HOURS: ${{ inputs.recover_hours }}
+          PIPELINE_RECOVER_LIMIT: ${{ inputs.recover_limit }}
         run: python run_pipeline.py --once
 
       - name: Ping healthcheck on job failure

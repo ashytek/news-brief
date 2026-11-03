@@ -47,6 +47,64 @@ def reset_usage():
 
 
 # ---------------------------------------------------------------------------
+# Prepaid credit used up
+# ---------------------------------------------------------------------------
+# The Gemini API is on Prepay billing. When the balance hits $0 every call is
+# refused with 402 RESOURCE_EXHAUSTED "Your prepayment credits are depleted"
+# (summaries AND gemini-embedding-001). That is not transient: nothing works
+# until Ash tops up in Google AI Studio. Until 3 Nov 2026 it matched the
+# retryable "resource_exhausted" below, so every run retried ~33 videos 5
+# times (~40 min), saved no stories, and still finished green with status
+# 'partial': a week (27 Oct-3 Nov) of silence. Now the first refusal stops
+# every later Gemini call in the process and run_pipeline marks the run failed.
+
+# Written to pipeline_runs.error_log; the app looks for this marker to show
+# "Gemini credit ran out" (lib/reader/pipelineStatus.ts). Fixed text on
+# purpose: a requests error's message carries the URL, and the URL the API key.
+CREDIT_DEPLETED_MARKER = "GEMINI_CREDIT_DEPLETED"
+CREDIT_DEPLETED_NOTE = (f"{CREDIT_DEPLETED_MARKER}: Gemini prepaid credit is used up. "
+                        "Top up in Google AI Studio → Billing.")
+
+
+class CreditsExhausted(RuntimeError):
+    """Gemini refused a call because the prepaid credit is used up."""
+
+
+_credits_exhausted = False
+
+
+def is_credit_error(err: BaseException) -> bool:
+    """402 from either client (google-genai's ClientError.code, requests'
+    response.status_code), or the depletion message under another code (a
+    forum report had it as 429)."""
+    code = getattr(err, "code", None)
+    if not isinstance(code, int):
+        code = getattr(getattr(err, "response", None), "status_code", None)
+    msg = str(err).lower()
+    return (code == 402 or msg.startswith("402 ")
+            or "prepayment credit" in msg or "credits are depleted" in msg)
+
+
+def credits_exhausted() -> bool:
+    """True once any Gemini call in this process was refused for credit."""
+    return _credits_exhausted
+
+
+def credit_refused(err: BaseException | None = None) -> CreditsExhausted:
+    """Record the refusal and return the exception to raise."""
+    global _credits_exhausted
+    if not _credits_exhausted and err is not None:
+        _log.error(f"Gemini prepaid credit is used up: {str(err)[:120]}")
+    _credits_exhausted = True
+    return CreditsExhausted(CREDIT_DEPLETED_NOTE)
+
+
+def reset_credit_state():
+    global _credits_exhausted
+    _credits_exhausted = False
+
+
+# ---------------------------------------------------------------------------
 # Core generation function (with manual retry/backoff, no extra deps)
 # ---------------------------------------------------------------------------
 
@@ -62,9 +120,13 @@ def _generate(
 ) -> str | None:
     """
     Call Gemini, return raw text. Retries with exponential backoff on quota/5xx.
-    Returns None on permanent failure.
+    Returns None on permanent failure. Raises CreditsExhausted if the prepaid
+    credit is used up (now, or earlier in this process), without retrying.
     """
     import time, random
+
+    if _credits_exhausted:
+        raise CreditsExhausted(CREDIT_DEPLETED_NOTE)
 
     config_kwargs: dict[str, Any] = {
         "temperature": temperature,
@@ -120,6 +182,9 @@ def _generate(
             return text
 
         except Exception as e:
+            if is_credit_error(e):
+                _usage["failures"] += 1
+                raise credit_refused(e) from e
             msg = str(e).lower()
             is_retryable = any(x in msg for x in (
                 "429", "quota", "resource_exhausted", "rate", "500", "502", "503", "504"

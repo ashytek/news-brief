@@ -68,30 +68,47 @@ def mark_video_permanent_failure(video_id: str):
     }).eq("id", video_id).execute()
 
 
-def get_videos_missing_stories(limit: int = 30, lookback_hours: int = 72) -> list:
+def get_videos_missing_stories(limit: int = 30, lookback_hours: int = 168) -> list:
     """Videos whose transcript was fetched successfully but never produced a
     story (summarise_video returned None — e.g. Gemini quota exhausted
     mid-run). Nothing else in the scheduled pipeline revisits these, so they
     were silently lost forever without this. Bounded lookback avoids
-    re-scanning the whole table on every run."""
+    re-scanning the whole table on every run. Newest first.
+
+    Checks every fetched video in the window (ids only), then loads transcripts
+    for the orphans alone. It used to look at just the newest limit*3 fetched
+    videos, so with a window longer than a day or two the older orphans were
+    never seen; and the window was 72 h, so the 7-day credit outage of
+    27 Oct-3 Nov 2026 left 91 transcripts behind it."""
     db = get_db()
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=lookback_hours)).isoformat()
     fetched = db.table("videos") \
-        .select("id, title, url, published_at, transcript_text, source_id") \
+        .select("id") \
         .eq("transcript_status", "fetched") \
+        .not_.is_("transcript_text", "null") \
         .gte("fetched_at", cutoff) \
         .order("fetched_at", desc=True) \
-        .limit(limit * 3) \
+        .limit(1000) \
         .execute().data
     if not fetched:
         return []
     video_ids = [v["id"] for v in fetched]
-    has_story = db.table("stories") \
-        .select("video_id") \
-        .in_("video_id", video_ids) \
+    covered = set()
+    for i in range(0, len(video_ids), 100):   # keeps the in.(…) URL short
+        has_story = db.table("stories") \
+            .select("video_id") \
+            .in_("video_id", video_ids[i:i + 100]) \
+            .execute().data
+        covered |= {s["video_id"] for s in has_story}
+    orphan_ids = [v for v in video_ids if v not in covered][:limit]
+    if not orphan_ids:
+        return []
+    rows = db.table("videos") \
+        .select("id, title, url, published_at, transcript_text, source_id") \
+        .in_("id", orphan_ids) \
         .execute().data
-    covered = {s["video_id"] for s in has_story}
-    return [v for v in fetched if v["id"] not in covered][:limit]
+    order = {vid: n for n, vid in enumerate(orphan_ids)}
+    return sorted((r for r in rows if r.get("transcript_text")), key=lambda r: order.get(r["id"], 0))   # archived meanwhile
 
 
 def get_stories_missing_embeddings(limit: int = 50) -> list:
